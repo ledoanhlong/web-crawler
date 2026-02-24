@@ -46,13 +46,13 @@ async def fetch_page_js(
     page: Page = await browser.new_page()
     try:
         log.info("Playwright GET %s", url)
-        await page.goto(url, wait_until="networkidle", timeout=30_000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         if wait_selector:
             log.debug("Waiting for selector: %s", wait_selector)
             await page.wait_for_selector(wait_selector, timeout=wait_timeout_ms)
         else:
             # Give JS-rendered content a moment to settle
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
         return await page.content()
     finally:
         await page.close()
@@ -98,7 +98,7 @@ async def click_all_tabs(
     page = await browser.new_page()
     htmls: list[str] = []
     try:
-        await page.goto(url, wait_until="networkidle", timeout=30_000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         tabs = await page.query_selector_all(tab_selector)
         log.info("Found %d tabs with selector '%s'", len(tabs), tab_selector)
         for tab in tabs:
