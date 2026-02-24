@@ -77,6 +77,22 @@ Rules:
   supply ``alphabet_tab_selector``.
 - ``pagination_urls`` should list fully qualified URLs when the pattern is \
   obvious (e.g. ?page=1 … ?page=10).  Leave empty if you cannot determine them.
+
+IMPORTANT — Detail pages:
+- Most listing pages only show a summary (name, booth, logo). The FULL details \
+  (address, phone, email, website, description, product categories, brands, \
+  social media) are almost always on a separate DETAIL page linked from each \
+  item card (often a "Details", "More info", or company-name link).
+- You MUST identify the ``detail_link_selector`` — the CSS selector (relative \
+  to the item container) that points to the exhibitor's detail / profile page. \
+  This is typically an <a> tag wrapping the company name or a "Details" button.
+- Put "href" in ``field_attributes`` for the ``detail_link`` field so the \
+  scraper can follow the link.
+- For ``detail_page_fields``: provide CSS selectors for fields you expect to \
+  find on the detail page (address, phone, email, website, description, etc.). \
+  If you are unsure of the exact selectors on the detail page, leave \
+  ``detail_page_fields`` empty — the system will use the full simplified HTML.
+
 - Return ONLY valid JSON.  No markdown, no explanation.
 """
 
@@ -128,9 +144,72 @@ class PlannerAgent:
         plan_data["url"] = url
         plan = ScrapingPlan.model_validate(plan_data)
         log.info(
-            "Plan: js=%s, pagination=%s, fields=%s",
+            "Plan: js=%s, pagination=%s, fields=%s, detail_link=%s",
             plan.requires_javascript,
             plan.pagination.value,
             list(plan.target.field_selectors.keys()),
+            plan.target.detail_link_selector,
+        )
+        return plan
+
+    async def replan(self, current_plan: ScrapingPlan, user_feedback: str) -> ScrapingPlan:
+        """Re-generate the scraping plan incorporating user feedback.
+
+        This is called when the user reviews the preview and provides feedback
+        like "I also need email and phone" or "the detail page has more info".
+        """
+        log.info("Re-planning with user feedback: %s", user_feedback)
+
+        # Fetch the page again to get fresh HTML for context
+        html_raw = ""
+        try:
+            html_raw = await fetch_page(current_plan.url)
+            if len(html_raw) < 2_000 or "<noscript>" in html_raw.lower():
+                raise ValueError("JS fallback needed")
+        except Exception:
+            from app.utils.browser import fetch_page_js, get_browser
+
+            async with get_browser() as browser:
+                html_raw = await fetch_page_js(browser, current_plan.url)
+
+        html_simple = simplify_html(html_raw)
+
+        current_plan_json = current_plan.model_dump(mode="json")
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"Analyse the following HTML of the listing page at:\n{current_plan.url}\n\n"
+                    f"```html\n{html_simple}\n```"
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(current_plan_json, ensure_ascii=False),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"The user reviewed a preview of the scraped data and gave this feedback:\n\n"
+                    f'"{user_feedback}"\n\n'
+                    f"Please update the scraping plan to address this feedback. "
+                    f"In particular, make sure to follow detail page links if the "
+                    f"user wants fields that are only available on detail pages. "
+                    f"Return the complete updated plan as JSON."
+                ),
+            },
+        ]
+
+        plan_data: dict = await chat_completion_json(messages, max_tokens=8_000)
+        plan_data["url"] = current_plan.url
+        plan = ScrapingPlan.model_validate(plan_data)
+        log.info(
+            "Re-plan: js=%s, pagination=%s, fields=%s, detail_link=%s",
+            plan.requires_javascript,
+            plan.pagination.value,
+            list(plan.target.field_selectors.keys()),
+            plan.target.detail_link_selector,
         )
         return plan

@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 
-from app.models.schemas import CrawlJob, CrawlRequest, CrawlStatus
+from app.models.schemas import ConfirmPreviewRequest, CrawlJob, CrawlRequest, CrawlStatus
 from app.services.orchestrator import Orchestrator
 
 router = APIRouter(prefix="/api/v1", tags=["crawl"])
@@ -20,11 +20,42 @@ _orchestrator = Orchestrator()
 
 @router.post("/crawl", response_model=CrawlJob, status_code=202)
 async def start_crawl(request: CrawlRequest, background_tasks: BackgroundTasks) -> CrawlJob:
-    """Submit a new crawl job. Returns immediately with a job ID; the crawl
-    runs asynchronously in the background."""
+    """Submit a new crawl job. Returns immediately with a job ID.
+
+    The orchestrator will plan the scrape and produce a single preview
+    record, then pause with status ``preview``.  Call ``POST /confirm``
+    to continue.
+    """
     job = CrawlJob(request=request)
     _jobs[job.id] = job
-    background_tasks.add_task(_run_job, job)
+    background_tasks.add_task(_run_preview, job)
+    return job
+
+
+@router.post("/crawl/{job_id}/confirm", response_model=CrawlJob)
+async def confirm_preview(
+    job_id: str,
+    body: ConfirmPreviewRequest,
+    background_tasks: BackgroundTasks,
+) -> CrawlJob:
+    """Confirm or reject the preview and continue (or abort) the full crawl."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != CrawlStatus.PREVIEW:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job is not in preview state (current: {job.status.value})",
+        )
+
+    if not body.approved:
+        job.status = CrawlStatus.FAILED
+        job.error = "Crawl aborted by user after preview."
+        return job
+
+    # Store user feedback (may be None)
+    job.user_feedback = body.feedback
+    background_tasks.add_task(_run_full, job)
     return job
 
 
@@ -71,6 +102,11 @@ async def list_jobs() -> list[CrawlJob]:
     return sorted(_jobs.values(), key=lambda j: j.created_at, reverse=True)
 
 
-async def _run_job(job: CrawlJob) -> None:
-    """Background task that runs the orchestrator pipeline."""
-    await _orchestrator.run(job)
+async def _run_preview(job: CrawlJob) -> None:
+    """Background task: plan + scrape a single preview item."""
+    await _orchestrator.run_preview(job)
+
+
+async def _run_full(job: CrawlJob) -> None:
+    """Background task: run the full crawl after user confirms preview."""
+    await _orchestrator.run_full(job)

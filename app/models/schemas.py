@@ -144,6 +144,7 @@ class CrawlStatus(str, enum.Enum):
     PENDING = "pending"
     PLANNING = "planning"
     SCRAPING = "scraping"
+    PREVIEW = "preview"
     PARSING = "parsing"
     OUTPUT = "output"
     COMPLETED = "completed"
@@ -154,6 +155,15 @@ class CrawlRequest(BaseModel):
     url: str = Field(description="The exhibitor listing URL to crawl.")
     max_pages: int | None = Field(
         default=None, description="Override the default max pages for this crawl."
+    )
+
+
+class ConfirmPreviewRequest(BaseModel):
+    """Sent by the user after reviewing a preview record."""
+    approved: bool = Field(description="True to continue the full crawl, false to abort.")
+    feedback: str | None = Field(
+        default=None,
+        description="Optional user feedback describing what data is missing or wrong.",
     )
 
 
@@ -168,6 +178,14 @@ class CrawlJob(BaseModel):
     request: CrawlRequest
     status: CrawlStatus = CrawlStatus.PENDING
     plan: ScrapingPlan | None = None
+    preview_record: ExhibitorRecord | None = Field(
+        default=None,
+        description="Single sample record shown to the user for validation before full crawl.",
+    )
+    user_feedback: str | None = Field(
+        default=None,
+        description="User feedback provided during preview (e.g. 'I also need email and phone').",
+    )
     result: CrawlResult | None = None
     error: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
