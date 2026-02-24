@@ -18,6 +18,12 @@ _client: AsyncAzureOpenAI | None = None
 def get_client() -> AsyncAzureOpenAI:
     global _client
     if _client is None:
+        log.info(
+            "Connecting to Azure OpenAI: endpoint=%s deployment=%s api_version=%s",
+            settings.azure_openai_endpoint,
+            settings.azure_openai_deployment,
+            settings.azure_openai_api_version,
+        )
         _client = AsyncAzureOpenAI(
             azure_endpoint=settings.azure_openai_endpoint,
             api_key=settings.azure_openai_api_key,
