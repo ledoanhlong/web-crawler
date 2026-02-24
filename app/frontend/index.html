@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web Crawler AI Agent</title>
+<style>
+/* ── Reset & Base ─────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1117;--surface:#181a20;--surface2:#1e2028;--border:#2a2d37;
+  --text:#e4e5e9;--text2:#9ca0ab;--accent:#6c5ce7;--accent2:#a29bfe;
+  --green:#00b894;--yellow:#fdcb6e;--red:#e17055;--blue:#74b9ff;
+  --radius:10px;--shadow:0 2px 12px rgba(0,0,0,.35);
+}
+html{font-size:15px}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.55}
+a{color:var(--accent2);text-decoration:none}
+a:hover{text-decoration:underline}
+button{cursor:pointer;font-family:inherit}
+
+/* ── Layout ───────────────────────────────────────────────────────── */
+.app{max-width:1120px;margin:0 auto;padding:24px 20px 60px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:32px;padding-bottom:20px;border-bottom:1px solid var(--border)}
+header svg{flex-shrink:0}
+header h1{font-size:1.45rem;font-weight:700;letter-spacing:-.02em}
+header p{font-size:.85rem;color:var(--text2);margin-top:2px}
+
+/* ── New Crawl Card ───────────────────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;box-shadow:var(--shadow)}
+.card h2{font-size:1.05rem;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.form-row{display:flex;gap:10px}
+.form-row input[type=text]{flex:1;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.9rem;outline:none;transition:border .2s}
+.form-row input[type=text]:focus{border-color:var(--accent)}
+.form-row input::placeholder{color:var(--text2)}
+.form-row .max-pages{width:110px}
+.btn{padding:10px 22px;border:none;border-radius:8px;font-size:.88rem;font-weight:600;transition:background .2s,opacity .2s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:#5b4bd5}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-sm{padding:6px 14px;font-size:.8rem}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text2)}
+.btn-outline:hover{border-color:var(--text2);color:var(--text)}
+.btn-green{background:var(--green);color:#fff}
+.btn-green:hover{background:#00a884}
+
+.examples{margin-top:12px;display:flex;flex-wrap:wrap;gap:6px}
+.examples span{font-size:.78rem;color:var(--text2)}
+.example-chip{font-size:.75rem;padding:4px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;color:var(--text2);cursor:pointer;transition:all .15s;white-space:nowrap}
+.example-chip:hover{border-color:var(--accent);color:var(--accent2)}
+
+/* ── Jobs Table / List ────────────────────────────────────────────── */
+.section-header{display:flex;justify-content:space-between;align-items:center;margin:32px 0 14px}
+.section-header h2{font-size:1.05rem;display:flex;align-items:center;gap:8px}
+.job-count{font-size:.78rem;color:var(--text2);background:var(--surface2);padding:2px 10px;border-radius:12px}
+.empty-state{text-align:center;padding:48px 20px;color:var(--text2)}
+.empty-state svg{margin-bottom:12px;opacity:.4}
+.empty-state p{font-size:.9rem}
+
+.jobs-list{display:flex;flex-direction:column;gap:10px}
+.job-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);cursor:pointer;transition:border .2s}
+.job-card:hover{border-color:var(--accent)}
+.job-card.expanded{border-color:var(--accent)}
+.job-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.job-url{flex:1;min-width:0;font-size:.88rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.job-time{font-size:.76rem;color:var(--text2);white-space:nowrap}
+
+/* ── Status Badge ─────────────────────────────────────────────────── */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 12px;border-radius:20px;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.badge-pending{background:rgba(156,160,171,.12);color:var(--text2)}
+.badge-planning,.badge-scraping,.badge-parsing,.badge-output{background:rgba(108,92,231,.12);color:var(--accent2)}
+.badge-completed{background:rgba(0,184,148,.12);color:var(--green)}
+.badge-failed{background:rgba(225,112,85,.12);color:var(--red)}
+.badge .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.badge-pending .dot{background:var(--text2)}
+.badge-planning .dot,.badge-scraping .dot,.badge-parsing .dot,.badge-output .dot{background:var(--accent2);animation:pulse 1.5s ease-in-out infinite}
+.badge-completed .dot{background:var(--green)}
+.badge-failed .dot{background:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ── Pipeline Steps ───────────────────────────────────────────────── */
+.job-detail{margin-top:18px;padding-top:18px;border-top:1px solid var(--border)}
+.pipeline{display:flex;align-items:center;gap:0;margin-bottom:18px;overflow-x:auto;padding-bottom:4px}
+.pipe-step{display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:8px;font-size:.8rem;font-weight:500;color:var(--text2);background:var(--surface2);white-space:nowrap;transition:all .3s}
+.pipe-step.active{background:rgba(108,92,231,.15);color:var(--accent2)}
+.pipe-step.done{background:rgba(0,184,148,.1);color:var(--green)}
+.pipe-step.error{background:rgba(225,112,85,.1);color:var(--red)}
+.pipe-arrow{color:var(--border);margin:0 4px;font-size:.7rem;flex-shrink:0}
+.pipe-icon{width:18px;height:18px;display:flex;align-items:center;justify-content:center}
+
+/* ── Results area ─────────────────────────────────────────────────── */
+.results-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.record-count{font-size:.85rem;color:var(--text2)}
+.dl-btns{display:flex;gap:8px;margin-left:auto}
+.error-box{padding:12px 16px;background:rgba(225,112,85,.08);border:1px solid rgba(225,112,85,.25);border-radius:8px;color:var(--red);font-size:.85rem;margin-bottom:14px}
+.plan-box{padding:12px 16px;background:rgba(108,92,231,.06);border:1px solid rgba(108,92,231,.18);border-radius:8px;font-size:.82rem;color:var(--text2);margin-bottom:14px;overflow-x:auto}
+.plan-box pre{white-space:pre-wrap;word-break:break-word;font-family:'Cascadia Code','Fira Code',monospace;font-size:.78rem;line-height:1.5}
+
+/* ── Data Table ───────────────────────────────────────────────────── */
+.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{position:sticky;top:0;background:var(--surface2);padding:10px 14px;text-align:left;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:9px 14px;border-bottom:1px solid var(--border);color:var(--text);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(108,92,231,.04)}
+.table-wrap{max-height:480px;overflow-y:auto}
+
+/* ── Tabs ─────────────────────────────────────────────────────────── */
+.tabs{display:flex;gap:4px;margin-bottom:14px}
+.tab{padding:6px 16px;border-radius:6px;font-size:.82rem;font-weight:500;color:var(--text2);background:transparent;border:none;transition:all .15s}
+.tab:hover{color:var(--text)}
+.tab.active{background:var(--accent);color:#fff}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+/* ── Spinner ──────────────────────────────────────────────────────── */
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent2);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+@media(max-width:640px){
+  .form-row{flex-direction:column}
+  .form-row .max-pages{width:100%}
+  .pipeline{gap:0}
+  .pipe-step{padding:6px 10px;font-size:.73rem}
+  .dl-btns{margin-left:0;width:100%}
+  .dl-btns .btn{flex:1}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header>
+    <svg width="36" height="36" viewBox="0 0 36 36" fill="none"><rect width="36" height="36" rx="8" fill="#6c5ce7"/><path d="M10 18c0-4.4 3.6-8 8-8m0 16c4.4 0 8-3.6 8-8" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="18" cy="18" r="3" fill="#fff"/><path d="M18 10v-3m0 22v-3m8-8h3M7 18h3" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+    <div>
+      <h1>Web Crawler AI Agent</h1>
+      <p>Extract exhibitor &amp; seller data from trade fairs and marketplaces</p>
+    </div>
+  </header>
+
+  <!-- ── New Crawl ───────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8m-4-4h8"/></svg>
+      New Crawl
+    </h2>
+    <form id="crawlForm">
+      <div class="form-row">
+        <input type="text" id="urlInput" placeholder="Enter exhibitor listing URL (e.g. https://www.fibo.com/.../exhibitor-directory.html)" required>
+        <input type="text" id="maxPagesInput" class="max-pages" placeholder="Max pages" title="Maximum pages to crawl (optional)">
+        <button type="submit" class="btn btn-primary" id="submitBtn">Start Crawl</button>
+      </div>
+    </form>
+    <div class="examples">
+      <span>Try:</span>
+      <span class="example-chip" data-url="https://www.beauty-duesseldorf.com/vis/v1/en/directory/a">BEAUTY Dusseldorf</span>
+      <span class="example-chip" data-url="https://www.spogagafa.com/spoga-gafa-exhibitors/list-of-exhibitors/">spoga+gafa</span>
+      <span class="example-chip" data-url="https://outdoortradeshow.com/exhibitor-list/">Outdoor Trade Show</span>
+      <span class="example-chip" data-url="https://www.fibo.com/germany/en-gb/exhibitor-directory.html#/">FIBO</span>
+      <span class="example-chip" data-url="https://www.eisenwarenmesse.com/eisenwarenmesse-exhibitors/list-of-exhibitors/">Eisenwarenmesse</span>
+    </div>
+  </div>
+
+  <!-- ── Jobs Section ────────────────────────────────────────────── -->
+  <div class="section-header">
+    <h2>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+      Crawl Jobs
+      <span class="job-count" id="jobCount">0</span>
+    </h2>
+    <button class="btn btn-sm btn-outline" id="refreshBtn" title="Refresh jobs">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 105.64-12.36L1 10"/></svg>
+      Refresh
+    </button>
+  </div>
+
+  <div id="jobsList"></div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   Web Crawler AI Agent – Frontend
+   ═══════════════════════════════════════════════════════════════════ */
+const API = window.location.origin + '/api/v1';
+
+const STAGES = ['pending','planning','scraping','parsing','output','completed'];
+const STAGE_LABELS = {pending:'Queued',planning:'Planning',scraping:'Scraping',parsing:'Parsing',output:'Building Output',completed:'Completed',failed:'Failed'};
+const STAGE_ICONS = {
+  pending:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+  planning:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>',
+  scraping:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>',
+  parsing:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+  output:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  completed:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+  failed:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
+};
+
+const TABLE_COLS = ['name','booth_or_stand','country','city','website','email','phone','description','product_categories','hall'];
+
+let jobs = {};
+let expandedJobId = null;
+let pollingTimers = {};
+
+/* ── Helpers ──────────────────────────────────────────────────────── */
+function esc(s){ if(!s) return ''; const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function timeAgo(iso){
+  const s=Math.floor((Date.now()-new Date(iso+'Z').getTime())/1000);
+  if(s<60) return s+'s ago'; if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago';
+}
+
+/* ── API ──────────────────────────────────────────────────────────── */
+async function apiPost(path,body){
+  const r=await fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+async function apiGet(path){
+  const r=await fetch(API+path);
+  if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+/* ── Submit Crawl ─────────────────────────────────────────────────── */
+document.getElementById('crawlForm').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const url=document.getElementById('urlInput').value.trim();
+  const mp=document.getElementById('maxPagesInput').value.trim();
+  if(!url) return;
+  const btn=document.getElementById('submitBtn');
+  btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Starting...';
+  try{
+    const body={url};
+    if(mp && !isNaN(+mp)) body.max_pages=+mp;
+    const job=await apiPost('/crawl',body);
+    jobs[job.id]=job;
+    expandedJobId=job.id;
+    render();
+    startPolling(job.id);
+    document.getElementById('urlInput').value='';
+    document.getElementById('maxPagesInput').value='';
+  }catch(err){ alert('Failed to start crawl: '+err.message); }
+  finally{ btn.disabled=false; btn.textContent='Start Crawl'; }
+});
+
+/* ── Example chips ────────────────────────────────────────────────── */
+document.querySelectorAll('.example-chip').forEach(chip=>{
+  chip.addEventListener('click',()=>{
+    document.getElementById('urlInput').value=chip.dataset.url;
+    document.getElementById('urlInput').focus();
+  });
+});
+
+/* ── Polling ──────────────────────────────────────────────────────── */
+function startPolling(id){
+  if(pollingTimers[id]) return;
+  async function tick(){
+    try{
+      const j=await apiGet('/crawl/'+id);
+      jobs[j.id]=j;
+      render();
+      if(j.status==='completed'||j.status==='failed'){
+        clearInterval(pollingTimers[id]);
+        delete pollingTimers[id];
+      }
+    }catch(e){/* ignore transient errors */}
+  }
+  tick();
+  pollingTimers[id]=setInterval(tick,2000);
+}
+
+/* ── Load all jobs ────────────────────────────────────────────────── */
+async function loadJobs(){
+  try{
+    const list=await apiGet('/jobs');
+    list.forEach(j=>{jobs[j.id]=j});
+    render();
+    /* resume polling for active jobs */
+    list.filter(j=>!['completed','failed'].includes(j.status)).forEach(j=>startPolling(j.id));
+  }catch(e){ console.warn('Failed to load jobs',e); }
+}
+
+/* ── Render ───────────────────────────────────────────────────────── */
+function render(){
+  const sorted=Object.values(jobs).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  document.getElementById('jobCount').textContent=sorted.length;
+  const container=document.getElementById('jobsList');
+
+  if(!sorted.length){
+    container.innerHTML=`<div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      <p>No crawl jobs yet. Submit a URL above to get started.</p>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML=sorted.map(j=>renderJobCard(j)).join('');
+
+  /* attach expand/collapse */
+  container.querySelectorAll('.job-card').forEach(card=>{
+    const id=card.dataset.id;
+    card.querySelector('.job-top').addEventListener('click',()=>{
+      expandedJobId=expandedJobId===id?null:id;
+      render();
+    });
+  });
+
+  /* attach tab handlers */
+  container.querySelectorAll('.tab').forEach(tab=>{
+    tab.addEventListener('click',()=>{
+      const panel=tab.dataset.panel;
+      const parent=tab.closest('.job-detail');
+      parent.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t===tab));
+      parent.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id===panel));
+    });
+  });
+}
+
+function renderJobCard(j){
+  const expanded=expandedJobId===j.id;
+  return `<div class="job-card ${expanded?'expanded':''}" data-id="${j.id}">
+    <div class="job-top">
+      <span class="badge badge-${j.status}"><span class="dot"></span>${STAGE_LABELS[j.status]}</span>
+      <span class="job-url" title="${esc(j.request.url)}">${esc(j.request.url)}</span>
+      <span class="job-time" title="${j.created_at}">${timeAgo(j.created_at)}</span>
+    </div>
+    ${expanded?renderJobDetail(j):''}
+  </div>`;
+}
+
+function renderJobDetail(j){
+  const stageIdx=STAGES.indexOf(j.status);
+  const isFailed=j.status==='failed';
+
+  let pipeline=STAGES.filter(s=>s!=='pending').map((s,i)=>{
+    let cls='';
+    const si=i+1; /* offset because we skip 'pending' */
+    if(isFailed && si>=stageIdx) cls='error';
+    else if(si<stageIdx||(j.status==='completed')) cls='done';
+    else if(si===stageIdx) cls='active';
+    const arrow=i<STAGES.length-2?'<span class="pipe-arrow">&#9654;</span>':'';
+    return `<div class="pipe-step ${cls}"><span class="pipe-icon">${STAGE_ICONS[s]}</span>${STAGE_LABELS[s]}</div>${arrow}`;
+  }).join('');
+
+  let body='';
+
+  if(isFailed && j.error){
+    body+=`<div class="error-box"><strong>Error:</strong> ${esc(j.error)}</div>`;
+  }
+
+  /* tabs: Plan / Data / Raw JSON */
+  const hasPlan=!!j.plan;
+  const hasRecords=j.result && j.result.records && j.result.records.length>0;
+  const isComplete=j.status==='completed';
+
+  if(hasPlan || hasRecords){
+    body+=`<div class="tabs">`;
+    if(hasRecords) body+=`<button class="tab active" data-panel="tab-data-${j.id}">Data Preview</button>`;
+    if(hasPlan) body+=`<button class="tab ${hasRecords?'':'active'}" data-panel="tab-plan-${j.id}">Scraping Plan</button>`;
+    if(hasRecords) body+=`<button class="tab" data-panel="tab-json-${j.id}">Raw JSON</button>`;
+    body+=`</div>`;
+
+    if(hasRecords){
+      const recs=j.result.records;
+      body+=`<div class="tab-panel active" id="tab-data-${j.id}">`;
+      body+=`<div class="results-bar">
+        <span class="record-count">${recs.length} exhibitor${recs.length!==1?'s':''} extracted</span>
+        ${isComplete?`<div class="dl-btns">
+          <a href="${API}/crawl/${j.id}/json" class="btn btn-sm btn-outline" download>Download JSON</a>
+          <a href="${API}/crawl/${j.id}/csv" class="btn btn-sm btn-green" download>Download CSV</a>
+        </div>`:''}
+      </div>`;
+      body+=renderTable(recs);
+      body+=`</div>`;
+    }
+
+    if(hasPlan){
+      body+=`<div class="tab-panel ${hasRecords?'':'active'}" id="tab-plan-${j.id}">
+        <div class="plan-box"><pre>${esc(JSON.stringify(j.plan,null,2))}</pre></div>
+      </div>`;
+    }
+
+    if(hasRecords){
+      body+=`<div class="tab-panel" id="tab-json-${j.id}">
+        <div class="plan-box"><pre>${esc(JSON.stringify(j.result.records.slice(0,20),null,2))}${j.result.records.length>20?'\n... ('+(j.result.records.length-20)+' more records)':''}</pre></div>
+      </div>`;
+    }
+  } else if(!isFailed && j.status!=='completed'){
+    body+=`<div style="text-align:center;padding:24px;color:var(--text2);font-size:.88rem"><span class="spinner" style="margin-right:8px"></span>Processing...</div>`;
+  }
+
+  return `<div class="job-detail">
+    <div class="pipeline">${pipeline}</div>
+    ${body}
+  </div>`;
+}
+
+function renderTable(records){
+  /* determine which columns have data */
+  const activeCols=TABLE_COLS.filter(c=>records.some(r=>{
+    const v=r[c]; return v && (Array.isArray(v)?v.length>0:true);
+  }));
+  if(!activeCols.length) return '<p style="color:var(--text2);font-size:.85rem">No structured data to display.</p>';
+
+  let html='<div class="table-wrap"><table><thead><tr>';
+  html+='<th>#</th>';
+  activeCols.forEach(c=>html+=`<th>${esc(c.replace(/_/g,' ').replace(/\b\w/g,l=>l.toUpperCase()))}</th>`);
+  html+='</tr></thead><tbody>';
+
+  records.forEach((r,i)=>{
+    html+='<tr>';
+    html+=`<td style="color:var(--text2)">${i+1}</td>`;
+    activeCols.forEach(c=>{
+      let v=r[c];
+      if(Array.isArray(v)) v=v.join(', ');
+      if(c==='website' && v) html+=`<td><a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a></td>`;
+      else if(c==='email' && v) html+=`<td><a href="mailto:${esc(v)}">${esc(v)}</a></td>`;
+      else html+=`<td title="${esc(v||'')}">${esc(v||'—')}</td>`;
+    });
+    html+='</tr>';
+  });
+
+  html+='</tbody></table></div>';
+  return html;
+}
+
+/* ── Refresh button ───────────────────────────────────────────────── */
+document.getElementById('refreshBtn').addEventListener('click',loadJobs);
+
+/* ── Init ─────────────────────────────────────────────────────────── */
+loadJobs();
+</script>
+</body>
+</html>

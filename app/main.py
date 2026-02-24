@@ -1,11 +1,16 @@
 """FastAPI application entry point."""
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.api.routes import router
 from app.config import settings
 from app.utils.logging import get_logger
+
+_FRONTEND_DIR = Path(__file__).parent / "frontend"
 
 log = get_logger(__name__)
 
@@ -32,6 +37,12 @@ app.include_router(router)
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/", include_in_schema=False)
+async def serve_frontend() -> FileResponse:
+    """Serve the single-page frontend UI."""
+    return FileResponse(_FRONTEND_DIR / "index.html", media_type="text/html")
 
 
 if __name__ == "__main__":
