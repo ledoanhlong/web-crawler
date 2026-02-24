@@ -45,7 +45,7 @@ async def chat_completion(
         "model": settings.azure_openai_deployment,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        "max_completion_tokens": max_tokens,
     }
     if response_format is not None:
         kwargs["response_format"] = response_format
