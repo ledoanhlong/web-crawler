@@ -43,6 +43,10 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .btn-outline:hover{border-color:var(--text2);color:var(--text)}
 .btn-green{background:var(--green);color:#fff}
 .btn-green:hover{background:#00a884}
+.btn-red{background:var(--red);color:#fff}
+.btn-red:hover{background:#d35845}
+.btn-yellow{background:var(--yellow);color:#1a1a2e}
+.btn-yellow:hover{background:#f0be3a}
 
 .examples{margin-top:12px;display:flex;flex-wrap:wrap;gap:6px}
 .examples span{font-size:.78rem;color:var(--text2)}
@@ -69,11 +73,13 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 12px;border-radius:20px;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 .badge-pending{background:rgba(156,160,171,.12);color:var(--text2)}
 .badge-planning,.badge-scraping,.badge-parsing,.badge-output{background:rgba(108,92,231,.12);color:var(--accent2)}
+.badge-preview{background:rgba(253,203,110,.15);color:var(--yellow)}
 .badge-completed{background:rgba(0,184,148,.12);color:var(--green)}
 .badge-failed{background:rgba(225,112,85,.12);color:var(--red)}
 .badge .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .badge-pending .dot{background:var(--text2)}
 .badge-planning .dot,.badge-scraping .dot,.badge-parsing .dot,.badge-output .dot{background:var(--accent2);animation:pulse 1.5s ease-in-out infinite}
+.badge-preview .dot{background:var(--yellow);animation:pulse 1.5s ease-in-out infinite}
 .badge-completed .dot{background:var(--green)}
 .badge-failed .dot{background:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
@@ -83,6 +89,7 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .pipeline{display:flex;align-items:center;gap:0;margin-bottom:18px;overflow-x:auto;padding-bottom:4px}
 .pipe-step{display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:8px;font-size:.8rem;font-weight:500;color:var(--text2);background:var(--surface2);white-space:nowrap;transition:all .3s}
 .pipe-step.active{background:rgba(108,92,231,.15);color:var(--accent2)}
+.pipe-step.preview-active{background:rgba(253,203,110,.12);color:var(--yellow)}
 .pipe-step.done{background:rgba(0,184,148,.1);color:var(--green)}
 .pipe-step.error{background:rgba(225,112,85,.1);color:var(--red)}
 .pipe-arrow{color:var(--border);margin:0 4px;font-size:.7rem;flex-shrink:0}
@@ -95,6 +102,21 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .error-box{padding:12px 16px;background:rgba(225,112,85,.08);border:1px solid rgba(225,112,85,.25);border-radius:8px;color:var(--red);font-size:.85rem;margin-bottom:14px}
 .plan-box{padding:12px 16px;background:rgba(108,92,231,.06);border:1px solid rgba(108,92,231,.18);border-radius:8px;font-size:.82rem;color:var(--text2);margin-bottom:14px;overflow-x:auto}
 .plan-box pre{white-space:pre-wrap;word-break:break-word;font-family:'Cascadia Code','Fira Code',monospace;font-size:.78rem;line-height:1.5}
+
+/* ── Preview Card ─────────────────────────────────────────────────── */
+.preview-box{border:1px solid rgba(253,203,110,.3);border-radius:var(--radius);padding:20px;margin-bottom:16px;background:rgba(253,203,110,.04)}
+.preview-box h3{font-size:.95rem;color:var(--yellow);margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.preview-box .preview-subtitle{font-size:.82rem;color:var(--text2);margin-bottom:16px}
+.preview-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:18px}
+.preview-field{background:var(--surface2);border-radius:8px;padding:10px 14px;border:1px solid var(--border)}
+.preview-field-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:3px;font-weight:600}
+.preview-field-value{font-size:.85rem;color:var(--text);word-break:break-word}
+.preview-field-value.empty{color:var(--text2);font-style:italic}
+.preview-actions{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
+.preview-actions .btn{flex-shrink:0}
+.feedback-input{flex:1;min-width:200px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.85rem;outline:none;transition:border .2s}
+.feedback-input:focus{border-color:var(--yellow)}
+.feedback-input::placeholder{color:var(--text2)}
 
 /* ── Data Table ───────────────────────────────────────────────────── */
 .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
@@ -125,6 +147,8 @@ tr:hover td{background:rgba(108,92,231,.04)}
   .pipe-step{padding:6px 10px;font-size:.73rem}
   .dl-btns{margin-left:0;width:100%}
   .dl-btns .btn{flex:1}
+  .preview-fields{grid-template-columns:1fr}
+  .preview-actions{flex-direction:column}
 }
 </style>
 </head>
@@ -185,12 +209,13 @@ tr:hover td{background:rgba(108,92,231,.04)}
    ═══════════════════════════════════════════════════════════════════ */
 const API = window.location.origin + '/api/v1';
 
-const STAGES = ['pending','planning','scraping','parsing','output','completed'];
-const STAGE_LABELS = {pending:'Queued',planning:'Planning',scraping:'Scraping',parsing:'Parsing',output:'Building Output',completed:'Completed',failed:'Failed'};
+const STAGES = ['pending','planning','scraping','preview','parsing','output','completed'];
+const STAGE_LABELS = {pending:'Queued',planning:'Planning',scraping:'Scraping',preview:'Preview',parsing:'Parsing',output:'Building Output',completed:'Completed',failed:'Failed'};
 const STAGE_ICONS = {
   pending:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
   planning:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>',
   scraping:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>',
+  preview:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
   parsing:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
   output:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
   completed:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
@@ -198,6 +223,7 @@ const STAGE_ICONS = {
 };
 
 const TABLE_COLS = ['name','booth_or_stand','country','city','website','email','phone','description','product_categories','hall'];
+const PREVIEW_FIELDS = ['name','booth_or_stand','hall','country','city','address','postal_code','website','email','phone','fax','description','product_categories','brands','logo_url'];
 
 let jobs = {};
 let expandedJobId = null;
@@ -210,6 +236,7 @@ function timeAgo(iso){
   if(s<60) return s+'s ago'; if(s<3600) return Math.floor(s/60)+'m ago';
   if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago';
 }
+function prettyLabel(key){ return key.replace(/_/g,' ').replace(/\b\w/g,l=>l.toUpperCase()); }
 
 /* ── API ──────────────────────────────────────────────────────────── */
 async function apiPost(path,body){
@@ -253,6 +280,16 @@ document.querySelectorAll('.example-chip').forEach(chip=>{
   });
 });
 
+/* ── Confirm / Feedback ──────────────────────────────────────────── */
+async function confirmPreview(jobId, approved, feedback){
+  try{
+    const j=await apiPost(`/crawl/${jobId}/confirm`,{approved, feedback: feedback||null});
+    jobs[j.id]=j;
+    render();
+    if(approved) startPolling(jobId);
+  }catch(err){ alert('Failed to confirm: '+err.message); }
+}
+
 /* ── Polling ──────────────────────────────────────────────────────── */
 function startPolling(id){
   if(pollingTimers[id]) return;
@@ -261,7 +298,7 @@ function startPolling(id){
       const j=await apiGet('/crawl/'+id);
       jobs[j.id]=j;
       render();
-      if(j.status==='completed'||j.status==='failed'){
+      if(['completed','failed','preview'].includes(j.status)){
         clearInterval(pollingTimers[id]);
         delete pollingTimers[id];
       }
@@ -277,8 +314,8 @@ async function loadJobs(){
     const list=await apiGet('/jobs');
     list.forEach(j=>{jobs[j.id]=j});
     render();
-    /* resume polling for active jobs */
-    list.filter(j=>!['completed','failed'].includes(j.status)).forEach(j=>startPolling(j.id));
+    /* resume polling for active jobs (not preview — that waits for user) */
+    list.filter(j=>!['completed','failed','preview'].includes(j.status)).forEach(j=>startPolling(j.id));
   }catch(e){ console.warn('Failed to load jobs',e); }
 }
 
@@ -316,6 +353,28 @@ function render(){
       parent.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id===panel));
     });
   });
+
+  /* attach preview confirm/feedback handlers */
+  container.querySelectorAll('.preview-confirm-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const id=btn.dataset.jobId;
+      const feedbackEl=document.getElementById('feedback-'+id);
+      const feedback=feedbackEl?feedbackEl.value.trim():'';
+      btn.disabled=true;
+      btn.innerHTML='<span class="spinner"></span> Starting full crawl...';
+      confirmPreview(id, true, feedback);
+    });
+  });
+
+  container.querySelectorAll('.preview-abort-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const id=btn.dataset.jobId;
+      if(confirm('Abort this crawl?')){
+        btn.disabled=true;
+        confirmPreview(id, false, null);
+      }
+    });
+  });
 }
 
 function renderJobCard(j){
@@ -333,13 +392,16 @@ function renderJobCard(j){
 function renderJobDetail(j){
   const stageIdx=STAGES.indexOf(j.status);
   const isFailed=j.status==='failed';
+  const isPreview=j.status==='preview';
 
   let pipeline=STAGES.filter(s=>s!=='pending').map((s,i)=>{
     let cls='';
     const si=i+1; /* offset because we skip 'pending' */
     if(isFailed && si>=stageIdx) cls='error';
     else if(si<stageIdx||(j.status==='completed')) cls='done';
-    else if(si===stageIdx) cls='active';
+    else if(si===stageIdx){
+      cls = isPreview && s==='preview' ? 'preview-active' : 'active';
+    }
     const arrow=i<STAGES.length-2?'<span class="pipe-arrow">&#9654;</span>':'';
     return `<div class="pipe-step ${cls}"><span class="pipe-icon">${STAGE_ICONS[s]}</span>${STAGE_LABELS[s]}</div>${arrow}`;
   }).join('');
@@ -348,6 +410,11 @@ function renderJobDetail(j){
 
   if(isFailed && j.error){
     body+=`<div class="error-box"><strong>Error:</strong> ${esc(j.error)}</div>`;
+  }
+
+  /* ── Preview state: show sample record + confirm/feedback UI ── */
+  if(isPreview && j.preview_record){
+    body+=renderPreviewCard(j);
   }
 
   /* tabs: Plan / Data / Raw JSON */
@@ -387,7 +454,7 @@ function renderJobDetail(j){
         <div class="plan-box"><pre>${esc(JSON.stringify(j.result.records.slice(0,20),null,2))}${j.result.records.length>20?'\n... ('+(j.result.records.length-20)+' more records)':''}</pre></div>
       </div>`;
     }
-  } else if(!isFailed && j.status!=='completed'){
+  } else if(!isFailed && !isPreview && j.status!=='completed'){
     body+=`<div style="text-align:center;padding:24px;color:var(--text2);font-size:.88rem"><span class="spinner" style="margin-right:8px"></span>Processing...</div>`;
   }
 
@@ -395,6 +462,37 @@ function renderJobDetail(j){
     <div class="pipeline">${pipeline}</div>
     ${body}
   </div>`;
+}
+
+function renderPreviewCard(j){
+  const r=j.preview_record;
+  let html=`<div class="preview-box">
+    <h3>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Preview — Sample Record
+    </h3>
+    <p class="preview-subtitle">Review this sample before running the full crawl. If data is missing or incorrect, describe what you need below.</p>
+    <div class="preview-fields">`;
+
+  PREVIEW_FIELDS.forEach(f=>{
+    let v=r[f];
+    if(Array.isArray(v)) v=v.length?v.join(', '):null;
+    if(typeof v==='object' && v!==null) v=Object.entries(v).map(([k,val])=>`${k}: ${val}`).join(', ')||null;
+    const hasVal=v && v.trim && v.trim().length>0;
+    html+=`<div class="preview-field">
+      <div class="preview-field-label">${esc(prettyLabel(f))}</div>
+      <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'Not captured'}</div>
+    </div>`;
+  });
+
+  html+=`</div>
+    <div class="preview-actions">
+      <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}">Looks good — Start full crawl</button>
+      <input type="text" class="feedback-input" id="feedback-${j.id}" placeholder="Optional: describe missing data (e.g. 'I also need email, phone, and full address from the detail page')">
+      <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Abort</button>
+    </div>
+  </div>`;
+  return html;
 }
 
 function renderTable(records){
@@ -406,7 +504,7 @@ function renderTable(records){
 
   let html='<div class="table-wrap"><table><thead><tr>';
   html+='<th>#</th>';
-  activeCols.forEach(c=>html+=`<th>${esc(c.replace(/_/g,' ').replace(/\b\w/g,l=>l.toUpperCase()))}</th>`);
+  activeCols.forEach(c=>html+=`<th>${esc(prettyLabel(c))}</th>`);
   html+='</tr></thead><tbody>';
 
   records.forEach((r,i)=>{

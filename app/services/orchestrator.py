@@ -1,7 +1,13 @@
 """Orchestrator — Coordinates the four-agent pipeline for a crawl job.
 
 Pipeline:
-    PlannerAgent  →  ScraperAgent  →  ParserAgent  →  OutputAgent
+    PlannerAgent  →  Preview (1 item)  →  User confirms  →  ScraperAgent  →  ParserAgent  →  OutputAgent
+
+After the planning stage the orchestrator scrapes a single item (including its
+detail page), parses it, and pauses with status ``PREVIEW`` so the user can
+validate the output.  Once the user confirms (via ``POST /confirm``), the full
+crawl resumes.  If the user provides feedback, the planner re-plans using that
+feedback before continuing.
 
 Each stage updates the CrawlJob status so progress can be tracked via the API.
 """
@@ -29,19 +35,67 @@ class Orchestrator:
         self.parser = ParserAgent()
         self.output = OutputAgent()
 
-    async def run(self, job: CrawlJob) -> CrawlJob:
+    # ------------------------------------------------------------------
+    # Phase 1: plan + preview (called when the job is first submitted)
+    # ------------------------------------------------------------------
+    async def run_preview(self, job: CrawlJob) -> CrawlJob:
+        """Run planning, scrape a single preview item, parse it, then pause."""
         try:
             # ---- Stage 1: Planning ----
             job.status = CrawlStatus.PLANNING
             job.updated_at = datetime.utcnow()
-            log.info("[%s] Stage 1/4: Planning", job.id)
+            log.info("[%s] Stage 1: Planning", job.id)
             plan = await self.planner.plan(job.request.url)
             job.plan = plan
 
-            # ---- Stage 2: Scraping ----
+            # ---- Stage 1b: Scrape one preview item ----
             job.status = CrawlStatus.SCRAPING
             job.updated_at = datetime.utcnow()
-            log.info("[%s] Stage 2/4: Scraping", job.id)
+            log.info("[%s] Scraping single preview item", job.id)
+            preview_pages = await self.scraper.scrape_preview(plan)
+
+            if preview_pages and preview_pages[0].items:
+                # Parse the single item
+                records = await self.parser.parse(preview_pages, plan)
+                if records:
+                    job.preview_record = records[0]
+                    log.info("[%s] Preview record: %s", job.id, records[0].name)
+
+            # ---- Pause for user validation ----
+            job.status = CrawlStatus.PREVIEW
+            job.updated_at = datetime.utcnow()
+            log.info("[%s] Preview ready — waiting for user confirmation", job.id)
+
+        except Exception as exc:
+            job.status = CrawlStatus.FAILED
+            job.error = str(exc)
+            job.updated_at = datetime.utcnow()
+            log.error("[%s] Failed during preview: %s", job.id, exc, exc_info=True)
+
+        return job
+
+    # ------------------------------------------------------------------
+    # Phase 2: full crawl (called after user confirms the preview)
+    # ------------------------------------------------------------------
+    async def run_full(self, job: CrawlJob) -> CrawlJob:
+        """Continue the full crawl after user confirmation."""
+        try:
+            plan = job.plan
+            if not plan:
+                raise RuntimeError("Cannot run full crawl without a plan")
+
+            # If the user gave feedback, re-plan with that context
+            if job.user_feedback:
+                job.status = CrawlStatus.PLANNING
+                job.updated_at = datetime.utcnow()
+                log.info("[%s] Re-planning with user feedback: %s", job.id, job.user_feedback)
+                plan = await self.planner.replan(plan, job.user_feedback)
+                job.plan = plan
+
+            # ---- Stage 2: Full Scraping ----
+            job.status = CrawlStatus.SCRAPING
+            job.updated_at = datetime.utcnow()
+            log.info("[%s] Stage 2: Full scraping", job.id)
             page_data_list = await self.scraper.scrape(plan)
             total_items = sum(len(pd.items) for pd in page_data_list)
             log.info("[%s] Scraped %d items from %d pages", job.id, total_items, len(page_data_list))
@@ -49,13 +103,13 @@ class Orchestrator:
             # ---- Stage 3: Parsing ----
             job.status = CrawlStatus.PARSING
             job.updated_at = datetime.utcnow()
-            log.info("[%s] Stage 3/4: Parsing", job.id)
+            log.info("[%s] Stage 3: Parsing", job.id)
             records = await self.parser.parse(page_data_list, plan)
 
             # ---- Stage 4: Output ----
             job.status = CrawlStatus.OUTPUT
             job.updated_at = datetime.utcnow()
-            log.info("[%s] Stage 4/4: Building output", job.id)
+            log.info("[%s] Stage 4: Building output", job.id)
             result = await self.output.build_output(records, job.id)
             job.result = result
 
