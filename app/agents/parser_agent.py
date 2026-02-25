@@ -12,54 +12,12 @@ from __future__ import annotations
 import json
 
 from app.models.schemas import ExhibitorRecord, PageData, ScrapingPlan
+from app.prompts import load_prompt
 from app.utils.html import simplify_html
 from app.utils.llm import chat_completion_json
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
-
-SYSTEM_PROMPT = """\
-You are a data-parsing specialist. You receive raw scraped exhibitor / seller \
-data from trade fair and marketplace websites. Your job is to normalize each \
-record into a consistent JSON structure.
-
-For each exhibitor, return a JSON object with these fields (use null when \
-the data is not available):
-
-{
-  "name": "<string>",
-  "booth_or_stand": "<string or null>",
-  "country": "<string or null>",
-  "city": "<string or null>",
-  "address": "<string or null>",
-  "postal_code": "<string or null>",
-  "website": "<URL string or null>",
-  "email": "<string or null>",
-  "phone": "<string or null>",
-  "fax": "<string or null>",
-  "description": "<string or null>",
-  "product_categories": ["<string>", ...],
-  "brands": ["<string>", ...],
-  "hall": "<string or null>",
-  "logo_url": "<URL string or null>",
-  "social_media": {"<platform>": "<url>", ...},
-  "raw_extra": {"<key>": "<value>", ...}
-}
-
-Rules:
-- ``name`` is required. If you cannot determine a company name, use the most \
-  prominent text as the name.
-- Normalise country names to English (e.g. "Deutschland" → "Germany").
-- If a field contains a combined location like "Berlin, Germany", split it \
-  into ``city`` and ``country``.
-- Put any leftover fields that don't map to the schema into ``raw_extra``.
-- Clean up HTML entities (&amp; → &), excessive whitespace, and encoding \
-  artefacts.
-- If detail-page data is provided for a record, merge it with the listing \
-  data (detail data takes priority when both have the same field).
-- Return a JSON object: {"records": [<list of exhibitor objects>]}
-- Return ONLY valid JSON. No markdown fences, no explanation.
-"""
 
 # Max items to send per LLM call to stay within context limits
 _BATCH_SIZE = 40
@@ -76,25 +34,40 @@ class ParserAgent:
         # Flatten all items from all pages
         all_items: list[dict[str, str | None]] = []
         detail_htmls: dict[str, str] = {}
+        detail_sub_pages: dict[str, dict[str, str]] = {}
+        detail_api_responses: dict[str, dict] = {}
         for pd in page_data_list:
             all_items.extend(pd.items)
             detail_htmls.update(pd.detail_pages)
+            detail_sub_pages.update(pd.detail_sub_pages)
+            detail_api_responses.update(pd.detail_api_responses)
 
         log.info("Parsing %d raw items", len(all_items))
 
         if not all_items:
             return []
 
-        # Parse detail pages into text snippets for enrichment
+        # Parse detail pages into text snippets for enrichment.
+        # Always process detail pages when they exist (fall back to simplified HTML
+        # if no specific selectors are available).
         detail_texts: dict[str, str] = {}
-        if detail_htmls and plan.detail_page_fields:
+        if detail_htmls:
             for url, html in detail_htmls.items():
-                detail_texts[url] = self._extract_detail_fields(html, plan)
+                fields_text = self._extract_detail_fields(html, plan)
+                # Append sub-page data if available
+                sub_pages = detail_sub_pages.get(url, {})
+                if sub_pages:
+                    sub_parts: list[str] = []
+                    for label, sub_html in sub_pages.items():
+                        sub_text = simplify_html(sub_html, max_chars=2_000)
+                        sub_parts.append(f"\n--- {label} page ---\n{sub_text}")
+                    fields_text += "\n".join(sub_parts)
+                detail_texts[url] = fields_text
 
         records: list[ExhibitorRecord] = []
         for batch_start in range(0, len(all_items), _BATCH_SIZE):
             batch = all_items[batch_start : batch_start + _BATCH_SIZE]
-            batch_records = await self._parse_batch(batch, detail_texts, plan.url)
+            batch_records = await self._parse_batch(batch, detail_texts, detail_api_responses, plan.url)
             records.extend(batch_records)
 
         log.info("Parsed %d exhibitor records total", len(records))
@@ -104,20 +77,27 @@ class ParserAgent:
         self,
         items: list[dict[str, str | None]],
         detail_texts: dict[str, str],
+        detail_api_responses: dict[str, dict],
         source_url: str,
     ) -> list[ExhibitorRecord]:
         # Build context for the LLM
         enriched_items = []
         for item in items:
             entry: dict[str, str | None] = {**item}
-            # If we have detail page data, attach it
+            # If we have HTML detail page data, attach it
             detail_link = item.get("detail_link")
             if detail_link and detail_link in detail_texts:
                 entry["_detail_page_data"] = detail_texts[detail_link]
+            # If we have API detail JSON data, attach it
+            item_id = item.get("_detail_api_id")
+            if item_id and item_id in detail_api_responses:
+                entry["_detail_api_data"] = json.dumps(
+                    detail_api_responses[item_id], ensure_ascii=False, indent=2
+                )
             enriched_items.append(entry)
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": load_prompt("parser")},
             {
                 "role": "user",
                 "content": (
