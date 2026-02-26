@@ -97,6 +97,57 @@ IMPORTANT — Detail pages:
 """
 
 
+def _sanitize_plan_data(plan_data: dict) -> dict:
+    """Clean up LLM output before Pydantic validation.
+
+    GPT sometimes returns nested dicts where flat ``dict[str, str]`` is expected.
+    For example ``detail_page_fields`` may come back as::
+
+        {"fields_to_extract": {"email": "$.email", "phone": "$.phone"}}
+
+    instead of the expected::
+
+        {"email": "$.email", "phone": "$.phone"}
+
+    This helper flattens such cases and strips any non-string values.
+    """
+    for key in ("detail_page_fields", "detail_page_field_attributes", "api_params"):
+        val = plan_data.get(key)
+        if not isinstance(val, dict):
+            continue
+        # If any value is itself a dict, flatten one level
+        flat: dict[str, str] = {}
+        for k, v in val.items():
+            if isinstance(v, dict):
+                for inner_k, inner_v in v.items():
+                    flat[inner_k] = str(inner_v) if inner_v is not None else ""
+            elif isinstance(v, str):
+                flat[k] = v
+            else:
+                flat[k] = str(v) if v is not None else ""
+        plan_data[key] = flat
+
+    # Same treatment for target.field_selectors / field_attributes
+    target = plan_data.get("target")
+    if isinstance(target, dict):
+        for key in ("field_selectors", "field_attributes"):
+            val = target.get(key)
+            if not isinstance(val, dict):
+                continue
+            flat = {}
+            for k, v in val.items():
+                if isinstance(v, dict):
+                    for inner_k, inner_v in v.items():
+                        flat[inner_k] = str(inner_v) if inner_v is not None else ""
+                elif isinstance(v, str):
+                    flat[k] = v
+                else:
+                    flat[k] = str(v) if v is not None else ""
+            target[key] = flat
+
+    return plan_data
+
+
 class PlannerAgent:
     """Analyse a listing page and return a ScrapingPlan."""
 
@@ -142,6 +193,7 @@ class PlannerAgent:
 
         # --- 4. Parse into ScrapingPlan ---
         plan_data["url"] = url
+        plan_data = _sanitize_plan_data(plan_data)
         plan = ScrapingPlan.model_validate(plan_data)
         log.info(
             "Plan: js=%s, pagination=%s, fields=%s, detail_link=%s",
@@ -204,6 +256,7 @@ class PlannerAgent:
 
         plan_data: dict = await chat_completion_json(messages, max_tokens=8_000)
         plan_data["url"] = current_plan.url
+        plan_data = _sanitize_plan_data(plan_data)
         plan = ScrapingPlan.model_validate(plan_data)
         log.info(
             "Re-plan: js=%s, pagination=%s, fields=%s, detail_link=%s",
