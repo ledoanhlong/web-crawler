@@ -4,7 +4,9 @@ import enum
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +44,74 @@ class ScrapingTarget(BaseModel):
     detail_link_selector: str | None = Field(
         default=None,
         description="CSS selector for the link to an exhibitor's detail page (relative to item container).",
+    )
+    detail_button_selector: str | None = Field(
+        default=None,
+        description="CSS selector for a JS-only detail button with no href (relative to item container).",
+    )
+
+
+class DetailSubLink(BaseModel):
+    """A link on a detail page that may lead to additional useful data."""
+
+    label: str = Field(
+        description="The visible text or inferred purpose of the link (e.g. 'Products', 'Contact')."
+    )
+    selector: str = Field(
+        description="CSS selector to find this link on the detail page."
+    )
+    attribute: str = Field(
+        default="href",
+        description="HTML attribute to read the URL from.",
+    )
+
+
+class DetailPagePlan(BaseModel):
+    """Analysis result for a sample detail page, produced by the PlannerAgent."""
+
+    field_selectors: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Map of field name -> CSS selector for extracting data from the detail page. "
+            "E.g. {'email': 'a.email-link', 'phone': 'span.phone'}."
+        ),
+    )
+    field_attributes: dict[str, str] = Field(
+        default_factory=dict,
+        description="Map of field name -> HTML attribute to read instead of text content.",
+    )
+    sub_links: list[DetailSubLink] = Field(
+        default_factory=list,
+        description=(
+            "Links on the detail page worth following for additional data "
+            "(e.g. 'Products' tab, 'Contact' page, 'About us')."
+        ),
+    )
+
+
+class DetailApiPlan(BaseModel):
+    """Describes how to fetch detail data from a discovered JSON API endpoint."""
+
+    api_url_template: str = Field(
+        description=(
+            "URL template with {id} placeholder. "
+            "E.g. 'https://example.com/api/exhibitors/{id}/profile'"
+        )
+    )
+    id_selector: str = Field(
+        description="CSS selector (relative to item container) for the element containing the exhibitor ID.",
+    )
+    id_attribute: str | None = Field(
+        default=None,
+        description="HTML attribute to read the ID from (e.g. 'data-id'). If null, use text content.",
+    )
+    id_regex: str | None = Field(
+        default=None,
+        description="Optional regex with one capture group to extract the ID from the attribute value.",
+    )
+    sample_response: dict | None = Field(
+        default=None,
+        description="A sample JSON response from the API (stored for parser context).",
     )
 
 
@@ -82,6 +152,14 @@ class ScrapingPlan(BaseModel):
         default_factory=dict,
         description="Attribute overrides for detail page fields.",
     )
+    detail_page_plan: DetailPagePlan | None = Field(
+        default=None,
+        description="Analysis of a sample detail page (produced by planner after fetching one detail page).",
+    )
+    detail_api_plan: DetailApiPlan | None = Field(
+        default=None,
+        description="API-based detail enrichment plan (when details are loaded via XHR, not page navigation).",
+    )
     wait_selector: str | None = Field(
         default=None,
         description="CSS selector to wait for before scraping (useful for JS-rendered pages).",
@@ -105,6 +183,17 @@ class PageData(BaseModel):
     detail_pages: dict[str, str] = Field(
         default_factory=dict,
         description="Map of detail-page URL -> raw HTML (or extracted text) for enrichment.",
+    )
+    detail_sub_pages: dict[str, dict[str, str]] = Field(
+        default_factory=dict,
+        description=(
+            "Map of detail-page URL -> {sub_link_label: sub_page_HTML}. "
+            "Contains HTML from followed sub-links on each detail page."
+        ),
+    )
+    detail_api_responses: dict[str, dict] = Field(
+        default_factory=dict,
+        description="Map of item ID -> parsed JSON response from the detail API.",
     )
 
 
@@ -174,6 +263,21 @@ class CrawlRequest(BaseModel):
         default=False,
         description="If true, only scrape and output a single item for testing.",
     )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("URL must not be empty")
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"URL must start with http:// or https:// (got {parsed.scheme!r})"
+            )
+        if not parsed.netloc:
+            raise ValueError("URL must include a valid domain (e.g. https://example.com)")
+        return v
 
 
 class ConfirmPreviewRequest(BaseModel):

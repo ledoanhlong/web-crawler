@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from app.prompts import load_prompt; p = load_prompt\\(''planner_listing''\\); print\\(f''planner_listing: {len\\(p\\)} chars''\\); p = load_prompt\\(''planner_detail''\\); print\\(f''planner_detail: {len\\(p\\)} chars''\\); p = load_prompt\\(''parser''\\); print\\(f''parser: {len\\(p\\)} chars''\\); p = load_prompt\\(''output_qa''\\); print\\(f''output_qa: {len\\(p\\)} chars''\\)\")",
+      "Bash(python -c \"from app.config import settings; print\\(f''max_sub_links_per_detail: {settings.max_sub_links_per_detail}''\\)\")",
+      "Bash(python -c \":*)",
+      "WebFetch(domain:www.beauty-duesseldorf.com)",
+      "Bash(python -c \"from app.main import app; print\\(''App loaded OK''\\)\")"
+    ]
+  }
+}

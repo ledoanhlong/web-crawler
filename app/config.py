@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     request_delay_ms: int = 1000
     request_timeout_s: int = 30
     max_pages_per_crawl: int = 500
+    max_sub_links_per_detail: int = 3
 
     # Playwright
     playwright_headless: bool = True

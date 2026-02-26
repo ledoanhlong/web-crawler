@@ -272,8 +272,8 @@ const STAGE_ICONS = {
   failed:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
 };
 
-const TABLE_COLS = ['name','booth_or_stand','country','city','website','email','phone','description','product_categories','hall'];
-const PREVIEW_FIELDS = ['name','booth_or_stand','hall','country','city','address','postal_code','website','email','phone','fax','description','product_categories','brands','logo_url'];
+const TABLE_COLS = ['name','booth_or_stand','country','city','address','website','email','phone','description','product_categories','hall'];
+const PREVIEW_FIELDS = ['name','booth_or_stand','hall','country','city','address','postal_code','website','email','phone','fax','description','product_categories','brands','logo_url','social_media'];
 
 let jobs = {};
 let expandedJobId = null;
@@ -521,7 +521,8 @@ function renderJobDetail(j){
 
     if(hasPlan){
       body+=`<div class="tab-panel ${hasRecords?'':'active'}" id="tab-plan-${j.id}">
-        <div class="plan-box"><pre>${esc(JSON.stringify(j.plan,null,2))}</pre></div>
+        ${renderPlanSummary(j.plan)}
+        <div class="plan-box" style="margin-top:10px"><pre>${esc(JSON.stringify(j.plan,null,2))}</pre></div>
       </div>`;
     }
 
@@ -601,6 +602,59 @@ function renderTable(records){
 
   html+='</tbody></table></div>';
   return html;
+}
+
+function renderPlanSummary(plan){
+  if(!plan) return '';
+  const target = plan.target || {};
+  const listingFields = Object.keys(target.field_selectors || {});
+  const detailFields = Object.keys(plan.detail_page_fields || {});
+  const detailPagePlan = plan.detail_page_plan;
+  const detailApiPlan = plan.detail_api_plan;
+
+  let detailApproach, detailBadgeColor;
+  if(detailApiPlan && detailApiPlan.api_url_template){
+    detailApproach = `<strong style="color:var(--green)">&#9889; API Interception</strong> — JS button clicked, API discovered<br><small style="color:var(--text2)">${esc(detailApiPlan.api_url_template)}</small>`;
+    detailBadgeColor = 'var(--green)';
+  } else if(detailPagePlan && Object.keys(detailPagePlan.field_selectors||{}).length){
+    detailApproach = `<strong style="color:var(--accent2)">&#128279; Detail Page</strong> — following links to detail pages`;
+    detailBadgeColor = 'var(--accent2)';
+  } else if(target.detail_link_selector){
+    detailApproach = `<strong style="color:var(--accent2)">&#128279; Detail Page</strong> — link selector found`;
+    detailBadgeColor = 'var(--accent2)';
+  } else if(target.detail_button_selector){
+    detailApproach = `<strong style="color:var(--yellow)">&#9888; JS Button</strong> — button found but API not yet intercepted`;
+    detailBadgeColor = 'var(--yellow)';
+  } else {
+    detailApproach = `<span style="color:var(--text2)">None — listing data only</span>`;
+    detailBadgeColor = 'var(--border)';
+  }
+
+  const paginationType = plan.pagination || 'none';
+  const jsRequired = plan.requires_javascript;
+
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:4px">
+    <div class="preview-field">
+      <div class="preview-field-label">Pagination</div>
+      <div class="preview-field-value">${esc(paginationType)}</div>
+    </div>
+    <div class="preview-field">
+      <div class="preview-field-label">JavaScript Required</div>
+      <div class="preview-field-value" style="color:${jsRequired?'var(--yellow)':'var(--green)'}">${jsRequired?'Yes':'No'}</div>
+    </div>
+    <div class="preview-field">
+      <div class="preview-field-label">Listing Fields</div>
+      <div class="preview-field-value">${listingFields.length ? esc(listingFields.join(', ')) : '<span style="color:var(--text2)">none</span>'}</div>
+    </div>
+    <div class="preview-field">
+      <div class="preview-field-label">Detail Fields</div>
+      <div class="preview-field-value">${detailFields.length||Object.keys(detailPagePlan&&detailPagePlan.field_selectors||{}).length ? esc(Object.keys(detailPagePlan&&detailPagePlan.field_selectors||detailFields).join(', ')) : '<span style="color:var(--text2)">none</span>'}</div>
+    </div>
+    <div class="preview-field" style="grid-column:1/-1;border-color:${detailBadgeColor}20">
+      <div class="preview-field-label">Detail Enrichment</div>
+      <div class="preview-field-value">${detailApproach}</div>
+    </div>
+  </div>`;
 }
 
 /* ── Refresh button ───────────────────────────────────────────────── */

@@ -14,26 +14,11 @@ import pandas as pd
 
 from app.config import settings
 from app.models.schemas import CrawlResult, ExhibitorRecord
+from app.prompts import load_prompt
 from app.utils.llm import chat_completion_json
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
-
-SYSTEM_PROMPT = """\
-You are a data quality specialist. You receive a list of exhibitor / seller \
-records that were scraped and parsed from a trade fair or marketplace website.
-
-Your job is to perform a final quality pass:
-1. **Deduplicate**: If two records clearly refer to the same company, merge \
-   them (keep the most complete data from each).
-2. **Consistency**: Normalise country names, phone formats, and URLs. Ensure \
-   websites start with http:// or https://.
-3. **Validation**: Drop records that are clearly garbage (e.g. navigation \
-   artefacts, empty names, header rows).
-
-Return a JSON object: {"records": [<list of cleaned exhibitor objects>]}
-Keep the same schema as the input. Return ONLY valid JSON.
-"""
 
 # If there are fewer records than this, skip the LLM QA pass to save cost
 _QA_THRESHOLD = 3
@@ -87,7 +72,7 @@ class OutputAgent:
         for i in range(0, len(serialized), chunk_size):
             chunk = serialized[i : i + chunk_size]
             messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": load_prompt("output_qa")},
                 {
                     "role": "user",
                     "content": (

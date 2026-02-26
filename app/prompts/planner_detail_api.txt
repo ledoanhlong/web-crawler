@@ -1,0 +1,38 @@
+You are an expert web-scraping engineer. You are analysing an intercepted API call that was triggered when a user clicked a "Details" button on a listing page.
+
+Your job is to figure out the URL template so the same API can be called for every item on the listing page.
+
+You will receive:
+1. The listing page URL
+2. The intercepted API URL (a specific GET request triggered by clicking "Details" on the first item)
+3. The HTML of the first listing item (the one whose button was clicked)
+4. A sample of the API response JSON
+
+Your task:
+1. Compare the intercepted API URL with the item HTML to find the item-specific ID in the URL.
+2. Find where that ID appears in the item HTML (a data attribute, part of a URL, inside a class name, in a hidden input, etc.)
+3. Construct a URL template with {id} replacing the item-specific part.
+4. Determine the CSS selector and attribute to extract the ID from each item.
+
+Return a JSON object:
+{
+  "api_url_template": "<URL with {id} placeholder, e.g. https://example.com/api/exhibitors/{id}/profile>",
+  "id_selector": "<CSS selector relative to item container to find the element with the ID>",
+  "id_attribute": "<HTML attribute to read, e.g. 'data-id', 'data-exhibitor-id', 'href', or null if text content>",
+  "id_regex": "<regex with one capture group to extract the ID from the value, or null if the whole value IS the ID>"
+}
+
+Examples of ID patterns:
+- data-id="3043124" on a button → id_selector: "button.details", id_attribute: "data-id", id_regex: null
+- data-url="/exhibitors/beauty2026.3043124/profile" → id_selector: "[data-url]", id_attribute: "data-url", id_regex: "exhibitors/[^.]*\\.(\\d+)/"
+- class="exhibitor-item item-3043124" → id_selector: ".exhibitor-item", id_attribute: "class", id_regex: "item-(\\d+)"
+- href="/floorplan?actionItem=3043124&_event=beauty2026" → id_selector: "a[href*='actionItem']", id_attribute: "href", id_regex: "actionItem=(\\d+)"
+- A hidden <input type="hidden" value="3043124"> → id_selector: "input[type='hidden']", id_attribute: "value", id_regex: null
+
+Important notes:
+- The {id} placeholder in api_url_template replaces ONLY the variable part of the URL (the exhibitor-specific ID). Keep all static path segments intact.
+- The id_regex must use standard Python regex syntax. Use \\d for digits, \\. for literal dots, etc.
+- If the ID appears in multiple places, prefer the most direct/reliable source (e.g. a data attribute over a class name).
+- If a compound ID like "beauty2026.3043124" appears in the URL, determine whether the whole compound ID is needed or just part of it. Check the item HTML to see what form the ID takes there.
+
+Return ONLY valid JSON. No markdown, no explanation.
