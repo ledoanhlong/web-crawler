@@ -3,11 +3,12 @@
 Flow
 ----
 1. Fetch the target URL (httpx first; Playwright fallback if the page looks JS-heavy).
-2. Simplify the HTML (strip scripts/styles/boilerplate).
-3. Send the simplified HTML to GPT with a structured prompt asking it to identify
+2. Optionally fetch a user-provided detail page URL.
+3. Simplify the HTML (strip scripts/styles/boilerplate).
+4. Send the simplified HTML to GPT with a structured prompt asking it to identify
    item containers, field selectors, pagination strategy, and whether JS rendering
    is required.
-4. Parse the JSON response into a ``ScrapingPlan``.
+5. Parse the JSON response into a ``ScrapingPlan``.
 """
 
 from __future__ import annotations
@@ -93,6 +94,10 @@ IMPORTANT — Detail pages:
   If you are unsure of the exact selectors on the detail page, leave \
   ``detail_page_fields`` empty — the system will use the full simplified HTML.
 
+IMPORTANT — All values in ``detail_page_fields`` and ``detail_page_field_attributes`` \
+must be plain strings (CSS selectors or attribute names). Never nest objects inside \
+these dictionaries.
+
 - Return ONLY valid JSON.  No markdown, no explanation.
 """
 
@@ -148,44 +153,78 @@ def _sanitize_plan_data(plan_data: dict) -> dict:
     return plan_data
 
 
+async def _fetch_html(url: str) -> str:
+    """Fetch a page — try httpx first, fall back to Playwright."""
+    html_raw = ""
+    needs_js = False
+    try:
+        html_raw = await fetch_page(url)
+        if len(html_raw) < 2_000 or "<noscript>" in html_raw.lower():
+            needs_js = True
+    except Exception:
+        needs_js = True
+
+    if needs_js:
+        log.info("httpx fetch insufficient; falling back to Playwright for %s", url)
+        from app.utils.browser import fetch_page_js, get_browser
+
+        async with get_browser() as browser:
+            html_raw = await fetch_page_js(browser, url)
+
+    return html_raw
+
+
 class PlannerAgent:
     """Analyse a listing page and return a ScrapingPlan."""
 
-    async def plan(self, url: str) -> ScrapingPlan:
+    async def plan(
+        self,
+        url: str,
+        *,
+        detail_page_url: str | None = None,
+        fields_wanted: str | None = None,
+    ) -> ScrapingPlan:
         log.info("Planning scrape for %s", url)
 
-        # --- 1. Fetch the page (try httpx first) ----
-        html_raw = ""
-        needs_js_fallback = False
-        try:
-            html_raw = await fetch_page(url)
-            # Heuristic: if the body is almost empty, the page is likely JS-rendered
-            if len(html_raw) < 2_000 or "<noscript>" in html_raw.lower():
-                needs_js_fallback = True
-        except Exception:
-            needs_js_fallback = True
-
-        if needs_js_fallback:
-            log.info("httpx fetch insufficient; falling back to Playwright for %s", url)
-            from app.utils.browser import fetch_page_js, get_browser
-
-            async with get_browser() as browser:
-                html_raw = await fetch_page_js(browser, url)
-
-        # --- 2. Simplify HTML for the LLM ---
+        # --- 1. Fetch the listing page ---
+        html_raw = await _fetch_html(url)
         html_simple = simplify_html(html_raw)
-        log.debug("Simplified HTML: %d chars", len(html_simple))
+        log.debug("Simplified listing HTML: %d chars", len(html_simple))
 
-        # --- 3. Ask GPT to produce the plan ---
+        # --- 2. Optionally fetch the detail page ---
+        detail_html_simple = ""
+        if detail_page_url:
+            log.info("Fetching user-provided detail page: %s", detail_page_url)
+            try:
+                detail_raw = await _fetch_html(detail_page_url)
+                detail_html_simple = simplify_html(detail_raw)
+                log.debug("Simplified detail HTML: %d chars", len(detail_html_simple))
+            except Exception as exc:
+                log.warning("Failed to fetch detail page %s: %s", detail_page_url, exc)
+
+        # --- 3. Build the prompt ---
+        user_content = (
+            f"Analyse the following HTML of the listing page at:\n{url}\n\n"
+            f"```html\n{html_simple}\n```"
+        )
+
+        if detail_html_simple:
+            user_content += (
+                f"\n\nThe user also provided an example DETAIL page at:\n{detail_page_url}\n\n"
+                f"Study this to identify the CSS selectors for ``detail_page_fields``.\n"
+                f"```html\n{detail_html_simple}\n```"
+            )
+
+        if fields_wanted:
+            user_content += (
+                f"\n\nThe user specifically wants these fields extracted: {fields_wanted}\n"
+                f"Make sure the plan captures all of these fields — from the listing page "
+                f"if available, otherwise from the detail page."
+            )
+
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"Analyse the following HTML of the listing page at:\n{url}\n\n"
-                    f"```html\n{html_simple}\n```"
-                ),
-            },
+            {"role": "user", "content": user_content},
         ]
 
         plan_data: dict = await chat_completion_json(messages, max_tokens=8_000)
@@ -212,18 +251,7 @@ class PlannerAgent:
         """
         log.info("Re-planning with user feedback: %s", user_feedback)
 
-        # Fetch the page again to get fresh HTML for context
-        html_raw = ""
-        try:
-            html_raw = await fetch_page(current_plan.url)
-            if len(html_raw) < 2_000 or "<noscript>" in html_raw.lower():
-                raise ValueError("JS fallback needed")
-        except Exception:
-            from app.utils.browser import fetch_page_js, get_browser
-
-            async with get_browser() as browser:
-                html_raw = await fetch_page_js(browser, current_plan.url)
-
+        html_raw = await _fetch_html(current_plan.url)
         html_simple = simplify_html(html_raw)
 
         current_plan_json = current_plan.model_dump(mode="json")
