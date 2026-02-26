@@ -30,8 +30,8 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;box-shadow:var(--shadow)}
 .card h2{font-size:1.05rem;margin-bottom:16px;display:flex;align-items:center;gap:8px}
 .form-row{display:flex;gap:10px}
-.form-row input[type=text]{flex:1;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.9rem;outline:none;transition:border .2s}
-.form-row input[type=text]:focus{border-color:var(--accent)}
+.form-row input[type=text],.form-row input[type=url]{flex:1;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.9rem;outline:none;transition:border .2s}
+.form-row input[type=text]:focus,.form-row input[type=url]:focus{border-color:var(--accent)}
 .form-row input::placeholder{color:var(--text2)}
 .form-row .max-pages{width:110px}
 .btn{padding:10px 22px;border:none;border-radius:8px;font-size:.88rem;font-weight:600;transition:background .2s,opacity .2s}
@@ -53,6 +53,24 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .example-chip{font-size:.75rem;padding:4px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;color:var(--text2);cursor:pointer;transition:all .15s;white-space:nowrap}
 .example-chip:hover{border-color:var(--accent);color:var(--accent2)}
 
+/* ── Advanced Options ──────────────────────────────────────────────── */
+.advanced-toggle{display:flex;align-items:center;gap:6px;margin-top:14px;cursor:pointer;color:var(--text2);font-size:.82rem;font-weight:500;user-select:none;transition:color .15s}
+.advanced-toggle:hover{color:var(--accent2)}
+.advanced-toggle svg{transition:transform .2s}
+.advanced-toggle.open svg{transform:rotate(90deg)}
+.advanced-panel{display:none;margin-top:12px;padding:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px}
+.advanced-panel.open{display:block}
+.advanced-row{display:flex;gap:10px;margin-bottom:10px}
+.advanced-row:last-child{margin-bottom:0}
+.advanced-row label{font-size:.8rem;color:var(--text2);min-width:120px;display:flex;align-items:center;flex-shrink:0}
+.advanced-row input[type=text],.advanced-row input[type=url]{flex:1;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.85rem;outline:none;transition:border .2s}
+.advanced-row input:focus{border-color:var(--accent)}
+.advanced-row input::placeholder{color:var(--text2)}
+.checkbox-row{display:flex;align-items:center;gap:8px}
+.checkbox-row input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+.checkbox-row label{font-size:.82rem;color:var(--text2);cursor:pointer}
+.field-hint{font-size:.72rem;color:var(--text2);margin-top:2px;opacity:.7}
+
 /* ── Jobs Table / List ────────────────────────────────────────────── */
 .section-header{display:flex;justify-content:space-between;align-items:center;margin:32px 0 14px}
 .section-header h2{font-size:1.05rem;display:flex;align-items:center;gap:8px}
@@ -68,6 +86,7 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .job-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .job-url{flex:1;min-width:0;font-size:.88rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
 .job-time{font-size:.76rem;color:var(--text2);white-space:nowrap}
+.job-mode{font-size:.7rem;padding:2px 8px;border-radius:10px;background:rgba(116,185,255,.12);color:var(--blue);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
 
 /* ── Status Badge ─────────────────────────────────────────────────── */
 .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 12px;border-radius:20px;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
@@ -149,6 +168,8 @@ tr:hover td{background:rgba(108,92,231,.04)}
   .dl-btns .btn{flex:1}
   .preview-fields{grid-template-columns:1fr}
   .preview-actions{flex-direction:column}
+  .advanced-row{flex-direction:column}
+  .advanced-row label{min-width:0}
 }
 </style>
 </head>
@@ -175,6 +196,35 @@ tr:hover td{background:rgba(108,92,231,.04)}
         <input type="text" id="urlInput" placeholder="Enter exhibitor listing URL (e.g. https://www.fibo.com/.../exhibitor-directory.html)" required>
         <input type="text" id="maxPagesInput" class="max-pages" placeholder="Max pages" title="Maximum pages to crawl (optional)">
         <button type="submit" class="btn btn-primary" id="submitBtn">Start Crawl</button>
+      </div>
+
+      <!-- ── Advanced Options ──────────────────────────────────── -->
+      <div class="advanced-toggle" id="advancedToggle">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+        Advanced Options
+      </div>
+      <div class="advanced-panel" id="advancedPanel">
+        <div class="advanced-row">
+          <label for="detailUrlInput">Detail page URL</label>
+          <div style="flex:1">
+            <input type="url" id="detailUrlInput" placeholder="Paste a single exhibitor detail/profile page URL">
+            <div class="field-hint">Open one exhibitor's "Details" page and paste the URL here so the AI can analyse its structure</div>
+          </div>
+        </div>
+        <div class="advanced-row">
+          <label for="fieldsInput">Fields wanted</label>
+          <div style="flex:1">
+            <input type="text" id="fieldsInput" placeholder="e.g. name, booth, country, email, phone, website, description">
+            <div class="field-hint">Comma-separated list of fields you want extracted</div>
+          </div>
+        </div>
+        <div class="advanced-row">
+          <label>&nbsp;</label>
+          <div class="checkbox-row">
+            <input type="checkbox" id="testSingleInput" checked>
+            <label for="testSingleInput">Test with single item only (recommended for first run)</label>
+          </div>
+        </div>
       </div>
     </form>
     <div class="examples">
@@ -250,17 +300,28 @@ async function apiGet(path){
   return r.json();
 }
 
+/* ── Advanced toggle ─────────────────────────────────────────────── */
+document.getElementById('advancedToggle').addEventListener('click',function(){
+  this.classList.toggle('open');
+  document.getElementById('advancedPanel').classList.toggle('open');
+});
+
 /* ── Submit Crawl ─────────────────────────────────────────────────── */
 document.getElementById('crawlForm').addEventListener('submit', async e=>{
   e.preventDefault();
   const url=document.getElementById('urlInput').value.trim();
   const mp=document.getElementById('maxPagesInput').value.trim();
+  const detailUrl=document.getElementById('detailUrlInput').value.trim();
+  const fields=document.getElementById('fieldsInput').value.trim();
+  const testSingle=document.getElementById('testSingleInput').checked;
   if(!url) return;
   const btn=document.getElementById('submitBtn');
   btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Starting...';
   try{
-    const body={url};
+    const body={url, test_single: testSingle};
     if(mp && !isNaN(+mp)) body.max_pages=+mp;
+    if(detailUrl) body.detail_page_url=detailUrl;
+    if(fields) body.fields_wanted=fields;
     const job=await apiPost('/crawl',body);
     jobs[job.id]=job;
     expandedJobId=job.id;
@@ -358,10 +419,13 @@ function render(){
   container.querySelectorAll('.preview-confirm-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const id=btn.dataset.jobId;
+      const isTest=btn.dataset.testSingle==='true';
       const feedbackEl=document.getElementById('feedback-'+id);
       const feedback=feedbackEl?feedbackEl.value.trim():'';
       btn.disabled=true;
-      btn.innerHTML='<span class="spinner"></span> Starting full crawl...';
+      btn.innerHTML=isTest
+        ? '<span class="spinner"></span> Finishing test...'
+        : '<span class="spinner"></span> Starting full crawl...';
       confirmPreview(id, true, feedback);
     });
   });
@@ -379,9 +443,11 @@ function render(){
 
 function renderJobCard(j){
   const expanded=expandedJobId===j.id;
+  const isTest=j.request.test_single;
   return `<div class="job-card ${expanded?'expanded':''}" data-id="${j.id}">
     <div class="job-top">
       <span class="badge badge-${j.status}"><span class="dot"></span>${STAGE_LABELS[j.status]}</span>
+      ${isTest?'<span class="job-mode">Test</span>':''}
       <span class="job-url" title="${esc(j.request.url)}">${esc(j.request.url)}</span>
       <span class="job-time" title="${j.created_at}">${timeAgo(j.created_at)}</span>
     </div>
@@ -393,6 +459,7 @@ function renderJobDetail(j){
   const stageIdx=STAGES.indexOf(j.status);
   const isFailed=j.status==='failed';
   const isPreview=j.status==='preview';
+  const isTest=j.request.test_single;
 
   let pipeline=STAGES.filter(s=>s!=='pending').map((s,i)=>{
     let cls='';
@@ -407,6 +474,15 @@ function renderJobDetail(j){
   }).join('');
 
   let body='';
+
+  /* show user hints if provided */
+  const hints=[];
+  if(j.request.detail_page_url) hints.push('Detail page: '+j.request.detail_page_url);
+  if(j.request.fields_wanted) hints.push('Fields: '+j.request.fields_wanted);
+  if(isTest) hints.push('Mode: Test single item');
+  if(hints.length){
+    body+=`<div style="font-size:.78rem;color:var(--text2);margin-bottom:12px;padding:8px 12px;background:var(--surface2);border-radius:6px;border:1px solid var(--border)">${hints.map(h=>'<div>'+esc(h)+'</div>').join('')}</div>`;
+  }
 
   if(isFailed && j.error){
     body+=`<div class="error-box"><strong>Error:</strong> ${esc(j.error)}</div>`;
@@ -467,12 +543,15 @@ function renderJobDetail(j){
 
 function renderPreviewCard(j){
   const r=j.preview_record;
+  const isTest=j.request.test_single;
   let html=`<div class="preview-box">
     <h3>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       Preview — Sample Record
     </h3>
-    <p class="preview-subtitle">Review this sample before running the full crawl. If data is missing or incorrect, describe what you need below.</p>
+    <p class="preview-subtitle">${isTest
+      ? 'This is a test run with a single item. Review the result and confirm to save it, or abort.'
+      : 'Review this sample before running the full crawl. If data is missing or incorrect, describe what you need below.'}</p>
     <div class="preview-fields">`;
 
   PREVIEW_FIELDS.forEach(f=>{
@@ -488,8 +567,8 @@ function renderPreviewCard(j){
 
   html+=`</div>
     <div class="preview-actions">
-      <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}">Looks good — Start full crawl</button>
-      <input type="text" class="feedback-input" id="feedback-${j.id}" placeholder="Optional: describe missing data (e.g. 'I also need email, phone, and full address from the detail page')">
+      <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}">${isTest?'Looks good — Save result':'Looks good — Start full crawl'}</button>
+      ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Optional: describe missing data (e.g. \'I also need email, phone, and full address from the detail page\')">'}
       <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Abort</button>
     </div>
   </div>`;

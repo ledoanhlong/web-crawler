@@ -245,6 +245,24 @@ class CrawlRequest(BaseModel):
     max_pages: int | None = Field(
         default=None, description="Override the default max pages for this crawl."
     )
+    detail_page_url: str | None = Field(
+        default=None,
+        description=(
+            "An example detail/profile page URL so the planner can analyse its structure. "
+            "E.g. click 'Details' on one exhibitor and paste that URL here."
+        ),
+    )
+    fields_wanted: str | None = Field(
+        default=None,
+        description=(
+            "Comma-separated list of fields the user wants extracted. "
+            "E.g. 'name, booth, country, city, email, phone, website, description'."
+        ),
+    )
+    test_single: bool = Field(
+        default=False,
+        description="If true, only scrape and output a single item for testing.",
+    )
 
     @field_validator("url")
     @classmethod

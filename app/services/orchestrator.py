@@ -9,6 +9,11 @@ validate the output.  Once the user confirms (via ``POST /confirm``), the full
 crawl resumes.  If the user provides feedback, the planner re-plans using that
 feedback before continuing.
 
+The user can supply optional hints at submission time:
+- ``detail_page_url`` — an example detail page for the planner to analyse
+- ``fields_wanted`` — fields the user wants extracted
+- ``test_single`` — if true, output just the 1 preview record (no full crawl)
+
 Each stage updates the CrawlJob status so progress can be tracked via the API.
 """
 
@@ -41,11 +46,17 @@ class Orchestrator:
     async def run_preview(self, job: CrawlJob) -> CrawlJob:
         """Run planning, scrape a single preview item, parse it, then pause."""
         try:
+            req = job.request
+
             # ---- Stage 1: Planning ----
             job.status = CrawlStatus.PLANNING
             job.updated_at = datetime.utcnow()
             log.info("[%s] Stage 1: Planning", job.id)
-            plan = await self.planner.plan(job.request.url)
+            plan = await self.planner.plan(
+                req.url,
+                detail_page_url=req.detail_page_url,
+                fields_wanted=req.fields_wanted,
+            )
             job.plan = plan
 
             # ---- Stage 1b: Scrape one preview item ----
@@ -83,6 +94,19 @@ class Orchestrator:
             plan = job.plan
             if not plan:
                 raise RuntimeError("Cannot run full crawl without a plan")
+
+            # If test_single mode — just output the preview record, skip scraping
+            if job.request.test_single:
+                log.info("[%s] Test-single mode — outputting preview record only", job.id)
+                job.status = CrawlStatus.OUTPUT
+                job.updated_at = datetime.utcnow()
+                records = [job.preview_record] if job.preview_record else []
+                result = await self.output.build_output(records, job.id)
+                job.result = result
+                job.status = CrawlStatus.COMPLETED
+                job.updated_at = datetime.utcnow()
+                log.info("[%s] Test-single completed — %d record(s)", job.id, len(records))
+                return job
 
             # If the user gave feedback, re-plan with that context
             if job.user_feedback:

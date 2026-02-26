@@ -3,8 +3,9 @@
 Flow
 ----
 1. Fetch the target URL (httpx first; Playwright fallback if the page looks JS-heavy).
-2. Simplify the HTML (strip scripts/styles/boilerplate).
-3. Send the simplified HTML to GPT with a structured prompt asking it to identify
+2. Optionally fetch a user-provided detail page URL.
+3. Simplify the HTML (strip scripts/styles/boilerplate).
+4. Send the simplified HTML to GPT with a structured prompt asking it to identify
    item containers, field selectors, pagination strategy, and whether JS rendering
    is required.
 4. Parse the JSON response into a ``ScrapingPlan``.
@@ -27,6 +28,84 @@ from app.utils.llm import chat_completion_json
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+SYSTEM_PROMPT = """\
+You are an expert web-scraping engineer. Your job is to analyse the HTML \
+structure of an exhibitor / seller listing page and produce a detailed \
+scraping plan in JSON format.
+
+You will receive the simplified HTML of the page. Study the DOM carefully \
+and return a JSON object with the following fields:
+
+{
+  "requires_javascript": <bool>,
+  "pagination": "<none|next_button|page_numbers|infinite_scroll|load_more_button|alphabet_tabs|api_endpoint>",
+  "pagination_selector": "<CSS selector for the pagination control, or null>",
+  "pagination_urls": ["<list of predictable page URLs if applicable, else empty>"],
+  "alphabet_tab_selector": "<CSS selector for alphabet/category tabs, or null>",
+  "api_endpoint": "<discovered XHR/API URL, or null>",
+  "api_params": {},
+  "target": {
+    "item_container_selector": "<CSS selector for each repeating exhibitor card/row>",
+    "field_selectors": {
+      "<field_name>": "<CSS selector relative to the item container>",
+      ...
+    },
+    "field_attributes": {
+      "<field_name>": "<HTML attribute to read, e.g. 'href', 'src'>",
+      ...
+    },
+    "detail_link_selector": "<CSS selector for the link to the detail page, or null>"
+  },
+  "detail_page_fields": {
+    "<field_name>": "<CSS selector on the detail page>",
+    ...
+  },
+  "detail_page_field_attributes": {
+    "<field_name>": "<attribute to read>",
+    ...
+  },
+  "wait_selector": "<CSS selector to wait for before scraping on JS pages, or null>",
+  "notes": "<any observations about the page>"
+}
+
+Rules:
+- ``item_container_selector`` must match the *repeating* element that wraps ONE \
+  exhibitor/seller.  Prefer the most specific selector possible.
+- ``field_selectors`` values are relative to the item container.
+- Include as many fields as you can find: name, booth/stand, country, city, \
+  website link, logo image, description snippet, categories, etc.
+- For links and images, put the attribute (href / src) in ``field_attributes``.
+- If the page uses hash-based routing (#/), client-side rendering, or heavy JS \
+  frameworks (React/Angular/Vue), set ``requires_javascript`` to true.
+- If you detect an XHR/fetch API that returns exhibitor JSON, report it in \
+  ``api_endpoint`` and set ``pagination`` to ``api_endpoint``.
+- For alphabet navigation (tabs A-Z), use ``alphabet_tabs`` pagination and \
+  supply ``alphabet_tab_selector``.
+- ``pagination_urls`` should list fully qualified URLs when the pattern is \
+  obvious (e.g. ?page=1 … ?page=10).  Leave empty if you cannot determine them.
+
+IMPORTANT — Detail pages:
+- Most listing pages only show a summary (name, booth, logo). The FULL details \
+  (address, phone, email, website, description, product categories, brands, \
+  social media) are almost always on a separate DETAIL page linked from each \
+  item card (often a "Details", "More info", or company-name link).
+- You MUST identify the ``detail_link_selector`` — the CSS selector (relative \
+  to the item container) that points to the exhibitor's detail / profile page. \
+  This is typically an <a> tag wrapping the company name or a "Details" button.
+- Put "href" in ``field_attributes`` for the ``detail_link`` field so the \
+  scraper can follow the link.
+- For ``detail_page_fields``: provide CSS selectors for fields you expect to \
+  find on the detail page (address, phone, email, website, description, etc.). \
+  If you are unsure of the exact selectors on the detail page, leave \
+  ``detail_page_fields`` empty — the system will use the full simplified HTML.
+
+IMPORTANT — All values in ``detail_page_fields`` and ``detail_page_field_attributes`` \
+must be plain strings (CSS selectors or attribute names). Never nest objects inside \
+these dictionaries.
+
+- Return ONLY valid JSON.  No markdown, no explanation.
+"""
 
 
 def _sanitize_plan_data(plan_data: dict) -> dict:
@@ -80,29 +159,78 @@ def _sanitize_plan_data(plan_data: dict) -> dict:
     return plan_data
 
 
+async def _fetch_html(url: str) -> str:
+    """Fetch a page — try httpx first, fall back to Playwright."""
+    html_raw = ""
+    needs_js = False
+    try:
+        html_raw = await fetch_page(url)
+        if len(html_raw) < 2_000 or "<noscript>" in html_raw.lower():
+            needs_js = True
+    except Exception:
+        needs_js = True
+
+    if needs_js:
+        log.info("httpx fetch insufficient; falling back to Playwright for %s", url)
+        from app.utils.browser import fetch_page_js, get_browser
+
+        async with get_browser() as browser:
+            html_raw = await fetch_page_js(browser, url)
+
+    return html_raw
+
+
 class PlannerAgent:
     """Analyse a listing page and return a ScrapingPlan."""
 
-    async def plan(self, url: str) -> ScrapingPlan:
+    async def plan(
+        self,
+        url: str,
+        *,
+        detail_page_url: str | None = None,
+        fields_wanted: str | None = None,
+    ) -> ScrapingPlan:
         log.info("Planning scrape for %s", url)
 
-        # --- 1. Fetch the page (try httpx first) ----
-        html_raw = await self._fetch_page(url)
-
-        # --- 2. Simplify HTML for the LLM ---
+        # --- 1. Fetch the listing page ---
+        html_raw = await _fetch_html(url)
         html_simple = simplify_html(html_raw)
-        log.debug("Simplified HTML: %d chars", len(html_simple))
+        log.debug("Simplified listing HTML: %d chars", len(html_simple))
 
-        # --- 3. Ask GPT to produce the plan ---
+        # --- 2. Optionally fetch the detail page ---
+        detail_html_simple = ""
+        if detail_page_url:
+            log.info("Fetching user-provided detail page: %s", detail_page_url)
+            try:
+                detail_raw = await _fetch_html(detail_page_url)
+                detail_html_simple = simplify_html(detail_raw)
+                log.debug("Simplified detail HTML: %d chars", len(detail_html_simple))
+            except Exception as exc:
+                log.warning("Failed to fetch detail page %s: %s", detail_page_url, exc)
+
+        # --- 3. Build the prompt ---
+        user_content = (
+            f"Analyse the following HTML of the listing page at:\n{url}\n\n"
+            f"```html\n{html_simple}\n```"
+        )
+
+        if detail_html_simple:
+            user_content += (
+                f"\n\nThe user also provided an example DETAIL page at:\n{detail_page_url}\n\n"
+                f"Study this to identify the CSS selectors for ``detail_page_fields``.\n"
+                f"```html\n{detail_html_simple}\n```"
+            )
+
+        if fields_wanted:
+            user_content += (
+                f"\n\nThe user specifically wants these fields extracted: {fields_wanted}\n"
+                f"Make sure the plan captures all of these fields — from the listing page "
+                f"if available, otherwise from the detail page."
+            )
+
         messages = [
-            {"role": "system", "content": load_prompt("planner_listing")},
-            {
-                "role": "user",
-                "content": (
-                    f"Analyse the following HTML of the listing page at:\n{url}\n\n"
-                    f"```html\n{html_simple}\n```"
-                ),
-            },
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
         ]
 
         plan_data: dict = await chat_completion_json(messages, max_tokens=8_000)
@@ -155,8 +283,7 @@ class PlannerAgent:
         """
         log.info("Re-planning with user feedback: %s", user_feedback)
 
-        # Fetch the page again to get fresh HTML for context
-        html_raw = await self._fetch_page(current_plan.url)
+        html_raw = await _fetch_html(current_plan.url)
         html_simple = simplify_html(html_raw)
 
         current_plan_json = current_plan.model_dump(mode="json")
