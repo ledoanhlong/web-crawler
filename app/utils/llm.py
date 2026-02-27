@@ -70,4 +70,9 @@ async def chat_completion_json(
         max_tokens=max_tokens,
         response_format={"type": "json_object"},
     )
+    if not raw or not raw.strip():
+        raise ValueError(
+            f"LLM returned empty response (input had {len(messages)} messages, "
+            f"max_tokens={max_tokens})"
+        )
     return json.loads(raw)

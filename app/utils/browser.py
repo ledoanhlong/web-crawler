@@ -35,6 +35,61 @@ async def get_browser() -> AsyncIterator[Browser]:
         await pw.stop()
 
 
+async def _dismiss_consent_overlays(page: Page) -> None:
+    """Dismiss cookie consent / overlay banners that may block clicks.
+
+    Handles both regular DOM consent banners and shadow DOM banners
+    (e.g. Usercentrics, OneTrust) that hide their buttons inside a shadow root.
+    """
+    # 1. Try shadow DOM consent managers (Usercentrics, etc.)
+    try:
+        dismissed = await page.evaluate("""() => {
+            // Usercentrics shadow DOM
+            const uc = document.getElementById("usercentrics-root");
+            if (uc && uc.shadowRoot) {
+                const btns = uc.shadowRoot.querySelectorAll("button");
+                for (const btn of btns) {
+                    const text = (btn.textContent || "").toLowerCase();
+                    if (text.includes("accept") || text.includes("agree") ||
+                        text.includes("allow") || text.includes("ok") ||
+                        text.includes("consent")) {
+                        btn.click();
+                        return "usercentrics";
+                    }
+                }
+                // Fallback: click the last button (often "Accept All")
+                if (btns.length > 0) { btns[btns.length - 1].click(); return "usercentrics-fallback"; }
+            }
+            return null;
+        }""")
+        if dismissed:
+            log.debug("Dismissed shadow DOM consent overlay: %s", dismissed)
+            await asyncio.sleep(1)
+            return
+    except Exception:
+        pass
+
+    # 2. Try regular DOM consent selectors
+    for consent_sel in [
+        "[class*='cookie'] [class*='accept']",
+        "[class*='cookie'] [class*='agree']",
+        "[class*='consent'] button",
+        "#onetrust-accept-btn-handler",
+        ".cc-accept",
+        "[data-testid='uc-accept-all-button']",
+        "button[id*='accept']",
+    ]:
+        try:
+            consent_btn = await page.query_selector(consent_sel)
+            if consent_btn and await consent_btn.is_visible():
+                await consent_btn.click()
+                log.debug("Dismissed consent overlay: %s", consent_sel)
+                await asyncio.sleep(1)
+                return
+        except Exception:
+            pass
+
+
 async def fetch_page_js(
     browser: Browser,
     url: str,
@@ -193,24 +248,7 @@ async def intercept_detail_api(
             return None, None
 
         # Dismiss cookie consent / overlay banners that may block clicks
-        for consent_sel in [
-            "[class*='cookie'] [class*='accept']",
-            "[class*='cookie'] [class*='agree']",
-            "[class*='consent'] button",
-            "#onetrust-accept-btn-handler",
-            ".cc-accept",
-            "[data-testid='uc-accept-all-button']",
-            "button[id*='accept']",
-        ]:
-            try:
-                consent_btn = await page.query_selector(consent_sel)
-                if consent_btn and await consent_btn.is_visible():
-                    await consent_btn.click()
-                    log.debug("Dismissed consent overlay: %s", consent_sel)
-                    await asyncio.sleep(1)
-                    break
-            except Exception:
-                pass
+        await _dismiss_consent_overlays(page)
 
         # Scroll button into view and let the page settle
         await button.scroll_into_view_if_needed()

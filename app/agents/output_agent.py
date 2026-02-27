@@ -66,11 +66,24 @@ class OutputAgent:
         log.info("Running LLM quality pass on %d records", len(records))
         serialized = [r.model_dump(mode="json", exclude_none=True) for r in records]
 
-        # Process in chunks if there are many records
-        chunk_size = 80
+        # Size-aware chunking: stay within ~60k chars per LLM call
+        _MAX_CHUNK_CHARS = 60_000
+        chunks: list[list[dict]] = []
+        current: list[dict] = []
+        current_chars = 0
+        for rec in serialized:
+            rec_chars = len(json.dumps(rec, ensure_ascii=False))
+            if current and current_chars + rec_chars > _MAX_CHUNK_CHARS:
+                chunks.append(current)
+                current = []
+                current_chars = 0
+            current.append(rec)
+            current_chars += rec_chars
+        if current:
+            chunks.append(current)
+
         cleaned: list[ExhibitorRecord] = []
-        for i in range(0, len(serialized), chunk_size):
-            chunk = serialized[i : i + chunk_size]
+        for chunk in chunks:
             messages = [
                 {"role": "system", "content": load_prompt("output_qa")},
                 {
@@ -81,15 +94,23 @@ class OutputAgent:
                     ),
                 },
             ]
-            result = await chat_completion_json(messages, max_tokens=16_000)
-            for raw in result.get("records", []):
-                try:
-                    cleaned.append(ExhibitorRecord.model_validate(raw))
-                except Exception as exc:
-                    log.warning("QA pass: invalid record skipped: %s", exc)
+            try:
+                result = await chat_completion_json(messages, max_tokens=16_000)
+                for raw in result.get("records", []):
+                    try:
+                        cleaned.append(ExhibitorRecord.model_validate(raw))
+                    except Exception as exc:
+                        log.warning("QA pass: invalid record skipped: %s", exc)
+            except Exception as exc:
+                log.warning("QA pass chunk failed (%d records), keeping originals: %s", len(chunk), exc)
+                for rec in chunk:
+                    try:
+                        cleaned.append(ExhibitorRecord.model_validate(rec))
+                    except Exception:
+                        pass
 
         log.info("Quality pass: %d → %d records", len(records), len(cleaned))
-        return cleaned if cleaned else records  # fallback to originals if LLM fails
+        return cleaned if cleaned else records  # fallback to originals if all chunks fail
 
     @staticmethod
     def _flatten_for_csv(records: list[ExhibitorRecord]) -> list[dict[str, str]]:

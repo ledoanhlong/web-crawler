@@ -272,7 +272,7 @@ const STAGE_ICONS = {
   failed:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
 };
 
-const TABLE_COLS = ['name','booth_or_stand','country','city','address','website','email','phone','description','product_categories','hall'];
+const TABLE_COLS = ['name','booth_or_stand','hall','country','city','address','postal_code','website','email','phone','description','product_categories'];
 const PREVIEW_FIELDS = ['name','booth_or_stand','hall','country','city','address','postal_code','website','email','phone','fax','description','product_categories','brands','logo_url','social_media'];
 
 let jobs = {};
@@ -595,6 +595,7 @@ function renderTable(records){
       if(Array.isArray(v)) v=v.join(', ');
       if(c==='website' && v) html+=`<td><a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a></td>`;
       else if(c==='email' && v) html+=`<td><a href="mailto:${esc(v)}">${esc(v)}</a></td>`;
+      else if(c==='description' && v && v.length>120) html+=`<td title="${esc(v)}" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.substring(0,120))}…</td>`;
       else html+=`<td title="${esc(v||'')}">${esc(v||'—')}</td>`;
     });
     html+='</tr>';
@@ -608,22 +609,37 @@ function renderPlanSummary(plan){
   if(!plan) return '';
   const target = plan.target || {};
   const listingFields = Object.keys(target.field_selectors || {});
-  const detailFields = Object.keys(plan.detail_page_fields || {});
   const detailPagePlan = plan.detail_page_plan;
   const detailApiPlan = plan.detail_api_plan;
 
+  // Determine which detail fields will be enriched
+  let detailFieldNames = [];
+  if(detailApiPlan && detailApiPlan.sample_response){
+    // For API interception, show meaningful keys from the sample response
+    const sample = detailApiPlan.sample_response;
+    const skip = new Set(['type','id','write','tagsAreEditable','xtagsAreEditable','exhIsLead','logoUploadedByPubimport','premium','eventMap','areaMap','areaId','locationIsVirtual','lastModified']);
+    detailFieldNames = Object.keys(sample).filter(k => !skip.has(k));
+  } else if(detailPagePlan && Object.keys(detailPagePlan.field_selectors||{}).length){
+    detailFieldNames = Object.keys(detailPagePlan.field_selectors);
+  } else {
+    detailFieldNames = Object.keys(plan.detail_page_fields || {});
+  }
+
   let detailApproach, detailBadgeColor;
   if(detailApiPlan && detailApiPlan.api_url_template){
-    detailApproach = `<strong style="color:var(--green)">&#9889; API Interception</strong> — JS button clicked, API discovered<br><small style="color:var(--text2)">${esc(detailApiPlan.api_url_template)}</small>`;
+    const idInfo = detailApiPlan.id_selector
+      ? `<br><small style="color:var(--text2)">ID: <code>${esc(detailApiPlan.id_selector)}</code>${detailApiPlan.id_regex ? ` → regex <code>${esc(detailApiPlan.id_regex)}</code>` : ''}</small>`
+      : '';
+    detailApproach = `<strong style="color:var(--green)">&#9889; API Interception</strong> — JS button clicked, API discovered<br><small style="color:var(--text2)">${esc(detailApiPlan.api_url_template)}</small>${idInfo}`;
     detailBadgeColor = 'var(--green)';
   } else if(detailPagePlan && Object.keys(detailPagePlan.field_selectors||{}).length){
     detailApproach = `<strong style="color:var(--accent2)">&#128279; Detail Page</strong> — following links to detail pages`;
     detailBadgeColor = 'var(--accent2)';
   } else if(target.detail_link_selector){
-    detailApproach = `<strong style="color:var(--accent2)">&#128279; Detail Page</strong> — link selector found`;
+    detailApproach = `<strong style="color:var(--accent2)">&#128279; Detail Page</strong> — link selector: <code>${esc(target.detail_link_selector)}</code>`;
     detailBadgeColor = 'var(--accent2)';
   } else if(target.detail_button_selector){
-    detailApproach = `<strong style="color:var(--yellow)">&#9888; JS Button</strong> — button found but API not yet intercepted`;
+    detailApproach = `<strong style="color:var(--yellow)">&#9888; JS Button</strong> — button found but API not yet intercepted<br><small style="color:var(--text2)">Selector: <code>${esc(target.detail_button_selector)}</code></small>`;
     detailBadgeColor = 'var(--yellow)';
   } else {
     detailApproach = `<span style="color:var(--text2)">None — listing data only</span>`;
@@ -648,7 +664,7 @@ function renderPlanSummary(plan){
     </div>
     <div class="preview-field">
       <div class="preview-field-label">Detail Fields</div>
-      <div class="preview-field-value">${detailFields.length||Object.keys(detailPagePlan&&detailPagePlan.field_selectors||{}).length ? esc(Object.keys(detailPagePlan&&detailPagePlan.field_selectors||detailFields).join(', ')) : '<span style="color:var(--text2)">none</span>'}</div>
+      <div class="preview-field-value">${detailFieldNames.length ? esc(detailFieldNames.join(', ')) : '<span style="color:var(--text2)">none</span>'}</div>
     </div>
     <div class="preview-field" style="grid-column:1/-1;border-color:${detailBadgeColor}20">
       <div class="preview-field-label">Detail Enrichment</div>

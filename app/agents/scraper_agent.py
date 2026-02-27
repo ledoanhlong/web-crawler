@@ -408,16 +408,18 @@ class ScraperAgent:
     ) -> list[PageData]:
         """Fetch detail data via API calls using a discovered URL template.
 
-        For each item with a ``_detail_api_id``, constructs the API URL from
-        the template and fetches the JSON response directly via httpx.
+        For sites that require JavaScript (session cookies, auth tokens set by
+        the browser), uses Playwright to make API calls within the browser
+        context so cookies are automatically included.  Falls back to httpx for
+        static/cookie-free APIs.
         """
         if not plan.detail_api_plan:
             return pages
 
         template = plan.detail_api_plan.api_url_template
 
-        # Collect (page_idx, item_idx, api_url) tuples
-        api_calls: list[tuple[int, int, str, str]] = []  # (page_idx, item_idx, item_id, url)
+        # Collect (page_idx, item_idx, item_id, api_url) tuples
+        api_calls: list[tuple[int, int, str, str]] = []
         for page_idx, pd in enumerate(pages):
             for item_idx, item in enumerate(pd.items):
                 item_id = item.get("_detail_api_id")
@@ -435,45 +437,48 @@ class ScraperAgent:
 
         log.info("Fetching %d detail API response(s)", len(api_calls))
 
-        # Fetch all API URLs concurrently with rate limiting
-        semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
-        api_responses: dict[str, dict] = {}
-
-        # Build headers that mimic a real browser request from the listing page
-        from urllib.parse import urlparse
-
-        parsed = urlparse(plan.url)
-        origin = f"{parsed.scheme}://{parsed.netloc}"
-        api_headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": plan.url,
-            "Origin": origin,
-        }
-
-        async def _fetch_one(api_url: str) -> None:
-            async with semaphore:
-                try:
-                    async with httpx.AsyncClient(
-                        timeout=settings.request_timeout_s,
-                        follow_redirects=True,
-                    ) as client:
-                        resp = await client.get(api_url, headers=api_headers)
-                        if resp.status_code == 200:
-                            api_responses[api_url] = resp.json()
-                        else:
-                            log.warning("Detail API %s returned %d", api_url, resp.status_code)
-                except Exception as exc:
-                    log.warning("Failed detail API call %s: %s", api_url, exc)
-                await asyncio.sleep(settings.request_delay_ms / 1000)
-
         # Deduplicate URLs for fetching
         unique_urls = list({t[3] for t in api_calls})
-        await asyncio.gather(*[_fetch_one(url) for url in unique_urls])
+        api_responses: dict[str, dict] = {}
+
+        if plan.requires_javascript:
+            # Use Playwright so session cookies are included in API requests
+            api_responses = await self._fetch_detail_apis_via_browser(plan.url, unique_urls)
+        else:
+            # Static path: httpx with browser-like headers
+            from urllib.parse import urlparse
+
+            parsed = urlparse(plan.url)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            api_headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": plan.url,
+                "Origin": origin,
+            }
+            semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
+
+            async def _fetch_one(api_url: str) -> None:
+                async with semaphore:
+                    try:
+                        async with httpx.AsyncClient(
+                            timeout=settings.request_timeout_s,
+                            follow_redirects=True,
+                        ) as client:
+                            resp = await client.get(api_url, headers=api_headers)
+                            if resp.status_code == 200:
+                                api_responses[api_url] = resp.json()
+                            else:
+                                log.warning("Detail API %s returned %d", api_url, resp.status_code)
+                    except Exception as exc:
+                        log.warning("Failed detail API call %s: %s", api_url, exc)
+                    await asyncio.sleep(settings.request_delay_ms / 1000)
+
+            await asyncio.gather(*[_fetch_one(url) for url in unique_urls])
 
         # Attach responses to PageData
         for page_idx, item_idx, item_id, api_url in api_calls:
@@ -482,6 +487,55 @@ class ScraperAgent:
 
         log.info("Enriched %d items with API detail data", len(api_responses))
         return pages
+
+    async def _fetch_detail_apis_via_browser(
+        self,
+        listing_url: str,
+        api_urls: list[str],
+    ) -> dict[str, dict]:
+        """Fetch JSON API URLs using a Playwright browser session.
+
+        Navigates to the listing page first so session cookies are established,
+        then uses ``fetch()`` inside the page context to call each API URL with
+        those cookies automatically included.
+        """
+        results: dict[str, dict] = {}
+        async with get_browser() as browser:
+            page = await browser.new_page()
+            try:
+                # Prime the session: load listing page to set cookies / tokens
+                log.info("Priming browser session via %s", listing_url)
+                await page.goto(listing_url, wait_until="domcontentloaded", timeout=60_000)
+                await asyncio.sleep(2)
+
+                for api_url in api_urls:
+                    try:
+                        data = await page.evaluate(
+                            """async (url) => {
+                                const resp = await fetch(url, {
+                                    credentials: "include",
+                                    headers: {
+                                        "Accept": "application/json, text/plain, */*",
+                                        "X-Vis-Domain": window.location.hostname,
+                                        "Referer": window.location.href
+                                    }
+                                });
+                                if (!resp.ok) return null;
+                                return await resp.json();
+                            }""",
+                            api_url,
+                        )
+                        if data and isinstance(data, dict):
+                            results[api_url] = data
+                            log.debug("Browser-fetched API %s — %d keys", api_url, len(data))
+                        else:
+                            log.warning("Browser API fetch returned no data: %s", api_url)
+                    except Exception as exc:
+                        log.warning("Browser API fetch failed %s: %s", api_url, exc)
+                    await asyncio.sleep(settings.request_delay_ms / 1000)
+            finally:
+                await page.close()
+        return results
 
     # ------------------------------------------------------------------
     # Helpers
