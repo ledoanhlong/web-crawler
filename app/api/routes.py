@@ -15,7 +15,10 @@ from app.models.schemas import (
     CrawlStatus,
     ScriptCreatorMultiRequest,
     ScriptCreatorRequest,
+    ScriptExecutionResult,
     ScriptResult,
+    SmartCrawlRequest,
+    SmartCrawlResult,
     SmartScrapeMultiRequest,
     SmartScrapeResult,
 )
@@ -129,26 +132,126 @@ async def smart_scrape_multi(body: SmartScrapeMultiRequest) -> SmartScrapeResult
 
 @router.post("/generate-script", response_model=ScriptResult, tags=["scrapegraphai"])
 async def generate_script(body: ScriptCreatorRequest) -> ScriptResult:
-    """Generate a Python scraping script for a single URL using ScriptCreatorGraph."""
+    """Generate a Python scraping script for a single URL using ScriptCreatorGraph.
+
+    When ``auto_execute`` is true (default), the script is also run in a
+    sandboxed subprocess and the output is returned alongside the code.
+    """
     from app.utils.smart_scraper import generate_scraper_script
 
     try:
         script = await generate_scraper_script(body.url, body.prompt, body.library)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-    return ScriptResult(script=script)
+
+    execution = None
+    if body.auto_execute:
+        execution = await _execute_script_safe(script)
+    return ScriptResult(script=script, execution=execution)
 
 
 @router.post("/generate-script-multi", response_model=ScriptResult, tags=["scrapegraphai"])
 async def generate_script_multi(body: ScriptCreatorMultiRequest) -> ScriptResult:
-    """Generate a merged Python scraping script for multiple URLs."""
+    """Generate a merged Python scraping script for multiple URLs.
+
+    When ``auto_execute`` is true (default), the script is also run in a
+    sandboxed subprocess and the output is returned alongside the code.
+    """
     from app.utils.smart_scraper import generate_scraper_script_multi
 
     try:
         script = await generate_scraper_script_multi(body.urls, body.prompt, body.library)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-    return ScriptResult(script=script)
+
+    execution = None
+    if body.auto_execute:
+        execution = await _execute_script_safe(script)
+    return ScriptResult(script=script, execution=execution)
+
+
+# ---------------------------------------------------------------------------
+# Smart Crawl — intelligent routing endpoint
+# ---------------------------------------------------------------------------
+@router.post("/smart-crawl", response_model=SmartCrawlResult, tags=["smart-crawl"])
+async def smart_crawl(
+    body: SmartCrawlRequest,
+    background_tasks: BackgroundTasks,
+) -> SmartCrawlResult:
+    """Intelligent scraping endpoint that auto-selects the best method.
+
+    The RouterAgent analyses the URL(s) and prompt, then dispatches to:
+    - Full pipeline (async job) for listing pages with pagination
+    - SmartScraperGraph for single-page extraction
+    - SmartScraperMultiGraph for multi-URL extraction
+    - ScriptCreatorGraph + auto-execute for script generation
+    """
+    from app.agents.router_agent import RouterAgent
+    from app.utils.smart_scraper import generate_scraper_script, smart_scrape_multi
+
+    router_agent = RouterAgent()
+    decision = await router_agent.route(
+        body.urls,
+        body.prompt,
+        fields_wanted=body.fields_wanted,
+        detail_page_url=body.detail_page_url,
+    )
+
+    result = SmartCrawlResult(
+        strategy_used=decision.strategy.value,
+        strategy_explanation=decision.explanation,
+    )
+
+    if decision.strategy == decision.strategy.FULL_PIPELINE:
+        # Kick off the async pipeline — return a job_id for polling
+        crawl_req = CrawlRequest(
+            url=body.urls[0],
+            fields_wanted=body.fields_wanted,
+            detail_page_url=body.detail_page_url,
+            max_items=body.max_items,
+        )
+        job = CrawlJob(request=crawl_req)
+        _jobs[job.id] = job
+        background_tasks.add_task(_run_preview, job)
+        result.job_id = job.id
+
+    elif decision.strategy == decision.strategy.SMART_SCRAPER:
+        # Direct single-page extraction (SmartScraperMultiGraph handles fetching)
+        try:
+            data = await smart_scrape_multi(body.urls[:1], body.prompt)
+            result.data = data
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    elif decision.strategy == decision.strategy.SMART_SCRAPER_MULTI:
+        try:
+            data = await smart_scrape_multi(body.urls, body.prompt)
+            result.data = data
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    elif decision.strategy == decision.strategy.SCRIPT_CREATOR:
+        try:
+            script = await generate_scraper_script(
+                body.urls[0], body.prompt, "beautifulsoup4",
+            )
+            result.script = script
+            result.execution = await _execute_script_safe(script)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+async def _execute_script_safe(script: str) -> ScriptExecutionResult:
+    """Execute a script and return a ScriptExecutionResult model."""
+    from app.utils.script_executor import execute_script
+
+    raw = await execute_script(script)
+    return ScriptExecutionResult(**raw)
 
 
 async def _run_preview(job: CrawlJob) -> None:

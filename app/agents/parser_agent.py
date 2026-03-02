@@ -123,16 +123,25 @@ class ParserAgent:
     ) -> list[dict]:
         """Attach detail data (HTML text or compact API JSON) to each item."""
         enriched = []
+        matched_detail = 0
+        matched_api = 0
         for item in items:
             entry: dict = {**item}
             detail_link = item.get("detail_link")
             if detail_link and detail_link in detail_texts:
                 entry["_detail_page_data"] = detail_texts[detail_link]
+                matched_detail += 1
             item_id = item.get("_detail_api_id")
             if item_id and item_id in detail_api_responses:
                 compact = _compact_api_response(detail_api_responses[item_id])
                 entry["_detail_api_data"] = json.dumps(compact, ensure_ascii=False)
+                matched_api += 1
             enriched.append(entry)
+        log.info(
+            "Enrichment matching: %d/%d items got detail page data, %d/%d got API data "
+            "(detail_texts has %d keys)",
+            matched_detail, len(items), matched_api, len(items), len(detail_texts),
+        )
         return enriched
 
     def _split_into_batches(self, enriched_items: list[dict]) -> list[list[dict]]:
@@ -173,8 +182,12 @@ class ParserAgent:
             },
         ]
 
+        # Use higher max_tokens when items carry detail page data (more output needed)
+        has_detail = any("_detail_page_data" in item or "_detail_api_data" in item for item in enriched_items)
+        max_tokens = 32_000 if has_detail else 16_000
+
         try:
-            result = await chat_completion_json(messages, max_tokens=16_000)
+            result = await chat_completion_json(messages, max_tokens=max_tokens)
         except Exception as exc:
             log.error("LLM parse batch failed (%d items): %s", len(enriched_items), exc)
             # If batch has more than one item, try splitting it in half

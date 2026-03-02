@@ -20,20 +20,28 @@ a:hover{text-decoration:underline}
 button{cursor:pointer;font-family:inherit}
 
 /* ── Layout ───────────────────────────────────────────────────────── */
-.app{max-width:1120px;margin:0 auto;padding:24px 20px 60px}
-header{display:flex;align-items:center;gap:14px;margin-bottom:32px;padding-bottom:20px;border-bottom:1px solid var(--border)}
+.app{max-width:960px;margin:0 auto;padding:24px 20px 60px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:28px;padding-bottom:18px;border-bottom:1px solid var(--border)}
 header svg{flex-shrink:0}
-header h1{font-size:1.45rem;font-weight:700;letter-spacing:-.02em}
-header p{font-size:.85rem;color:var(--text2);margin-top:2px}
+header h1{font-size:1.4rem;font-weight:700;letter-spacing:-.02em}
+header p{font-size:.82rem;color:var(--text2);margin-top:2px}
 
-/* ── New Crawl Card ───────────────────────────────────────────────── */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;box-shadow:var(--shadow)}
-.card h2{font-size:1.05rem;margin-bottom:16px;display:flex;align-items:center;gap:8px}
-.form-row{display:flex;gap:10px}
-.form-row input[type=text],.form-row input[type=url]{flex:1;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.9rem;outline:none;transition:border .2s}
-.form-row input[type=text]:focus,.form-row input[type=url]:focus{border-color:var(--accent)}
-.form-row input::placeholder{color:var(--text2)}
-.form-row .max-pages{width:110px}
+/* ── Card ─────────────────────────────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;box-shadow:var(--shadow);margin-bottom:20px}
+.card h2{font-size:1rem;margin-bottom:16px;display:flex;align-items:center;gap:8px;font-weight:600}
+
+/* ── Form Elements ────────────────────────────────────────────────── */
+.field{margin-bottom:14px}
+.field label{display:block;font-size:.8rem;color:var(--text2);margin-bottom:5px;font-weight:500}
+.field textarea,.field input[type=text],.field input[type=url],.field input[type=number],.field select{
+  width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.88rem;outline:none;transition:border .2s;font-family:inherit;resize:vertical}
+.field textarea:focus,.field input:focus,.field select:focus{border-color:var(--accent)}
+.field textarea::placeholder,.field input::placeholder{color:var(--text2)}
+.field-hint{font-size:.72rem;color:var(--text2);margin-top:3px;opacity:.7}
+.field-row{display:flex;gap:10px;align-items:flex-end}
+.field-row .field{flex:1;margin-bottom:0}
+.field-inline{width:120px;flex-shrink:0}
+
 .btn{padding:10px 22px;border:none;border-radius:8px;font-size:.88rem;font-weight:600;transition:background .2s,opacity .2s}
 .btn-primary{background:var(--accent);color:#fff}
 .btn-primary:hover{background:#5b4bd5}
@@ -45,73 +53,82 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .btn-green:hover{background:#00a884}
 .btn-red{background:var(--red);color:#fff}
 .btn-red:hover{background:#d35845}
-.btn-yellow{background:var(--yellow);color:#1a1a2e}
-.btn-yellow:hover{background:#f0be3a}
 
-.examples{margin-top:12px;display:flex;flex-wrap:wrap;gap:6px}
+.checkbox-row{display:flex;align-items:center;gap:8px}
+.checkbox-row input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+.checkbox-row label{font-size:.82rem;color:var(--text2);cursor:pointer}
+
+/* ── Collapsible Toggle ───────────────────────────────────────────── */
+.toggle{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text2);font-size:.82rem;font-weight:500;user-select:none;transition:color .15s;margin-top:6px}
+.toggle:hover{color:var(--accent2)}
+.toggle svg{transition:transform .2s}
+.toggle.open svg{transform:rotate(90deg)}
+.toggle-panel{display:none;margin-top:12px;padding:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px}
+.toggle-panel.open{display:block}
+
+/* ── Example Chips ────────────────────────────────────────────────── */
+.examples{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
 .examples span{font-size:.78rem;color:var(--text2)}
 .example-chip{font-size:.75rem;padding:4px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;color:var(--text2);cursor:pointer;transition:all .15s;white-space:nowrap}
 .example-chip:hover{border-color:var(--accent);color:var(--accent2)}
 
-/* ── Advanced Options ──────────────────────────────────────────────── */
-.advanced-toggle{display:flex;align-items:center;gap:6px;margin-top:14px;cursor:pointer;color:var(--text2);font-size:.82rem;font-weight:500;user-select:none;transition:color .15s}
-.advanced-toggle:hover{color:var(--accent2)}
-.advanced-toggle svg{transition:transform .2s}
-.advanced-toggle.open svg{transform:rotate(90deg)}
-.advanced-panel{display:none;margin-top:12px;padding:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px}
-.advanced-panel.open{display:block}
-.advanced-row{display:flex;gap:10px;margin-bottom:10px}
-.advanced-row:last-child{margin-bottom:0}
-.advanced-row label{font-size:.8rem;color:var(--text2);min-width:120px;display:flex;align-items:center;flex-shrink:0}
-.advanced-row input[type=text],.advanced-row input[type=url]{flex:1;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.85rem;outline:none;transition:border .2s}
-.advanced-row input:focus{border-color:var(--accent)}
-.advanced-row input::placeholder{color:var(--text2)}
-.checkbox-row{display:flex;align-items:center;gap:8px}
-.checkbox-row input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
-.checkbox-row label{font-size:.82rem;color:var(--text2);cursor:pointer}
-.field-hint{font-size:.72rem;color:var(--text2);margin-top:2px;opacity:.7}
+/* ── Action Bar ───────────────────────────────────────────────────── */
+.action-bar{display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap}
 
-/* ── ScrapeGraphAI Tools ─────────────────────────────────────────── */
+/* ── Tool Result ──────────────────────────────────────────────────── */
+.tool-result{margin-top:16px;display:none}
+.tool-result.visible{display:block}
+.tool-result pre{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:.8rem;color:var(--text);overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:500px;overflow-y:auto}
+.tool-error{color:var(--red);font-size:.85rem;padding:12px;background:rgba(225,112,85,.08);border-radius:8px;border:1px solid rgba(225,112,85,.2)}
+.tool-loading{color:var(--accent2);font-size:.85rem;display:flex;align-items:center;gap:8px}
+.strategy-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:8px;font-size:.82rem;font-weight:500;background:rgba(108,92,231,.1);color:var(--accent2);margin-bottom:14px;border:1px solid rgba(108,92,231,.15)}
+.strategy-badge strong{font-weight:700}
+
+/* ── Exec sections ────────────────────────────────────────────────── */
+.exec-section{margin-top:12px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.exec-header{padding:10px 14px;background:var(--surface2);font-size:.82rem;font-weight:600;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none}
+.exec-header:hover{color:var(--text)}
+.exec-header svg{transition:transform .2s}
+.exec-header.open svg{transform:rotate(90deg)}
+.exec-body{display:none;padding:12px 14px}
+.exec-body.open{display:block}
+.exec-stdout{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:.8rem;color:var(--green);white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;font-family:'Cascadia Code','Fira Code',monospace}
+.exec-stderr{background:rgba(225,112,85,.06);border:1px solid rgba(225,112,85,.2);border-radius:6px;padding:12px;font-size:.8rem;color:var(--red);white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto;margin-top:8px;font-family:'Cascadia Code','Fira Code',monospace}
+.exec-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:.7rem;font-weight:600;letter-spacing:.03em}
+.exec-badge-success{background:rgba(0,184,148,.12);color:var(--green)}
+.exec-badge-error{background:rgba(225,112,85,.12);color:var(--red)}
+.exec-badge-timeout{background:rgba(253,203,110,.15);color:var(--yellow)}
+.exec-badge-blocked{background:rgba(156,160,171,.12);color:var(--text2)}
+
+/* ── Tool tabs (for advanced tools) ───────────────────────────────── */
 .tool-tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0}
 .tool-tab{padding:8px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text2);font-size:.82rem;font-weight:500;transition:all .15s}
 .tool-tab:hover{color:var(--text)}
 .tool-tab.active{color:var(--accent2);border-bottom-color:var(--accent)}
 .tool-panel{display:none}
 .tool-panel.active{display:block}
-.tool-field{margin-bottom:12px}
-.tool-field label{display:block;font-size:.8rem;color:var(--text2);margin-bottom:4px}
-.tool-field textarea,.tool-field input[type=text],.tool-field input[type=url]{width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.88rem;outline:none;transition:border .2s;font-family:inherit;resize:vertical}
-.tool-field textarea:focus,.tool-field input:focus{border-color:var(--accent)}
-.tool-field textarea::placeholder,.tool-field input::placeholder{color:var(--text2)}
-.tool-field select{padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.88rem;outline:none;cursor:pointer}
-.tool-field select:focus{border-color:var(--accent)}
-.tool-result{margin-top:16px;display:none}
-.tool-result.visible{display:block}
-.tool-result pre{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:.8rem;color:var(--text);overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:500px;overflow-y:auto}
-.tool-result .tool-error{color:var(--red);font-size:.85rem;padding:12px;background:rgba(225,112,85,.08);border-radius:8px;border:1px solid rgba(225,112,85,.2)}
-.tool-result .tool-loading{color:var(--accent2);font-size:.85rem;display:flex;align-items:center;gap:8px}
-.tool-result .tool-loading .spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent2);border-radius:50%;animation:spin .6s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
+.tool-checkbox{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.tool-checkbox input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+.tool-checkbox label{font-size:.82rem;color:var(--text2);cursor:pointer}
 
-/* ── Jobs Table / List ────────────────────────────────────────────── */
-.section-header{display:flex;justify-content:space-between;align-items:center;margin:32px 0 14px}
-.section-header h2{font-size:1.05rem;display:flex;align-items:center;gap:8px}
+/* ── Jobs ─────────────────────────────────────────────────────────── */
+.section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.section-header h2{font-size:1rem;display:flex;align-items:center;gap:8px;font-weight:600}
 .job-count{font-size:.78rem;color:var(--text2);background:var(--surface2);padding:2px 10px;border-radius:12px}
-.empty-state{text-align:center;padding:48px 20px;color:var(--text2)}
-.empty-state svg{margin-bottom:12px;opacity:.4}
-.empty-state p{font-size:.9rem}
-
+.empty-state{text-align:center;padding:40px 20px;color:var(--text2)}
+.empty-state svg{margin-bottom:10px;opacity:.4}
+.empty-state p{font-size:.88rem}
 .jobs-list{display:flex;flex-direction:column;gap:10px}
-.job-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);cursor:pointer;transition:border .2s}
+.job-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow);cursor:pointer;transition:border .2s}
 .job-card:hover{border-color:var(--accent)}
 .job-card.expanded{border-color:var(--accent)}
-.job-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.job-url{flex:1;min-width:0;font-size:.88rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
-.job-time{font-size:.76rem;color:var(--text2);white-space:nowrap}
+.job-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.job-url{flex:1;min-width:0;font-size:.86rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.job-time{font-size:.75rem;color:var(--text2);white-space:nowrap}
 .job-mode{font-size:.7rem;padding:2px 8px;border-radius:10px;background:rgba(116,185,255,.12);color:var(--blue);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
 
-/* ── Status Badge ─────────────────────────────────────────────────── */
-.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 12px;border-radius:20px;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+/* ── Badge ────────────────────────────────────────────────────────── */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 12px;border-radius:20px;font-size:.73rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 .badge-pending{background:rgba(156,160,171,.12);color:var(--text2)}
 .badge-planning,.badge-scraping,.badge-parsing,.badge-output{background:rgba(108,92,231,.12);color:var(--accent2)}
 .badge-preview{background:rgba(253,203,110,.15);color:var(--yellow)}
@@ -125,18 +142,18 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .badge-failed .dot{background:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
-/* ── Pipeline Steps ───────────────────────────────────────────────── */
-.job-detail{margin-top:18px;padding-top:18px;border-top:1px solid var(--border)}
-.pipeline{display:flex;align-items:center;gap:0;margin-bottom:18px;overflow-x:auto;padding-bottom:4px}
-.pipe-step{display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:8px;font-size:.8rem;font-weight:500;color:var(--text2);background:var(--surface2);white-space:nowrap;transition:all .3s}
+/* ── Pipeline ─────────────────────────────────────────────────────── */
+.job-detail{margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}
+.pipeline{display:flex;align-items:center;gap:0;margin-bottom:16px;overflow-x:auto;padding-bottom:4px}
+.pipe-step{display:flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:.78rem;font-weight:500;color:var(--text2);background:var(--surface2);white-space:nowrap;transition:all .3s}
 .pipe-step.active{background:rgba(108,92,231,.15);color:var(--accent2)}
 .pipe-step.preview-active{background:rgba(253,203,110,.12);color:var(--yellow)}
 .pipe-step.done{background:rgba(0,184,148,.1);color:var(--green)}
 .pipe-step.error{background:rgba(225,112,85,.1);color:var(--red)}
-.pipe-arrow{color:var(--border);margin:0 4px;font-size:.7rem;flex-shrink:0}
-.pipe-icon{width:18px;height:18px;display:flex;align-items:center;justify-content:center}
+.pipe-arrow{color:var(--border);margin:0 3px;font-size:.65rem;flex-shrink:0}
+.pipe-icon{width:16px;height:16px;display:flex;align-items:center;justify-content:center}
 
-/* ── Results area ─────────────────────────────────────────────────── */
+/* ── Results ──────────────────────────────────────────────────────── */
 .results-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .record-count{font-size:.85rem;color:var(--text2)}
 .dl-btns{display:flex;gap:8px;margin-left:auto}
@@ -145,13 +162,13 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .plan-box pre{white-space:pre-wrap;word-break:break-word;font-family:'Cascadia Code','Fira Code',monospace;font-size:.78rem;line-height:1.5}
 
 /* ── Preview Card ─────────────────────────────────────────────────── */
-.preview-box{border:1px solid rgba(253,203,110,.3);border-radius:var(--radius);padding:20px;margin-bottom:16px;background:rgba(253,203,110,.04)}
-.preview-box h3{font-size:.95rem;color:var(--yellow);margin-bottom:4px;display:flex;align-items:center;gap:8px}
-.preview-box .preview-subtitle{font-size:.82rem;color:var(--text2);margin-bottom:16px}
-.preview-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:18px}
-.preview-field{background:var(--surface2);border-radius:8px;padding:10px 14px;border:1px solid var(--border)}
-.preview-field-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:3px;font-weight:600}
-.preview-field-value{font-size:.85rem;color:var(--text);word-break:break-word}
+.preview-box{border:1px solid rgba(253,203,110,.3);border-radius:var(--radius);padding:18px;margin-bottom:14px;background:rgba(253,203,110,.04)}
+.preview-box h3{font-size:.92rem;color:var(--yellow);margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.preview-box .preview-subtitle{font-size:.8rem;color:var(--text2);margin-bottom:14px}
+.preview-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;margin-bottom:16px}
+.preview-field{background:var(--surface2);border-radius:8px;padding:10px 12px;border:1px solid var(--border)}
+.preview-field-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:2px;font-weight:600}
+.preview-field-value{font-size:.84rem;color:var(--text);word-break:break-word}
 .preview-field-value.empty{color:var(--text2);font-style:italic}
 .preview-actions{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
 .preview-actions .btn{flex-shrink:0}
@@ -160,17 +177,16 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .feedback-input::placeholder{color:var(--text2)}
 
 /* ── Data Table ───────────────────────────────────────────────────── */
-.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;max-height:480px;overflow-y:auto}
 table{width:100%;border-collapse:collapse;font-size:.82rem}
-th{position:sticky;top:0;background:var(--surface2);padding:10px 14px;text-align:left;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);white-space:nowrap}
-td{padding:9px 14px;border-bottom:1px solid var(--border);color:var(--text);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+th{position:sticky;top:0;background:var(--surface2);padding:9px 12px;text-align:left;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:rgba(108,92,231,.04)}
-.table-wrap{max-height:480px;overflow-y:auto}
 
-/* ── Tabs ─────────────────────────────────────────────────────────── */
+/* ── Tabs (within job detail) ─────────────────────────────────────── */
 .tabs{display:flex;gap:4px;margin-bottom:14px}
-.tab{padding:6px 16px;border-radius:6px;font-size:.82rem;font-weight:500;color:var(--text2);background:transparent;border:none;transition:all .15s}
+.tab{padding:6px 14px;border-radius:6px;font-size:.8rem;font-weight:500;color:var(--text2);background:transparent;border:none;transition:all .15s}
 .tab:hover{color:var(--text)}
 .tab.active{background:var(--accent);color:#fff}
 .tab-panel{display:none}
@@ -182,16 +198,15 @@ tr:hover td{background:rgba(108,92,231,.04)}
 
 /* ── Responsive ───────────────────────────────────────────────────── */
 @media(max-width:640px){
-  .form-row{flex-direction:column}
-  .form-row .max-pages{width:100%}
+  .field-row{flex-direction:column}
+  .field-inline{width:100%}
+  .action-bar{flex-direction:column;align-items:stretch}
   .pipeline{gap:0}
-  .pipe-step{padding:6px 10px;font-size:.73rem}
+  .pipe-step{padding:5px 8px;font-size:.72rem}
   .dl-btns{margin-left:0;width:100%}
   .dl-btns .btn{flex:1}
   .preview-fields{grid-template-columns:1fr}
   .preview-actions{flex-direction:column}
-  .advanced-row{flex-direction:column}
-  .advanced-row label{min-width:0}
 }
 </style>
 </head>
@@ -200,57 +215,69 @@ tr:hover td{background:rgba(108,92,231,.04)}
 <div class="app">
   <!-- ── Header ──────────────────────────────────────────────────── -->
   <header>
-    <svg width="36" height="36" viewBox="0 0 36 36" fill="none"><rect width="36" height="36" rx="8" fill="#6c5ce7"/><path d="M10 18c0-4.4 3.6-8 8-8m0 16c4.4 0 8-3.6 8-8" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="18" cy="18" r="3" fill="#fff"/><path d="M18 10v-3m0 22v-3m8-8h3M7 18h3" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+    <svg width="34" height="34" viewBox="0 0 36 36" fill="none"><rect width="36" height="36" rx="8" fill="#6c5ce7"/><path d="M10 18c0-4.4 3.6-8 8-8m0 16c4.4 0 8-3.6 8-8" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="18" cy="18" r="3" fill="#fff"/><path d="M18 10v-3m0 22v-3m8-8h3M7 18h3" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
     <div>
       <h1>Web Crawler AI Agent</h1>
-      <p>Extract seller &amp; company data from marketplaces, trade fairs, and directories
-        <span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:2px 8px;border-radius:10px;background:rgba(0,184,148,.12);color:var(--green);font-size:.7rem;font-weight:600;letter-spacing:.03em">Powered by ScrapeGraphAI</span>
-      </p>
+      <p>Extract seller &amp; company data from marketplaces, trade fairs, and directories</p>
     </div>
   </header>
 
-  <!-- ── New Crawl ───────────────────────────────────────────────── -->
+  <!-- ── Main Crawl Form ─────────────────────────────────────────── -->
   <div class="card">
     <h2>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8m-4-4h8"/></svg>
-      New Crawl
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      Smart Crawl
     </h2>
-    <form id="crawlForm">
-      <div class="form-row">
-        <input type="text" id="urlInput" placeholder="Enter listing page URL (marketplace, trade fair, directory, etc.)" required>
-        <input type="text" id="maxPagesInput" class="max-pages" placeholder="Max pages" title="Maximum pages to crawl (optional)">
-        <button type="submit" class="btn btn-primary" id="submitBtn">Start Crawl</button>
-      </div>
 
-      <!-- ── Advanced Options ──────────────────────────────────── -->
-      <div class="advanced-toggle" id="advancedToggle">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-        Advanced Options
+    <div class="field">
+      <label for="crawlUrls">URLs (one per line)</label>
+      <textarea id="crawlUrls" rows="2" placeholder="https://example.com/exhibitors&#10;Paste one or more URLs"></textarea>
+    </div>
+
+    <div class="field">
+      <label for="crawlPrompt">What do you want to extract?</label>
+      <input type="text" id="crawlPrompt" placeholder="e.g. Extract all exhibitor names, emails, phone numbers, and addresses">
+    </div>
+
+    <div class="field">
+      <label for="crawlFields">Fields wanted <span style="font-weight:400;opacity:.7">(optional, comma-separated)</span></label>
+      <input type="text" id="crawlFields" placeholder="e.g. name, email, phone, website, address, product_categories">
+    </div>
+
+    <!-- Advanced Options -->
+    <div class="toggle" id="advancedToggle">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+      Advanced Options
+    </div>
+    <div class="toggle-panel" id="advancedPanel">
+      <div class="field">
+        <label for="crawlDetailUrl">Detail page URL <span style="font-weight:400;opacity:.7">(example)</span></label>
+        <input type="url" id="crawlDetailUrl" placeholder="Paste a single seller/company detail page URL">
+        <div class="field-hint">Open one seller's detail page and paste the URL so the AI can analyse its structure</div>
       </div>
-      <div class="advanced-panel" id="advancedPanel">
-        <div class="advanced-row">
-          <label for="detailUrlInput">Detail page URL</label>
-          <div style="flex:1">
-            <input type="url" id="detailUrlInput" placeholder="Paste a single seller/company detail page URL">
-            <div class="field-hint">Open one seller's or company's detail page and paste the URL here so the AI can analyse its structure</div>
-          </div>
+      <div class="field-row" style="margin-top:10px">
+        <div class="field field-inline">
+          <label for="crawlMaxPages">Max pages</label>
+          <input type="number" id="crawlMaxPages" placeholder="All" min="1">
         </div>
-        <div class="advanced-row">
-          <label for="fieldsInput">Fields wanted</label>
-          <div style="flex:1">
-            <input type="text" id="fieldsInput" placeholder="e.g. name, country, email, phone, website, store_url, description">
-            <div class="field-hint">Comma-separated list of fields you want extracted</div>
-          </div>
-        </div>
-        <div class="advanced-row">
-          <label>&nbsp;</label>
+        <div class="field" style="flex:1;display:flex;align-items:flex-end">
           <div class="checkbox-row">
-            <input type="checkbox" id="testSingleInput" checked>
-            <label for="testSingleInput">Test with single item only (recommended for first run)</label>
+            <input type="checkbox" id="crawlTestSingle">
+            <label for="crawlTestSingle">Test with single item only</label>
           </div>
         </div>
       </div>
-    </form>
+    </div>
+
+    <!-- Action Bar -->
+    <div class="action-bar">
+      <button class="btn btn-primary" id="crawlBtn">Scrape</button>
+      <div class="field field-inline" style="margin-bottom:0">
+        <label for="crawlMaxItems" style="margin-bottom:3px">Max items</label>
+        <input type="number" id="crawlMaxItems" placeholder="All" min="1" title="Limit total items scraped (for testing)">
+      </div>
+    </div>
+
     <div class="examples">
       <span>Try:</span>
       <span class="example-chip" data-url="https://www.beauty-duesseldorf.com/vis/v1/en/directory/a">BEAUTY Dusseldorf</span>
@@ -258,82 +285,104 @@ tr:hover td{background:rgba(108,92,231,.04)}
       <span class="example-chip" data-url="https://www.spogagafa.com/spoga-gafa-exhibitors/list-of-exhibitors/">spoga+gafa</span>
       <span class="example-chip" data-url="https://www.eisenwarenmesse.com/eisenwarenmesse-exhibitors/list-of-exhibitors/">Eisenwarenmesse</span>
     </div>
+
+    <!-- Smart Crawl Result -->
+    <div class="tool-result" id="crawlResult"></div>
   </div>
 
-  <!-- ── ScrapeGraphAI Tools ────────────────────────────────────── -->
-  <div class="card" style="margin-top:20px">
-    <h2>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-      ScrapeGraphAI Tools
-    </h2>
-
-    <div class="tool-tabs">
-      <button class="tool-tab active" data-tool="multi-scrape">Multi-Scrape</button>
-      <button class="tool-tab" data-tool="script-gen">Script Generator</button>
-      <button class="tool-tab" data-tool="script-gen-multi">Multi-Script Generator</button>
+  <!-- ── Advanced Tools (collapsible) ────────────────────────────── -->
+  <div class="card">
+    <div class="toggle" id="advToolsToggle" style="margin-top:0">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:2px"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+      Advanced Tools
+      <span style="font-size:.72rem;color:var(--text2);font-weight:400;margin-left:4px">Multi-Scrape, Script Generator</span>
     </div>
+    <div class="toggle-panel" id="advToolsPanel" style="margin-top:12px;padding:0;background:transparent;border:none">
+      <div class="tool-tabs">
+        <button class="tool-tab active" data-tool="multi-scrape">Multi-Scrape</button>
+        <button class="tool-tab" data-tool="script-gen">Script Generator</button>
+        <button class="tool-tab" data-tool="script-gen-multi">Multi-Script</button>
+      </div>
 
-    <!-- Multi-Scrape Panel -->
-    <div class="tool-panel active" id="tool-multi-scrape">
-      <div class="tool-field">
-        <label>URLs (one per line)</label>
-        <textarea id="multiScrapeUrls" rows="4" placeholder="https://example.com/sellers&#10;https://example.com/sellers?page=2"></textarea>
+      <!-- Multi-Scrape Panel -->
+      <div class="tool-panel active" id="tool-multi-scrape">
+        <div class="field">
+          <label>URLs (one per line)</label>
+          <textarea id="multiScrapeUrls" rows="3" placeholder="https://example.com/sellers&#10;https://example.com/sellers?page=2"></textarea>
+        </div>
+        <div class="field">
+          <label>Prompt</label>
+          <input type="text" id="multiScrapePrompt" placeholder="Extract all seller names, emails, and phone numbers">
+        </div>
+        <button class="btn btn-primary" id="multiScrapeBtn">Run Multi-Scrape</button>
+        <div class="tool-result" id="multiScrapeResult"></div>
       </div>
-      <div class="tool-field">
-        <label>Prompt</label>
-        <input type="text" id="multiScrapePrompt" placeholder="Extract all seller names, emails, and phone numbers">
-      </div>
-      <button class="btn btn-primary" id="multiScrapeBtn">Run Multi-Scrape</button>
-      <div class="tool-result" id="multiScrapeResult"></div>
-    </div>
 
-    <!-- Script Generator Panel -->
-    <div class="tool-panel" id="tool-script-gen">
-      <div class="tool-field">
-        <label>URL</label>
-        <input type="url" id="scriptGenUrl" placeholder="https://example.com/sellers">
+      <!-- Script Generator Panel -->
+      <div class="tool-panel" id="tool-script-gen">
+        <div class="field">
+          <label>URL</label>
+          <input type="url" id="scriptGenUrl" placeholder="https://example.com/sellers">
+        </div>
+        <div class="field">
+          <label>Prompt</label>
+          <input type="text" id="scriptGenPrompt" placeholder="Extract all seller names and contact information">
+        </div>
+        <div class="field-row">
+          <div class="field" style="max-width:200px">
+            <label>Library</label>
+            <select id="scriptGenLibrary">
+              <option value="beautifulsoup4">BeautifulSoup4</option>
+              <option value="scrapy">Scrapy</option>
+            </select>
+          </div>
+          <div class="field" style="flex:1;display:flex;align-items:flex-end">
+            <div class="tool-checkbox" style="margin-bottom:0">
+              <input type="checkbox" id="scriptGenAutoExec" checked>
+              <label for="scriptGenAutoExec">Auto-execute script</label>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:12px" id="scriptGenBtn">Generate &amp; Run</button>
+        <div class="tool-result" id="scriptGenResult"></div>
       </div>
-      <div class="tool-field">
-        <label>Prompt</label>
-        <input type="text" id="scriptGenPrompt" placeholder="Extract all seller names and contact information">
-      </div>
-      <div class="tool-field">
-        <label>Library</label>
-        <select id="scriptGenLibrary">
-          <option value="beautifulsoup4">BeautifulSoup4</option>
-          <option value="scrapy">Scrapy</option>
-        </select>
-      </div>
-      <button class="btn btn-primary" id="scriptGenBtn">Generate Script</button>
-      <div class="tool-result" id="scriptGenResult"></div>
-    </div>
 
-    <!-- Multi-Script Generator Panel -->
-    <div class="tool-panel" id="tool-script-gen-multi">
-      <div class="tool-field">
-        <label>URLs (one per line)</label>
-        <textarea id="scriptGenMultiUrls" rows="4" placeholder="https://example.com/sellers&#10;https://example.com/products"></textarea>
+      <!-- Multi-Script Generator Panel -->
+      <div class="tool-panel" id="tool-script-gen-multi">
+        <div class="field">
+          <label>URLs (one per line)</label>
+          <textarea id="scriptGenMultiUrls" rows="3" placeholder="https://example.com/sellers&#10;https://example.com/products"></textarea>
+        </div>
+        <div class="field">
+          <label>Prompt</label>
+          <input type="text" id="scriptGenMultiPrompt" placeholder="Extract all seller names and contact information">
+        </div>
+        <div class="field-row">
+          <div class="field" style="max-width:200px">
+            <label>Library</label>
+            <select id="scriptGenMultiLibrary">
+              <option value="beautifulsoup4">BeautifulSoup4</option>
+              <option value="scrapy">Scrapy</option>
+            </select>
+          </div>
+          <div class="field" style="flex:1;display:flex;align-items:flex-end">
+            <div class="tool-checkbox" style="margin-bottom:0">
+              <input type="checkbox" id="scriptGenMultiAutoExec" checked>
+              <label for="scriptGenMultiAutoExec">Auto-execute script</label>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:12px" id="scriptGenMultiBtn">Generate &amp; Run Merged</button>
+        <div class="tool-result" id="scriptGenMultiResult"></div>
       </div>
-      <div class="tool-field">
-        <label>Prompt</label>
-        <input type="text" id="scriptGenMultiPrompt" placeholder="Extract all seller names and contact information">
-      </div>
-      <div class="tool-field">
-        <label>Library</label>
-        <select id="scriptGenMultiLibrary">
-          <option value="beautifulsoup4">BeautifulSoup4</option>
-          <option value="scrapy">Scrapy</option>
-        </select>
-      </div>
-      <button class="btn btn-primary" id="scriptGenMultiBtn">Generate Merged Script</button>
-      <div class="tool-result" id="scriptGenMultiResult"></div>
     </div>
   </div>
 
-  <!-- ── Jobs Section ────────────────────────────────────────────── -->
+  <!-- ── Jobs Section ──────────────────────────────────────────────── -->
   <div class="section-header">
     <h2>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
       Crawl Jobs
       <span class="job-count" id="jobCount">0</span>
     </h2>
@@ -342,7 +391,6 @@ tr:hover td{background:rgba(108,92,231,.04)}
       Refresh
     </button>
   </div>
-
   <div id="jobsList"></div>
 </div>
 
@@ -365,7 +413,7 @@ const STAGE_ICONS = {
   failed:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
 };
 
-const TABLE_COLS = ['name','country','city','address','postal_code','website','store_url','email','phone','description','product_categories','marketplace_name'];
+const TABLE_COLS = ['name','country','city','address','postal_code','website','store_url','email','phone','description','product_categories','brands','marketplace_name'];
 const PREVIEW_FIELDS = ['name','country','city','address','postal_code','website','store_url','email','phone','description','product_categories','brands','marketplace_name','logo_url','social_media'];
 
 let jobs = {};
@@ -384,7 +432,7 @@ function prettyLabel(key){ return key.replace(/_/g,' ').replace(/\b\w/g,l=>l.toU
 /* ── API ──────────────────────────────────────────────────────────── */
 async function apiPost(path,body){
   const r=await fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  if(!r.ok) { const e=await r.json().catch(()=>({})); throw new Error(e.detail||`${r.status} ${r.statusText}`); }
   return r.json();
 }
 async function apiGet(path){
@@ -393,52 +441,86 @@ async function apiGet(path){
   return r.json();
 }
 
-/* ── Advanced toggle ─────────────────────────────────────────────── */
-document.getElementById('advancedToggle').addEventListener('click',function(){
-  this.classList.toggle('open');
-  document.getElementById('advancedPanel').classList.toggle('open');
-});
-
-/* ── Submit Crawl ─────────────────────────────────────────────────── */
-document.getElementById('crawlForm').addEventListener('submit', async e=>{
-  e.preventDefault();
-  const url=document.getElementById('urlInput').value.trim();
-  const mp=document.getElementById('maxPagesInput').value.trim();
-  const detailUrl=document.getElementById('detailUrlInput').value.trim();
-  const fields=document.getElementById('fieldsInput').value.trim();
-  const testSingle=document.getElementById('testSingleInput').checked;
-  if(!url) return;
-  const btn=document.getElementById('submitBtn');
-  btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Starting...';
-  try{
-    const body={url, test_single: testSingle};
-    if(mp && !isNaN(+mp)) body.max_pages=+mp;
-    if(detailUrl) body.detail_page_url=detailUrl;
-    if(fields) body.fields_wanted=fields;
-    const job=await apiPost('/crawl',body);
-    jobs[job.id]=job;
-    expandedJobId=job.id;
-    render();
-    startPolling(job.id);
-    document.getElementById('urlInput').value='';
-    document.getElementById('maxPagesInput').value='';
-  }catch(err){ alert('Failed to start crawl: '+err.message); }
-  finally{ btn.disabled=false; btn.textContent='Start Crawl'; }
-});
+/* ── Collapsible toggles ─────────────────────────────────────────── */
+function setupToggle(toggleId, panelId) {
+  document.getElementById(toggleId).addEventListener('click', function(){
+    this.classList.toggle('open');
+    document.getElementById(panelId).classList.toggle('open');
+  });
+}
+setupToggle('advancedToggle', 'advancedPanel');
+setupToggle('advToolsToggle', 'advToolsPanel');
 
 /* ── Example chips ────────────────────────────────────────────────── */
 document.querySelectorAll('.example-chip').forEach(chip=>{
   chip.addEventListener('click',()=>{
-    document.getElementById('urlInput').value=chip.dataset.url;
-    document.getElementById('urlInput').focus();
+    document.getElementById('crawlUrls').value = chip.dataset.url;
+    document.getElementById('crawlUrls').focus();
   });
+});
+
+/* ── Tool result helpers ─────────────────────────────────────────── */
+function showToolResult(el, html) { el.innerHTML = html; el.classList.add('visible'); }
+function showToolLoading(el) { showToolResult(el, '<div class="tool-loading"><div class="spinner"></div>Running... this may take a minute</div>'); }
+function showToolError(el, msg) { showToolResult(el, `<div class="tool-error">${esc(msg)}</div>`); }
+
+/* ── Main Crawl Submit ───────────────────────────────────────────── */
+document.getElementById('crawlBtn').addEventListener('click', async () => {
+  const urls = document.getElementById('crawlUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean);
+  const prompt = document.getElementById('crawlPrompt').value.trim();
+  const fields = document.getElementById('crawlFields').value.trim();
+  const detailUrl = document.getElementById('crawlDetailUrl').value.trim();
+  const maxPages = document.getElementById('crawlMaxPages').value.trim();
+  const maxItems = document.getElementById('crawlMaxItems').value.trim();
+  const testSingle = document.getElementById('crawlTestSingle').checked;
+  const resultEl = document.getElementById('crawlResult');
+
+  if(!urls.length) { showToolError(resultEl, 'Please enter at least one URL.'); return; }
+  if(!prompt) { showToolError(resultEl, 'Please describe what data you want to extract.'); return; }
+
+  const btn = document.getElementById('crawlBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Starting...';
+  showToolLoading(resultEl);
+
+  try {
+    const body = { urls, prompt };
+    if(fields) body.fields_wanted = fields;
+    if(detailUrl) body.detail_page_url = detailUrl;
+    if(maxItems && !isNaN(+maxItems)) body.max_items = +maxItems;
+    // If test_single is checked or max_pages is set, we force full_pipeline via the router
+    // by including fields_wanted (the router sees it as needing full pipeline)
+
+    const data = await apiPost('/smart-crawl', body);
+
+    let html = `<div class="strategy-badge"><strong>Strategy:</strong> ${esc(data.strategy_used.replace(/_/g,' '))}</div>`;
+    html += `<div style="font-size:.82rem;color:var(--text2);margin-bottom:14px">${esc(data.strategy_explanation)}</div>`;
+
+    if (data.job_id) {
+      html += `<div style="padding:14px;background:rgba(108,92,231,.08);border-radius:8px;border:1px solid rgba(108,92,231,.15)">
+        <strong style="color:var(--accent2)">Full pipeline started!</strong>
+        <div style="color:var(--text2);font-size:.85rem;margin-top:4px">Job <code>${esc(data.job_id)}</code> — see Crawl Jobs below for progress.</div>
+      </div>`;
+      if(!jobs[data.job_id]) jobs[data.job_id] = {id:data.job_id, status:'pending', request:{url:urls[0], test_single:testSingle, max_items: maxItems?+maxItems:null}, created_at:new Date().toISOString()};
+      expandedJobId = data.job_id;
+      render();
+      startPolling(data.job_id);
+    } else if (data.script) {
+      html += formatScriptResult(data);
+    } else if (data.data) {
+      html += `<pre>${esc(JSON.stringify(data.data, null, 2))}</pre>`;
+    } else {
+      html += `<div style="color:var(--text2)">No data returned.</div>`;
+    }
+    showToolResult(resultEl, html);
+  } catch(e) { showToolError(resultEl, e.message); }
+  finally { btn.disabled = false; btn.textContent = 'Scrape'; }
 });
 
 /* ── Confirm / Feedback ──────────────────────────────────────────── */
 async function confirmPreview(jobId, approved, feedback){
   try{
-    const j=await apiPost(`/crawl/${jobId}/confirm`,{approved, feedback: feedback||null});
-    jobs[j.id]=j;
+    const j = await apiPost(`/crawl/${jobId}/confirm`, {approved, feedback: feedback||null});
+    jobs[j.id] = j;
     render();
     if(approved) startPolling(jobId);
   }catch(err){ alert('Failed to confirm: '+err.message); }
@@ -449,8 +531,8 @@ function startPolling(id){
   if(pollingTimers[id]) return;
   async function tick(){
     try{
-      const j=await apiGet('/crawl/'+id);
-      jobs[j.id]=j;
+      const j = await apiGet('/crawl/'+id);
+      jobs[j.id] = j;
       render();
       if(['completed','failed','preview'].includes(j.status)){
         clearInterval(pollingTimers[id]);
@@ -459,41 +541,40 @@ function startPolling(id){
     }catch(e){/* ignore transient errors */}
   }
   tick();
-  pollingTimers[id]=setInterval(tick,2000);
+  pollingTimers[id] = setInterval(tick, 2000);
 }
 
 /* ── Load all jobs ────────────────────────────────────────────────── */
 async function loadJobs(){
   try{
-    const list=await apiGet('/jobs');
-    list.forEach(j=>{jobs[j.id]=j});
+    const list = await apiGet('/jobs');
+    list.forEach(j=>{ jobs[j.id]=j; });
     render();
-    /* resume polling for active jobs (not preview — that waits for user) */
     list.filter(j=>!['completed','failed','preview'].includes(j.status)).forEach(j=>startPolling(j.id));
   }catch(e){ console.warn('Failed to load jobs',e); }
 }
 
 /* ── Render ───────────────────────────────────────────────────────── */
 function render(){
-  const sorted=Object.values(jobs).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
-  document.getElementById('jobCount').textContent=sorted.length;
-  const container=document.getElementById('jobsList');
+  const sorted = Object.values(jobs).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  document.getElementById('jobCount').textContent = sorted.length;
+  const container = document.getElementById('jobsList');
 
   if(!sorted.length){
-    container.innerHTML=`<div class="empty-state">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+    container.innerHTML = `<div class="empty-state">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
       <p>No crawl jobs yet. Submit a URL above to get started.</p>
     </div>`;
     return;
   }
 
-  container.innerHTML=sorted.map(j=>renderJobCard(j)).join('');
+  container.innerHTML = sorted.map(j=>renderJobCard(j)).join('');
 
   /* attach expand/collapse */
   container.querySelectorAll('.job-card').forEach(card=>{
-    const id=card.dataset.id;
+    const id = card.dataset.id;
     card.querySelector('.job-top').addEventListener('click',()=>{
-      expandedJobId=expandedJobId===id?null:id;
+      expandedJobId = expandedJobId===id ? null : id;
       render();
     });
   });
@@ -501,8 +582,8 @@ function render(){
   /* attach tab handlers */
   container.querySelectorAll('.tab').forEach(tab=>{
     tab.addEventListener('click',()=>{
-      const panel=tab.dataset.panel;
-      const parent=tab.closest('.job-detail');
+      const panel = tab.dataset.panel;
+      const parent = tab.closest('.job-detail');
       parent.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t===tab));
       parent.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id===panel));
     });
@@ -511,12 +592,12 @@ function render(){
   /* attach preview confirm/feedback handlers */
   container.querySelectorAll('.preview-confirm-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
-      const id=btn.dataset.jobId;
-      const isTest=btn.dataset.testSingle==='true';
-      const feedbackEl=document.getElementById('feedback-'+id);
-      const feedback=feedbackEl?feedbackEl.value.trim():'';
-      btn.disabled=true;
-      btn.innerHTML=isTest
+      const id = btn.dataset.jobId;
+      const isTest = btn.dataset.testSingle === 'true';
+      const feedbackEl = document.getElementById('feedback-'+id);
+      const feedback = feedbackEl ? feedbackEl.value.trim() : '';
+      btn.disabled = true;
+      btn.innerHTML = isTest
         ? '<span class="spinner"></span> Finishing test...'
         : '<span class="spinner"></span> Starting full crawl...';
       confirmPreview(id, true, feedback);
@@ -525,9 +606,9 @@ function render(){
 
   container.querySelectorAll('.preview-abort-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
-      const id=btn.dataset.jobId;
+      const id = btn.dataset.jobId;
       if(confirm('Abort this crawl?')){
-        btn.disabled=true;
+        btn.disabled = true;
         confirmPreview(id, false, null);
       }
     });
@@ -535,97 +616,96 @@ function render(){
 }
 
 function renderJobCard(j){
-  const expanded=expandedJobId===j.id;
-  const isTest=j.request.test_single;
+  const expanded = expandedJobId===j.id;
+  const isTest = j.request.test_single;
+  const maxItems = j.request.max_items;
   return `<div class="job-card ${expanded?'expanded':''}" data-id="${j.id}">
     <div class="job-top">
       <span class="badge badge-${j.status}"><span class="dot"></span>${STAGE_LABELS[j.status]}</span>
-      ${isTest?'<span class="job-mode">Test</span>':''}
+      ${isTest ? '<span class="job-mode">Test</span>' : ''}
+      ${maxItems ? '<span class="job-mode" style="background:rgba(253,203,110,.12);color:var(--yellow)">Max '+maxItems+'</span>' : ''}
       <span class="job-url" title="${esc(j.request.url)}">${esc(j.request.url)}</span>
       <span class="job-time" title="${j.created_at}">${timeAgo(j.created_at)}</span>
     </div>
-    ${expanded?renderJobDetail(j):''}
+    ${expanded ? renderJobDetail(j) : ''}
   </div>`;
 }
 
 function renderJobDetail(j){
-  const stageIdx=STAGES.indexOf(j.status);
-  const isFailed=j.status==='failed';
-  const isPreview=j.status==='preview';
-  const isTest=j.request.test_single;
+  const stageIdx = STAGES.indexOf(j.status);
+  const isFailed = j.status==='failed';
+  const isPreview = j.status==='preview';
+  const isTest = j.request.test_single;
 
-  let pipeline=STAGES.filter(s=>s!=='pending').map((s,i)=>{
-    let cls='';
-    const si=i+1; /* offset because we skip 'pending' */
+  let pipeline = STAGES.filter(s=>s!=='pending').map((s,i)=>{
+    let cls = '';
+    const si = i+1;
     if(isFailed && si>=stageIdx) cls='error';
     else if(si<stageIdx||(j.status==='completed')) cls='done';
-    else if(si===stageIdx){
-      cls = isPreview && s==='preview' ? 'preview-active' : 'active';
-    }
-    const arrow=i<STAGES.length-2?'<span class="pipe-arrow">&#9654;</span>':'';
+    else if(si===stageIdx) cls = isPreview && s==='preview' ? 'preview-active' : 'active';
+    const arrow = i<STAGES.length-2 ? '<span class="pipe-arrow">&#9654;</span>' : '';
     return `<div class="pipe-step ${cls}"><span class="pipe-icon">${STAGE_ICONS[s]}</span>${STAGE_LABELS[s]}</div>${arrow}`;
   }).join('');
 
-  let body='';
+  let body = '';
 
-  /* show user hints if provided */
-  const hints=[];
+  /* show hints if provided */
+  const hints = [];
   if(j.request.detail_page_url) hints.push('Detail page: '+j.request.detail_page_url);
   if(j.request.fields_wanted) hints.push('Fields: '+j.request.fields_wanted);
+  if(j.request.max_items) hints.push('Max items: '+j.request.max_items);
   if(isTest) hints.push('Mode: Test single item');
   if(hints.length){
-    body+=`<div style="font-size:.78rem;color:var(--text2);margin-bottom:12px;padding:8px 12px;background:var(--surface2);border-radius:6px;border:1px solid var(--border)">${hints.map(h=>'<div>'+esc(h)+'</div>').join('')}</div>`;
+    body += `<div style="font-size:.76rem;color:var(--text2);margin-bottom:10px;padding:8px 12px;background:var(--surface2);border-radius:6px;border:1px solid var(--border)">${hints.map(h=>'<div>'+esc(h)+'</div>').join('')}</div>`;
   }
 
   if(isFailed && j.error){
-    body+=`<div class="error-box"><strong>Error:</strong> ${esc(j.error)}</div>`;
+    body += `<div class="error-box"><strong>Error:</strong> ${esc(j.error)}</div>`;
   }
 
-  /* ── Preview state: show sample record + confirm/feedback UI ── */
   if(isPreview && j.preview_record){
-    body+=renderPreviewCard(j);
+    body += renderPreviewCard(j);
   }
 
-  /* tabs: Plan / Data / Raw JSON */
-  const hasPlan=!!j.plan;
-  const hasRecords=j.result && j.result.records && j.result.records.length>0;
-  const isComplete=j.status==='completed';
+  const hasPlan = !!j.plan;
+  const hasRecords = j.result && j.result.records && j.result.records.length>0;
+  const isComplete = j.status==='completed';
 
   if(hasPlan || hasRecords){
-    body+=`<div class="tabs">`;
-    if(hasRecords) body+=`<button class="tab active" data-panel="tab-data-${j.id}">Data Preview</button>`;
-    if(hasPlan) body+=`<button class="tab ${hasRecords?'':'active'}" data-panel="tab-plan-${j.id}">Scraping Plan</button>`;
-    if(hasRecords) body+=`<button class="tab" data-panel="tab-json-${j.id}">Raw JSON</button>`;
-    body+=`</div>`;
+    body += `<div class="tabs">`;
+    if(hasRecords) body += `<button class="tab active" data-panel="tab-data-${j.id}">Data</button>`;
+    if(hasPlan) body += `<button class="tab ${hasRecords?'':'active'}" data-panel="tab-plan-${j.id}">Plan</button>`;
+    if(hasRecords) body += `<button class="tab" data-panel="tab-json-${j.id}">Raw JSON</button>`;
+    body += `</div>`;
 
     if(hasRecords){
-      const recs=j.result.records;
-      body+=`<div class="tab-panel active" id="tab-data-${j.id}">`;
-      body+=`<div class="results-bar">
-        <span class="record-count">${recs.length} record${recs.length!==1?'s':''} extracted</span>
+      const recs = j.result.records;
+      body += `<div class="tab-panel active" id="tab-data-${j.id}">`;
+      body += `<div class="results-bar">
+        <span class="record-count">${recs.length} record${recs.length!==1?'s':''}</span>
         ${isComplete?`<div class="dl-btns">
-          <a href="${API}/crawl/${j.id}/json" class="btn btn-sm btn-outline" download>Download JSON</a>
-          <a href="${API}/crawl/${j.id}/csv" class="btn btn-sm btn-green" download>Download CSV</a>
+          <a href="${API}/crawl/${j.id}/json" class="btn btn-sm btn-outline" download>JSON</a>
+          <a href="${API}/crawl/${j.id}/csv" class="btn btn-sm btn-green" download>CSV</a>
         </div>`:''}
       </div>`;
-      body+=renderTable(recs);
-      body+=`</div>`;
+      body += renderTable(recs);
+      body += `</div>`;
     }
 
     if(hasPlan){
-      body+=`<div class="tab-panel ${hasRecords?'':'active'}" id="tab-plan-${j.id}">
+      body += `<div class="tab-panel ${hasRecords?'':'active'}" id="tab-plan-${j.id}">
         ${renderPlanSummary(j.plan)}
-        <div class="plan-box" style="margin-top:10px"><pre>${esc(JSON.stringify(j.plan,null,2))}</pre></div>
+        <div class="plan-box" style="margin-top:8px"><pre>${esc(JSON.stringify(j.plan,null,2))}</pre></div>
       </div>`;
     }
 
     if(hasRecords){
-      body+=`<div class="tab-panel" id="tab-json-${j.id}">
-        <div class="plan-box"><pre>${esc(JSON.stringify(j.result.records.slice(0,20),null,2))}${j.result.records.length>20?'\n... ('+(j.result.records.length-20)+' more records)':''}</pre></div>
+      body += `<div class="tab-panel" id="tab-json-${j.id}">
+        <div class="plan-box"><pre>${esc(JSON.stringify(j.result.records.slice(0,20),null,2))}${j.result.records.length>20?'\n... ('+(j.result.records.length-20)+' more)':''}</pre></div>
       </div>`;
     }
   } else if(!isFailed && !isPreview && j.status!=='completed'){
-    body+=`<div style="text-align:center;padding:24px;color:var(--text2);font-size:.88rem"><span class="spinner" style="margin-right:8px"></span>Processing...</div>`;
+    body += `<div style="text-align:center;padding:20px;color:var(--text2);font-size:.86rem"><span class="spinner" style="margin-right:8px"></span>Processing...</div>`;
   }
 
   return `<div class="job-detail">
@@ -635,33 +715,33 @@ function renderJobDetail(j){
 }
 
 function renderPreviewCard(j){
-  const r=j.preview_record;
-  const isTest=j.request.test_single;
-  let html=`<div class="preview-box">
+  const r = j.preview_record;
+  const isTest = j.request.test_single;
+  let html = `<div class="preview-box">
     <h3>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       Preview — Sample Record
     </h3>
     <p class="preview-subtitle">${isTest
-      ? 'This is a test run with a single item. Review the result and confirm to save it, or abort.'
-      : 'Review this sample before running the full crawl. If data is missing or incorrect, describe what you need below.'}</p>
+      ? 'Test run with a single item. Review and confirm to save, or abort.'
+      : 'Review this sample before the full crawl. Describe missing data below if needed.'}</p>
     <div class="preview-fields">`;
 
   PREVIEW_FIELDS.forEach(f=>{
-    let v=r[f];
-    if(Array.isArray(v)) v=v.length?v.join(', '):null;
-    if(typeof v==='object' && v!==null) v=Object.entries(v).map(([k,val])=>`${k}: ${val}`).join(', ')||null;
-    const hasVal=v && v.trim && v.trim().length>0;
-    html+=`<div class="preview-field">
+    let v = r[f];
+    if(Array.isArray(v)) v = v.length ? v.join(', ') : null;
+    if(typeof v==='object' && v!==null) v = Object.entries(v).map(([k,val])=>`${k}: ${val}`).join(', ') || null;
+    const hasVal = v && v.trim && v.trim().length>0;
+    html += `<div class="preview-field">
       <div class="preview-field-label">${esc(prettyLabel(f))}</div>
       <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'Not captured'}</div>
     </div>`;
   });
 
-  html+=`</div>
+  html += `</div>
     <div class="preview-actions">
-      <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}">${isTest?'Looks good — Save result':'Looks good — Start full crawl'}</button>
-      ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Optional: describe missing data (e.g. \'I also need email, phone, and full address from the detail page\')">'}
+      <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}">${isTest?'Looks good — Save':'Looks good — Start full crawl'}</button>
+      ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Optional: describe missing data">'}
       <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Abort</button>
     </div>
   </div>`;
@@ -669,32 +749,31 @@ function renderPreviewCard(j){
 }
 
 function renderTable(records){
-  /* determine which columns have data */
-  const activeCols=TABLE_COLS.filter(c=>records.some(r=>{
-    const v=r[c]; return v && (Array.isArray(v)?v.length>0:true);
+  const activeCols = TABLE_COLS.filter(c=>records.some(r=>{
+    const v = r[c]; return v && (Array.isArray(v) ? v.length>0 : true);
   }));
   if(!activeCols.length) return '<p style="color:var(--text2);font-size:.85rem">No structured data to display.</p>';
 
-  let html='<div class="table-wrap"><table><thead><tr>';
-  html+='<th>#</th>';
-  activeCols.forEach(c=>html+=`<th>${esc(prettyLabel(c))}</th>`);
-  html+='</tr></thead><tbody>';
+  let html = '<div class="table-wrap"><table><thead><tr>';
+  html += '<th>#</th>';
+  activeCols.forEach(c=> html+=`<th>${esc(prettyLabel(c))}</th>`);
+  html += '</tr></thead><tbody>';
 
   records.forEach((r,i)=>{
-    html+='<tr>';
-    html+=`<td style="color:var(--text2)">${i+1}</td>`;
+    html += '<tr>';
+    html += `<td style="color:var(--text2)">${i+1}</td>`;
     activeCols.forEach(c=>{
-      let v=r[c];
-      if(Array.isArray(v)) v=v.join(', ');
-      if(c==='website' && v) html+=`<td><a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a></td>`;
-      else if(c==='email' && v) html+=`<td><a href="mailto:${esc(v)}">${esc(v)}</a></td>`;
-      else if(c==='description' && v && v.length>120) html+=`<td title="${esc(v)}" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.substring(0,120))}…</td>`;
-      else html+=`<td title="${esc(v||'')}">${esc(v||'—')}</td>`;
+      let v = r[c];
+      if(Array.isArray(v)) v = v.join(', ');
+      if(c==='website' && v) html += `<td><a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a></td>`;
+      else if(c==='email' && v) html += `<td><a href="mailto:${esc(v)}">${esc(v)}</a></td>`;
+      else if(c==='description' && v && v.length>100) html += `<td title="${esc(v)}">${esc(v.substring(0,100))}...</td>`;
+      else html += `<td title="${esc(v||'')}">${esc(v||'—')}</td>`;
     });
-    html+='</tr>';
+    html += '</tr>';
   });
 
-  html+='</tbody></table></div>';
+  html += '</tbody></table></div>';
   return html;
 }
 
@@ -705,13 +784,10 @@ function renderPlanSummary(plan){
   const detailPagePlan = plan.detail_page_plan;
   const detailApiPlan = plan.detail_api_plan;
 
-  // Determine which detail fields will be enriched
   let detailFieldNames = [];
   if(detailApiPlan && detailApiPlan.sample_response){
-    // For API interception, show meaningful keys from the sample response
-    const sample = detailApiPlan.sample_response;
     const skip = new Set(['type','id','write','lastModified','createdAt','updatedAt','media','pdfs','synonyms','tags','xtags']);
-    detailFieldNames = Object.keys(sample).filter(k => !skip.has(k));
+    detailFieldNames = Object.keys(detailApiPlan.sample_response).filter(k => !skip.has(k));
   } else if(detailPagePlan && Object.keys(detailPagePlan.field_selectors||{}).length){
     detailFieldNames = Object.keys(detailPagePlan.field_selectors);
   } else {
@@ -720,121 +796,141 @@ function renderPlanSummary(plan){
 
   let detailApproach, detailBadgeColor;
   if(detailApiPlan && detailApiPlan.api_url_template){
-    const idInfo = detailApiPlan.id_selector
-      ? `<br><small style="color:var(--text2)">ID: <code>${esc(detailApiPlan.id_selector)}</code>${detailApiPlan.id_regex ? ` → regex <code>${esc(detailApiPlan.id_regex)}</code>` : ''}</small>`
-      : '';
-    detailApproach = `<strong style="color:var(--green)">&#9889; API Interception</strong> — JS button clicked, API discovered<br><small style="color:var(--text2)">${esc(detailApiPlan.api_url_template)}</small>${idInfo}`;
+    detailApproach = `<strong style="color:var(--green)">API Interception</strong>`;
     detailBadgeColor = 'var(--green)';
   } else if(detailPagePlan && Object.keys(detailPagePlan.field_selectors||{}).length){
-    detailApproach = `<strong style="color:var(--accent2)">&#128279; Detail Page</strong> — following links to detail pages`;
+    detailApproach = `<strong style="color:var(--accent2)">Detail Page</strong>`;
     detailBadgeColor = 'var(--accent2)';
   } else if(target.detail_link_selector){
-    detailApproach = `<strong style="color:var(--accent2)">&#128279; Detail Page</strong> — link selector: <code>${esc(target.detail_link_selector)}</code>`;
+    detailApproach = `<strong style="color:var(--accent2)">Detail Page</strong> — <code style="font-size:.75rem">${esc(target.detail_link_selector)}</code>`;
     detailBadgeColor = 'var(--accent2)';
-  } else if(target.detail_button_selector){
-    detailApproach = `<strong style="color:var(--yellow)">&#9888; JS Button</strong> — button found but API not yet intercepted<br><small style="color:var(--text2)">Selector: <code>${esc(target.detail_button_selector)}</code></small>`;
-    detailBadgeColor = 'var(--yellow)';
   } else {
     detailApproach = `<span style="color:var(--text2)">None — listing data only</span>`;
     detailBadgeColor = 'var(--border)';
   }
 
-  const paginationType = plan.pagination || 'none';
-  const jsRequired = plan.requires_javascript;
-
-  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:4px">
-    <div class="preview-field" style="grid-column:1/-1;border-color:rgba(0,184,148,.2)">
-      <div class="preview-field-label">Extraction Method</div>
-      <div class="preview-field-value"><strong style="color:var(--green)">&#9889; ScrapeGraphAI</strong> (primary) &mdash; CSS selectors (backup)</div>
-    </div>
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:4px">
     <div class="preview-field">
       <div class="preview-field-label">Pagination</div>
-      <div class="preview-field-value">${esc(paginationType)}</div>
+      <div class="preview-field-value">${esc(plan.pagination||'none')}</div>
     </div>
     <div class="preview-field">
-      <div class="preview-field-label">JavaScript Required</div>
-      <div class="preview-field-value" style="color:${jsRequired?'var(--yellow)':'var(--green)'}">${jsRequired?'Yes':'No'}</div>
+      <div class="preview-field-label">JavaScript</div>
+      <div class="preview-field-value" style="color:${plan.requires_javascript?'var(--yellow)':'var(--green)'}">${plan.requires_javascript?'Yes':'No'}</div>
     </div>
     <div class="preview-field">
       <div class="preview-field-label">Listing Fields</div>
-      <div class="preview-field-value">${listingFields.length ? esc(listingFields.join(', ')) : '<span style="color:var(--text2)">none</span>'}</div>
+      <div class="preview-field-value" style="font-size:.78rem">${listingFields.length ? esc(listingFields.join(', ')) : '<span style="color:var(--text2)">none</span>'}</div>
     </div>
     <div class="preview-field">
-      <div class="preview-field-label">Detail Fields</div>
-      <div class="preview-field-value">${detailFieldNames.length ? esc(detailFieldNames.join(', ')) : '<span style="color:var(--text2)">none</span>'}</div>
-    </div>
-    <div class="preview-field" style="grid-column:1/-1;border-color:${detailBadgeColor}20">
       <div class="preview-field-label">Detail Enrichment</div>
       <div class="preview-field-value">${detailApproach}</div>
     </div>
+    ${detailFieldNames.length ? `<div class="preview-field" style="grid-column:1/-1">
+      <div class="preview-field-label">Detail Fields</div>
+      <div class="preview-field-value" style="font-size:.78rem">${esc(detailFieldNames.join(', '))}</div>
+    </div>` : ''}
   </div>`;
 }
 
-/* ── Refresh button ───────────────────────────────────────────────── */
-document.getElementById('refreshBtn').addEventListener('click',loadJobs);
+/* ── Execution / Script result formatters ─────────────────────────── */
+function formatExecution(exec) {
+  if (!exec) return '';
+  if (exec.safety_warnings && exec.safety_warnings.length) {
+    return `<div class="exec-section"><div class="exec-header open">
+      <span class="exec-badge exec-badge-blocked">BLOCKED</span> Script blocked by safety scan
+    </div><div class="exec-body open">
+      <div class="exec-stderr">${exec.safety_warnings.map(w => esc(w)).join('\n')}</div>
+    </div></div>`;
+  }
+  let badge;
+  if (exec.timed_out) badge = '<span class="exec-badge exec-badge-timeout">TIMEOUT</span>';
+  else if (exec.returncode === 0) badge = '<span class="exec-badge exec-badge-success">SUCCESS</span>';
+  else badge = '<span class="exec-badge exec-badge-error">EXIT ' + exec.returncode + '</span>';
 
-/* ── ScrapeGraphAI Tools ──────────────────────────────────────────── */
+  let body = '';
+  if (exec.stdout) {
+    let display = exec.stdout;
+    try { const parsed = JSON.parse(exec.stdout); display = JSON.stringify(parsed, null, 2); } catch(e) {}
+    body += `<div class="exec-stdout">${esc(display)}</div>`;
+  }
+  if (exec.stderr) body += `<div class="exec-stderr">${esc(exec.stderr)}</div>`;
+  if (!exec.stdout && !exec.stderr) body += `<div style="color:var(--text2);font-size:.82rem">No output.</div>`;
+  return `<div style="margin-top:12px">${badge}<div style="margin-top:8px">${body}</div></div>`;
+}
+
+function formatScriptResult(data) {
+  let html = '';
+  html += `<div class="exec-section">
+    <div class="exec-header" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+      Generated Script (click to expand)
+    </div>
+    <div class="exec-body"><pre>${esc(data.script)}</pre></div>
+  </div>`;
+  if (data.execution) {
+    html += `<h4 style="font-size:.86rem;color:var(--text);margin-top:14px;margin-bottom:6px">Execution Results</h4>`;
+    html += formatExecution(data.execution);
+  }
+  return html;
+}
+
+/* ── Advanced Tool Tabs ──────────────────────────────────────────── */
 document.querySelectorAll('.tool-tab').forEach(tab => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.tool-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tool-panel').forEach(p => p.classList.remove('active'));
+    const parent = tab.closest('.toggle-panel');
+    parent.querySelectorAll('.tool-tab').forEach(t => t.classList.remove('active'));
+    parent.querySelectorAll('.tool-panel').forEach(p => p.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById('tool-' + tab.dataset.tool).classList.add('active');
   });
 });
 
-function showToolResult(el, html) { el.innerHTML = html; el.classList.add('visible'); }
-function showToolLoading(el) { showToolResult(el, '<div class="tool-loading"><div class="spinner"></div>Running… this may take a minute</div>'); }
-function showToolError(el, msg) { showToolResult(el, `<div class="tool-error">${esc(msg)}</div>`); }
-
-// Multi-Scrape
+/* ── Multi-Scrape ────────────────────────────────────────────────── */
 document.getElementById('multiScrapeBtn').addEventListener('click', async () => {
   const urls = document.getElementById('multiScrapeUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean);
   const prompt = document.getElementById('multiScrapePrompt').value.trim();
   const resultEl = document.getElementById('multiScrapeResult');
-  if(!urls.length || !prompt) { showToolError(resultEl,'Please enter URLs and a prompt.'); return; }
+  if(!urls.length || !prompt) { showToolError(resultEl,'Enter URLs and a prompt.'); return; }
   showToolLoading(resultEl);
   try {
-    const resp = await fetch(API+'/smart-scrape-multi', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({urls,prompt})});
-    if(!resp.ok) { const e=await resp.json(); throw new Error(e.detail||resp.statusText); }
-    const data = await resp.json();
+    const data = await apiPost('/smart-scrape-multi', {urls, prompt});
     showToolResult(resultEl, `<pre>${esc(JSON.stringify(data.result, null, 2))}</pre>`);
   } catch(e) { showToolError(resultEl, e.message); }
 });
 
-// Script Generator
+/* ── Script Generator ────────────────────────────────────────────── */
 document.getElementById('scriptGenBtn').addEventListener('click', async () => {
   const url = document.getElementById('scriptGenUrl').value.trim();
   const prompt = document.getElementById('scriptGenPrompt').value.trim();
   const library = document.getElementById('scriptGenLibrary').value;
+  const autoExec = document.getElementById('scriptGenAutoExec').checked;
   const resultEl = document.getElementById('scriptGenResult');
-  if(!url || !prompt) { showToolError(resultEl,'Please enter a URL and a prompt.'); return; }
+  if(!url || !prompt) { showToolError(resultEl,'Enter a URL and a prompt.'); return; }
   showToolLoading(resultEl);
   try {
-    const resp = await fetch(API+'/generate-script', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,prompt,library})});
-    if(!resp.ok) { const e=await resp.json(); throw new Error(e.detail||resp.statusText); }
-    const data = await resp.json();
-    showToolResult(resultEl, `<pre>${esc(data.script)}</pre>`);
+    const data = await apiPost('/generate-script', {url, prompt, library, auto_execute: autoExec});
+    showToolResult(resultEl, formatScriptResult(data));
   } catch(e) { showToolError(resultEl, e.message); }
 });
 
-// Multi-Script Generator
+/* ── Multi-Script Generator ──────────────────────────────────────── */
 document.getElementById('scriptGenMultiBtn').addEventListener('click', async () => {
   const urls = document.getElementById('scriptGenMultiUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean);
   const prompt = document.getElementById('scriptGenMultiPrompt').value.trim();
   const library = document.getElementById('scriptGenMultiLibrary').value;
+  const autoExec = document.getElementById('scriptGenMultiAutoExec').checked;
   const resultEl = document.getElementById('scriptGenMultiResult');
-  if(!urls.length || !prompt) { showToolError(resultEl,'Please enter URLs and a prompt.'); return; }
+  if(!urls.length || !prompt) { showToolError(resultEl,'Enter URLs and a prompt.'); return; }
   showToolLoading(resultEl);
   try {
-    const resp = await fetch(API+'/generate-script-multi', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({urls,prompt,library})});
-    if(!resp.ok) { const e=await resp.json(); throw new Error(e.detail||resp.statusText); }
-    const data = await resp.json();
-    showToolResult(resultEl, `<pre>${esc(data.script)}</pre>`);
+    const data = await apiPost('/generate-script-multi', {urls, prompt, library, auto_execute: autoExec});
+    showToolResult(resultEl, formatScriptResult(data));
   } catch(e) { showToolError(resultEl, e.message); }
 });
 
-/* ── Init ─────────────────────────────────────────────────────────── */
+/* ── Refresh & Init ──────────────────────────────────────────────── */
+document.getElementById('refreshBtn').addEventListener('click', loadJobs);
 loadJobs();
 </script>
 </body>

@@ -319,11 +319,47 @@ async def click_all_tabs(
         await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         tabs = await page.query_selector_all(tab_selector)
         log.info("Found %d tabs with selector '%s'", len(tabs), tab_selector)
-        for tab in tabs:
-            await tab.click()
+        for i, tab in enumerate(tabs):
+            try:
+                await tab.scroll_into_view_if_needed(timeout=5_000)
+                await tab.click(timeout=10_000)
+            except Exception:
+                # Element may be inside a hidden dropdown/custom widget —
+                # use JS-level .click() which bypasses all visibility checks
+                log.debug("Tab %d not interactable via Playwright, using JS click", i)
+                try:
+                    await tab.evaluate("el => el.click()")
+                except Exception as exc:
+                    exc_str = str(exc)
+                    if "Execution context was destroyed" in exc_str or "navigation" in exc_str.lower():
+                        # A previous click caused a page navigation — reload and re-query tabs
+                        log.warning("Tab %d triggered navigation, reloading page", i)
+                        try:
+                            await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                            tabs = await page.query_selector_all(tab_selector)
+                            if i < len(tabs):
+                                await tabs[i].evaluate("el => el.click()")
+                            else:
+                                log.warning("Tab %d no longer exists after reload, skipping", i)
+                                continue
+                        except Exception as reload_exc:
+                            log.warning("Skipping tab %d — reload+click failed: %s", i, reload_exc)
+                            continue
+                    else:
+                        log.warning("Skipping tab %d — JS click also failed: %s", i, exc)
+                        continue
             await asyncio.sleep(1.5)
+            # Check if click caused a full navigation — if so, go back
+            if page.url != url and not page.url.startswith(url.split("?")[0]):
+                log.warning("Tab %d caused navigation to %s, navigating back", i, page.url)
+                await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                tabs = await page.query_selector_all(tab_selector)
+                continue  # skip this tab's content since it navigated away
             if wait_selector:
-                await page.wait_for_selector(wait_selector, timeout=10_000)
+                try:
+                    await page.wait_for_selector(wait_selector, timeout=10_000)
+                except Exception:
+                    pass  # content may already be loaded
             htmls.append(await page.content())
     finally:
         await page.close()

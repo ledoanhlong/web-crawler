@@ -268,6 +268,10 @@ class CrawlRequest(BaseModel):
         default=False,
         description="If true, only scrape and output a single item for testing.",
     )
+    max_items: int | None = Field(
+        default=None,
+        description="Maximum number of items to scrape (for testing). None means no limit.",
+    )
 
     @field_validator("url")
     @classmethod
@@ -334,6 +338,10 @@ class ScriptCreatorRequest(BaseModel):
         default="beautifulsoup4",
         description="Python library for the generated script (beautifulsoup4, scrapy, etc.).",
     )
+    auto_execute: bool = Field(
+        default=True,
+        description="Automatically execute the generated script and return results.",
+    )
 
 
 class ScriptCreatorMultiRequest(BaseModel):
@@ -343,11 +351,79 @@ class ScriptCreatorMultiRequest(BaseModel):
         default="beautifulsoup4",
         description="Python library for the generated script (beautifulsoup4, scrapy, etc.).",
     )
+    auto_execute: bool = Field(
+        default=True,
+        description="Automatically execute the generated script and return results.",
+    )
 
 
 class SmartScrapeResult(BaseModel):
     result: dict | list | str = Field(description="Extracted data from the scraped pages.")
 
 
+class ScriptExecutionResult(BaseModel):
+    stdout: str = Field(default="", description="Script stdout output.")
+    stderr: str = Field(default="", description="Script stderr output.")
+    returncode: int = Field(description="Process exit code.")
+    timed_out: bool = Field(default=False, description="Whether the script timed out.")
+    safety_warnings: list[str] = Field(
+        default_factory=list,
+        description="Safety warnings that blocked execution.",
+    )
+
+
 class ScriptResult(BaseModel):
     script: str = Field(description="Generated Python scraping script.")
+    execution: ScriptExecutionResult | None = Field(
+        default=None,
+        description="Results from auto-executing the script. None if execution was skipped.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Router agent — intelligent scraping method selection
+# ---------------------------------------------------------------------------
+class ScrapingStrategy(str, enum.Enum):
+    FULL_PIPELINE = "full_pipeline"
+    SMART_SCRAPER = "smart_scraper"
+    SMART_SCRAPER_MULTI = "smart_scraper_multi"
+    SCRIPT_CREATOR = "script_creator"
+
+
+class RoutingDecision(BaseModel):
+    strategy: ScrapingStrategy
+    explanation: str = Field(description="Why this strategy was chosen.")
+
+
+class SmartCrawlRequest(BaseModel):
+    urls: list[str] = Field(description="One or more URLs to scrape.")
+    prompt: str = Field(description="What data to extract.")
+    fields_wanted: str | None = Field(
+        default=None,
+        description="Comma-separated list of fields to extract.",
+    )
+    detail_page_url: str | None = Field(
+        default=None,
+        description="Example detail page URL for the planner.",
+    )
+    max_items: int | None = Field(
+        default=None,
+        description="Maximum number of items to scrape (for testing). None means no limit.",
+    )
+
+
+class SmartCrawlResult(BaseModel):
+    strategy_used: str = Field(description="The scraping strategy that was selected.")
+    strategy_explanation: str = Field(description="Why this strategy was chosen.")
+    data: dict | list | str | None = Field(
+        default=None, description="Extracted data (for smart_scraper strategies).",
+    )
+    script: str | None = Field(
+        default=None, description="Generated script (for script_creator strategy).",
+    )
+    execution: ScriptExecutionResult | None = Field(
+        default=None, description="Script execution results.",
+    )
+    job_id: str | None = Field(
+        default=None, description="Job ID for full_pipeline (async tracking).",
+    )

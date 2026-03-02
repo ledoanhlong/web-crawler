@@ -1,7 +1,7 @@
 """ScraperAgent — Executes a ScrapingPlan and returns raw PageData.
 
 Supports:
-- Static pages via httpx
+- Static pages via httpx (or Scrapy when enabled)
 - JS-rendered pages via Playwright
 - Multiple pagination strategies (next button, page numbers, alphabet tabs,
   infinite scroll, load-more, and direct API endpoints)
@@ -13,7 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import sys
+import tempfile
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -37,16 +41,50 @@ log = get_logger(__name__)
 class ScraperAgent:
     """Execute a scraping plan and return raw extracted data."""
 
-    async def scrape(self, plan: ScrapingPlan) -> list[PageData]:
-        log.info("Starting scrape for %s (js=%s)", plan.url, plan.requires_javascript)
+    async def scrape(
+        self, plan: ScrapingPlan, *, max_items: int | None = None,
+    ) -> list[PageData]:
+        log.info("Starting scrape for %s (js=%s, max_items=%s)", plan.url, plan.requires_javascript, max_items)
 
         if plan.pagination == PaginationStrategy.API_ENDPOINT and plan.api_endpoint:
-            return await self._scrape_api(plan)
+            pages = await self._scrape_api(plan, max_items=max_items)
+        elif plan.requires_javascript:
+            pages = await self._scrape_js(plan)
+        elif settings.use_scrapy and self._can_use_scrapy(plan):
+            try:
+                pages = await self._scrape_scrapy(plan, max_items=max_items)
+                # Spider already followed detail links and captured HTML.
+                # Still need sub-links and API enrichment (run in main process).
+                if plan.detail_page_plan and plan.detail_page_plan.sub_links:
+                    all_detail_htmls: dict[str, str] = {}
+                    for pd in pages:
+                        all_detail_htmls.update(pd.detail_pages)
+                    if all_detail_htmls:
+                        sub_link_data = await self._follow_detail_sub_links(
+                            all_detail_htmls, plan
+                        )
+                        for pd in pages:
+                            pd.detail_sub_pages.update(sub_link_data)
+                pages = await self._enrich_detail_api(pages, plan)
+            except Exception as exc:
+                log.warning("Scrapy failed, falling back to httpx: %s", exc)
+                pages = await self._scrape_static(plan)
+        else:
+            pages = await self._scrape_static(plan)
 
-        if plan.requires_javascript:
-            return await self._scrape_js(plan)
+        # Enforce max_items limit across all pages
+        if max_items is not None:
+            total = 0
+            for pd in pages:
+                remaining = max_items - total
+                if remaining <= 0:
+                    pd.items = []
+                elif len(pd.items) > remaining:
+                    pd.items = pd.items[:remaining]
+                total += len(pd.items)
+            log.info("max_items=%d: kept %d items total", max_items, total)
 
-        return await self._scrape_static(plan)
+        return pages
 
     async def scrape_preview(self, plan: ScrapingPlan) -> list[PageData]:
         """Scrape just the first item (with its detail page) for preview."""
@@ -56,6 +94,12 @@ class ScraperAgent:
             pages = await self._scrape_api(plan, max_items=1)
         elif plan.requires_javascript:
             pages = await self._scrape_preview_js(plan)
+        elif settings.use_scrapy and self._can_use_scrapy(plan):
+            try:
+                pages = await self._scrape_scrapy(plan, max_items=1)
+            except Exception as exc:
+                log.warning("Scrapy preview failed, falling back to httpx: %s", exc)
+                pages = await self._scrape_preview_static(plan)
         else:
             pages = await self._scrape_preview_static(plan)
 
@@ -273,6 +317,8 @@ class ScraperAgent:
                 if link:
                     if link.startswith("/"):
                         link = base_origin + link
+                    # Update item so the URL matches detail_pages keys later
+                    item["detail_link"] = link
                     all_detail_urls.append(link)
 
         if not all_detail_urls:
@@ -536,6 +582,152 @@ class ScraperAgent:
             finally:
                 await page.close()
         return results
+
+    # ------------------------------------------------------------------
+    # Scrapy (subprocess) path
+    # ------------------------------------------------------------------
+    def _can_use_scrapy(self, plan: ScrapingPlan) -> bool:
+        """Check if this plan can be handled by the Scrapy spider.
+
+        Scrapy handles: none, next_button, page_numbers pagination.
+        Playwright-only: infinite_scroll, load_more_button, alphabet_tabs.
+        """
+        scrapy_compatible = {
+            PaginationStrategy.NONE,
+            PaginationStrategy.NEXT_BUTTON,
+            PaginationStrategy.PAGE_NUMBERS,
+        }
+        return plan.pagination in scrapy_compatible
+
+    async def _scrape_scrapy(
+        self, plan: ScrapingPlan, *, max_items: int | None = None,
+    ) -> list[PageData]:
+        """Run the Scrapy PlanSpider in a subprocess and convert results to PageData."""
+        log.info("Starting Scrapy subprocess for %s", plan.url)
+
+        plan_dict = plan.model_dump(mode="json")
+        plan_file = Path(tempfile.mktemp(suffix=".json", prefix="scrapy_plan_"))
+        output_file = Path(tempfile.mktemp(suffix=".json", prefix="scrapy_output_"))
+
+        proc = None
+        try:
+            plan_file.write_text(
+                json.dumps(plan_dict, ensure_ascii=False), encoding="utf-8"
+            )
+
+            # Pass Scrapy settings through environment variables
+            env = {**os.environ}
+            env["SCRAPY_CONCURRENT_REQUESTS"] = str(settings.scrapy_concurrent_requests)
+            env["SCRAPY_CONCURRENT_REQUESTS_PER_DOMAIN"] = str(
+                settings.scrapy_concurrent_requests_per_domain
+            )
+            env["SCRAPY_DOWNLOAD_DELAY"] = str(settings.scrapy_download_delay)
+            env["SCRAPY_RANDOMIZE_DELAY"] = str(settings.scrapy_randomize_delay).lower()
+            env["SCRAPY_RETRY_TIMES"] = str(settings.scrapy_retry_times)
+            env["SCRAPY_RETRY_HTTP_CODES"] = json.dumps(settings.scrapy_retry_http_codes)
+            env["SCRAPY_OBEY_ROBOTSTXT"] = str(settings.scrapy_obey_robotstxt).lower()
+            env["SCRAPY_AUTOTHROTTLE_ENABLED"] = str(
+                settings.scrapy_autothrottle_enabled
+            ).lower()
+            env["SCRAPY_AUTOTHROTTLE_START_DELAY"] = str(
+                settings.scrapy_autothrottle_start_delay
+            )
+            env["SCRAPY_AUTOTHROTTLE_MAX_DELAY"] = str(
+                settings.scrapy_autothrottle_max_delay
+            )
+            env["SCRAPY_AUTOTHROTTLE_TARGET_CONCURRENCY"] = str(
+                settings.scrapy_autothrottle_target_concurrency
+            )
+            env["SCRAPY_DOWNLOAD_TIMEOUT"] = str(settings.request_timeout_s)
+            env["SCRAPY_LOG_LEVEL"] = settings.log_level
+
+            cmd = [
+                sys.executable, "-m", "app.scrapy_runner.run",
+                "--plan", str(plan_file),
+                "--output", str(output_file),
+            ]
+            if max_items is not None:
+                cmd.extend(["--max-items", str(max_items)])
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=settings.scrapy_subprocess_timeout_s,
+            )
+
+            if proc.returncode != 0:
+                err_msg = stderr.decode("utf-8", errors="replace")[-2000:]
+                log.error(
+                    "Scrapy subprocess failed (rc=%d): %s", proc.returncode, err_msg
+                )
+                raise RuntimeError(
+                    f"Scrapy subprocess exited with code {proc.returncode}"
+                )
+
+            if not output_file.exists():
+                log.warning("Scrapy output file not found: %s", output_file)
+                return []
+
+            raw_items = json.loads(output_file.read_text(encoding="utf-8"))
+            log.info("Scrapy subprocess returned %d items", len(raw_items))
+
+            return self._convert_scrapy_items_to_page_data(raw_items, plan)
+
+        except asyncio.TimeoutError:
+            log.error(
+                "Scrapy subprocess timed out after %ds",
+                settings.scrapy_subprocess_timeout_s,
+            )
+            if proc and proc.returncode is None:
+                proc.kill()
+            raise
+
+        finally:
+            if plan_file.exists():
+                plan_file.unlink()
+            if output_file.exists():
+                output_file.unlink()
+
+    def _convert_scrapy_items_to_page_data(
+        self, raw_items: list[dict], plan: ScrapingPlan,
+    ) -> list[PageData]:
+        """Convert Scrapy spider output into PageData objects.
+
+        Groups items by their source listing page URL.
+        Extracts _detail_html into the detail_pages dict.
+        """
+        pages_map: dict[str, PageData] = {}
+
+        for raw in raw_items:
+            if raw.get("type") != "item":
+                continue
+
+            source_url = raw.pop("_source_url", plan.url)
+            detail_html = raw.pop("_detail_html", None)
+            detail_url = raw.pop("_detail_url", None)
+            raw.pop("type", None)
+
+            if source_url not in pages_map:
+                pages_map[source_url] = PageData(url=source_url, items=[])
+
+            pd = pages_map[source_url]
+            pd.items.append(raw)
+
+            if detail_html and detail_url:
+                pd.detail_pages[detail_url] = detail_html
+
+        log.info(
+            "Converted Scrapy output: %d pages, %d total items",
+            len(pages_map),
+            sum(len(p.items) for p in pages_map.values()),
+        )
+        return list(pages_map.values())
 
     # ------------------------------------------------------------------
     # Helpers

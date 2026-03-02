@@ -18,6 +18,21 @@ class Settings(BaseSettings):
     # ScrapeGraphAI — when True, SmartScraperGraph is primary extractor (CSS selectors as backup)
     use_smart_scraper_primary: bool = True
 
+    # Scrapy integration — when True, use Scrapy for static (non-JS) scraping instead of httpx
+    use_scrapy: bool = False
+    scrapy_concurrent_requests: int = 8
+    scrapy_concurrent_requests_per_domain: int = 4
+    scrapy_download_delay: float = 0.5
+    scrapy_randomize_delay: bool = True
+    scrapy_retry_times: int = 3
+    scrapy_retry_http_codes: list[int] = [500, 502, 503, 504, 408, 429]
+    scrapy_obey_robotstxt: bool = True
+    scrapy_autothrottle_enabled: bool = True
+    scrapy_autothrottle_start_delay: float = 1.0
+    scrapy_autothrottle_max_delay: float = 10.0
+    scrapy_autothrottle_target_concurrency: float = 2.0
+    scrapy_subprocess_timeout_s: int = 600
+
     # Playwright
     playwright_headless: bool = True
     playwright_ws_endpoint: str | None = None
