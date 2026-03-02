@@ -8,7 +8,17 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 
-from app.models.schemas import ConfirmPreviewRequest, CrawlJob, CrawlRequest, CrawlStatus
+from app.models.schemas import (
+    ConfirmPreviewRequest,
+    CrawlJob,
+    CrawlRequest,
+    CrawlStatus,
+    ScriptCreatorMultiRequest,
+    ScriptCreatorRequest,
+    ScriptResult,
+    SmartScrapeMultiRequest,
+    SmartScrapeResult,
+)
 from app.services.orchestrator import Orchestrator
 
 router = APIRouter(prefix="/api/v1", tags=["crawl"])
@@ -79,7 +89,7 @@ async def download_json(job_id: str) -> FileResponse:
     path = Path(job.result.json_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Output file not found")
-    return FileResponse(path, media_type="application/json", filename="exhibitors.json")
+    return FileResponse(path, media_type="application/json", filename="results.json")
 
 
 @router.get("/crawl/{job_id}/csv")
@@ -93,13 +103,52 @@ async def download_csv(job_id: str) -> FileResponse:
     path = Path(job.result.csv_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Output file not found")
-    return FileResponse(path, media_type="text/csv", filename="exhibitors.csv")
+    return FileResponse(path, media_type="text/csv", filename="results.csv")
 
 
 @router.get("/jobs", response_model=list[CrawlJob])
 async def list_jobs() -> list[CrawlJob]:
     """List all crawl jobs (most recent first)."""
     return sorted(_jobs.values(), key=lambda j: j.created_at, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# ScrapeGraphAI tool endpoints
+# ---------------------------------------------------------------------------
+@router.post("/smart-scrape-multi", response_model=SmartScrapeResult, tags=["scrapegraphai"])
+async def smart_scrape_multi(body: SmartScrapeMultiRequest) -> SmartScrapeResult:
+    """Scrape multiple URLs with a single prompt using SmartScraperMultiGraph."""
+    from app.utils.smart_scraper import smart_scrape_multi as _smart_scrape_multi
+
+    try:
+        result = await _smart_scrape_multi(body.urls, body.prompt)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return SmartScrapeResult(result=result)
+
+
+@router.post("/generate-script", response_model=ScriptResult, tags=["scrapegraphai"])
+async def generate_script(body: ScriptCreatorRequest) -> ScriptResult:
+    """Generate a Python scraping script for a single URL using ScriptCreatorGraph."""
+    from app.utils.smart_scraper import generate_scraper_script
+
+    try:
+        script = await generate_scraper_script(body.url, body.prompt, body.library)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return ScriptResult(script=script)
+
+
+@router.post("/generate-script-multi", response_model=ScriptResult, tags=["scrapegraphai"])
+async def generate_script_multi(body: ScriptCreatorMultiRequest) -> ScriptResult:
+    """Generate a merged Python scraping script for multiple URLs."""
+    from app.utils.smart_scraper import generate_scraper_script_multi
+
+    try:
+        script = await generate_scraper_script_multi(body.urls, body.prompt, body.library)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return ScriptResult(script=script)
 
 
 async def _run_preview(job: CrawlJob) -> None:

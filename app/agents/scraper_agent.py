@@ -74,7 +74,7 @@ class ScraperAgent:
         html = await fetch_page(plan.url)
         if not html:
             return []
-        items = self._extract_items(html, plan.target, plan.detail_api_plan)
+        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
         if items:
             items = items[:1]
         return [PageData(url=plan.url, items=items)]
@@ -83,7 +83,7 @@ class ScraperAgent:
         """Use Playwright to fetch the first page and extract only the first item."""
         async with get_browser() as browser:
             html = await fetch_page_js(browser, plan.url, wait_selector=plan.wait_selector)
-            items = self._extract_items(html, plan.target, plan.detail_api_plan)
+            items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
             if items:
                 items = items[:1]
             return [PageData(url=plan.url, items=items)]
@@ -100,7 +100,7 @@ class ScraperAgent:
         for url, html in html_map.items():
             if not html:
                 continue
-            items = self._extract_items(html, plan.target, plan.detail_api_plan)
+            items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
             pages.append(PageData(url=url, items=items))
 
         # Detail page enrichment
@@ -123,7 +123,7 @@ class ScraperAgent:
                         wait_selector=plan.wait_selector,
                     )
                     for html in htmls:
-                        items = self._extract_items(html, plan.target, plan.detail_api_plan)
+                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
                         pages.append(PageData(url=plan.url, items=items))
 
                 case PaginationStrategy.INFINITE_SCROLL:
@@ -134,7 +134,7 @@ class ScraperAgent:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         await scroll_to_bottom(page, max_scrolls=settings.max_pages_per_crawl)
                         html = await page.content()
-                        items = self._extract_items(html, plan.target, plan.detail_api_plan)
+                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
                         pages.append(PageData(url=plan.url, items=items))
                     finally:
                         await page.close()
@@ -147,7 +147,7 @@ class ScraperAgent:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         await click_load_more(page, plan.pagination_selector)
                         html = await page.content()
-                        items = self._extract_items(html, plan.target, plan.detail_api_plan)
+                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
                         pages.append(PageData(url=plan.url, items=items))
                     finally:
                         await page.close()
@@ -160,7 +160,7 @@ class ScraperAgent:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         for _ in range(settings.max_pages_per_crawl):
                             html = await page.content()
-                            items = self._extract_items(html, plan.target, plan.detail_api_plan)
+                            items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
                             pages.append(PageData(url=page.url, items=items))
                             btn = await page.query_selector(plan.pagination_selector)
                             if not btn or not await btn.is_visible():
@@ -179,7 +179,7 @@ class ScraperAgent:
                         html = await fetch_page_js(
                             browser, url, wait_selector=plan.wait_selector
                         )
-                        items = self._extract_items(html, plan.target, plan.detail_api_plan)
+                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
                         pages.append(PageData(url=url, items=items))
                         await asyncio.sleep(settings.request_delay_ms / 1000)
 
@@ -216,7 +216,7 @@ class ScraperAgent:
                     items_raw = data
                 elif isinstance(data, dict):
                     # Try common wrapper keys
-                    for key in ("data", "items", "results", "exhibitors", "records", "list"):
+                    for key in ("data", "items", "results", "records", "list", "sellers", "exhibitors", "entries"):
                         if key in data and isinstance(data[key], list):
                             items_raw = data[key]
                             break
@@ -594,3 +594,26 @@ class ScraperAgent:
 
             items.append(record)
         return items
+
+    async def _extract_items_with_fallback(
+        self,
+        html: str,
+        target: ScrapingTarget,
+        detail_api_plan: DetailApiPlan | None = None,
+    ) -> list[dict[str, str | None]]:
+        """Extract items — SmartScraperGraph primary, CSS selectors backup."""
+        # Primary: SmartScraperGraph (LLM-based extraction)
+        if settings.use_smart_scraper_primary and len(html) >= 500:
+            from app.utils.smart_scraper import smart_extract_items
+
+            fields = list(target.field_selectors.keys())
+            smart_items = await smart_extract_items(html, fields)
+            if smart_items:
+                log.info("SmartScraperGraph extracted %d items (primary)", len(smart_items))
+                return smart_items
+            log.warning(
+                "SmartScraperGraph returned 0 items — falling back to CSS selectors"
+            )
+
+        # Backup: CSS selector extraction
+        return self._extract_items(html, target, detail_api_plan)

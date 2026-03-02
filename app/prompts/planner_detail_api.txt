@@ -16,23 +16,23 @@ Your task:
 
 Return a JSON object:
 {
-  "api_url_template": "<URL with {id} placeholder, e.g. https://example.com/api/exhibitors/{id}/profile>",
+  "api_url_template": "<URL with {id} placeholder, e.g. https://example.com/api/sellers/{id}/profile>",
   "id_selector": "<CSS selector relative to item container to find the element with the ID>",
-  "id_attribute": "<HTML attribute to read, e.g. 'data-id', 'data-exhibitor-id', 'href', or null if text content>",
+  "id_attribute": "<HTML attribute to read, e.g. 'data-id', 'data-seller-id', 'href', or null if text content>",
   "id_regex": "<regex with one capture group to extract the ID from the value, or null if the whole value IS the ID>"
 }
 
 Examples of ID patterns:
 - data-id="3043124" on a button → id_selector: "button.details", id_attribute: "data-id", id_regex: null
-- data-url="/exhibitors/beauty2026.3043124/profile" → id_selector: "[data-url]", id_attribute: "data-url", id_regex: "exhibitors/[^.]*\\.(\\d+)/"
-- class="exhibitor-item item-3043124" → id_selector: ".exhibitor-item", id_attribute: "class", id_regex: "item-(\\d+)"
-- href="/floorplan?actionItem=3043124&_event=beauty2026" → id_selector: "a[href*='actionItem']", id_attribute: "href", id_regex: "actionItem=(\\d+)"
+- data-url="/sellers/event2026.3043124/profile" → id_selector: "[data-url]", id_attribute: "data-url", id_regex: "sellers/[^.]*\\.(\\d+)/"
+- class="seller-item item-3043124" → id_selector: ".seller-item", id_attribute: "class", id_regex: "item-(\\d+)"
+- href="/floorplan?actionItem=3043124&_event=event2026" → id_selector: "a[href*='actionItem']", id_attribute: "href", id_regex: "actionItem=(\\d+)"
 - A hidden <input type="hidden" value="3043124"> → id_selector: "input[type='hidden']", id_attribute: "value", id_regex: null
 
 Important notes:
-- The {id} placeholder in api_url_template replaces ONLY the variable part of the URL (the exhibitor-specific ID). Keep all static path segments intact.
+- The {id} placeholder in api_url_template replaces ONLY the variable part of the URL (the item-specific ID). Keep all static path segments intact.
 - The id_regex must use standard Python regex syntax. Use \\d for digits, \\. for literal dots, etc.
 - If the ID appears in multiple places, prefer the most direct/reliable source (e.g. a data attribute over a class name).
-- If a compound ID like "beauty2026.3043124" appears in the URL, determine whether the whole compound ID is needed or just part of it. Check the item HTML to see what form the ID takes there.
+- If a compound ID like "event2026.3043124" appears in the URL, determine whether the whole compound ID is needed or just part of it. Check the item HTML to see what form the ID takes there.
 
 Return ONLY valid JSON. No markdown, no explanation.

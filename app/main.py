@@ -17,8 +17,8 @@ log = get_logger(__name__)
 app = FastAPI(
     title="Web Crawler AI Agent",
     description=(
-        "Multi-agent web crawler for extracting exhibitor and seller "
-        "information from trade fairs, events, and marketplaces."
+        "Multi-agent web crawler for extracting seller and company "
+        "information from marketplaces, trade fairs, and directories."
     ),
     version="0.1.0",
 )

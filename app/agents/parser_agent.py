@@ -1,4 +1,4 @@
-"""ParserAgent — Normalizes raw scraped data into structured ExhibitorRecords.
+"""ParserAgent — Normalizes raw scraped data into structured SellerLead records.
 
 Uses GPT to:
 1. Map messy, site-specific field names to our canonical schema.
@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import json
 
-from app.models.schemas import ExhibitorRecord, PageData, ScrapingPlan
+from app.config import settings
+from app.models.schemas import SellerLead, PageData, ScrapingPlan
 from app.prompts import load_prompt
 from app.utils.html import simplify_html
 from app.utils.llm import chat_completion_json
@@ -25,11 +26,10 @@ _MAX_BATCH_CHARS = 60_000
 
 # Fields from detail API responses that carry no schema value (metadata, flags,
 # internal IDs, binary-like data, etc.).  Stripped before sending to the LLM.
+# Generic patterns: internal IDs, edit flags, timestamps, binary/media refs.
 _API_SKIP_KEYS = frozenset({
-    "type", "id", "exhSeoId", "write", "tagsAreEditable", "xtagsAreEditable",
-    "exhIsLead", "logoUploadedByPubimport", "premium", "eventMap", "areaMap",
-    "areaId", "locationIsVirtual", "lastModified", "events", "getInTouchEmail",
-    "isGetInTouchAllowed", "media", "pdfs", "tol", "synonyms", "tags", "xtags",
+    "type", "id", "write", "lastModified", "createdAt", "updatedAt",
+    "media", "pdfs", "synonyms", "tags", "xtags",
 })
 
 # Max characters kept for description / free-text fields in the API response
@@ -65,13 +65,13 @@ def _compact_api_response(data: dict) -> dict:
 
 
 class ParserAgent:
-    """Normalize raw page data into ExhibitorRecords."""
+    """Normalize raw page data into SellerLead records."""
 
     async def parse(
         self,
         page_data_list: list[PageData],
         plan: ScrapingPlan,
-    ) -> list[ExhibitorRecord]:
+    ) -> list[SellerLead]:
         # Flatten all items from all pages
         all_items: list[dict[str, str | None]] = []
         detail_htmls: dict[str, str] = {}
@@ -92,7 +92,7 @@ class ParserAgent:
         detail_texts: dict[str, str] = {}
         if detail_htmls:
             for url, html in detail_htmls.items():
-                fields_text = self._extract_detail_fields(html, plan)
+                fields_text = await self._extract_detail_fields(html, plan)
                 sub_pages = detail_sub_pages.get(url, {})
                 if sub_pages:
                     sub_parts: list[str] = []
@@ -107,12 +107,12 @@ class ParserAgent:
         batches = self._split_into_batches(enriched_items)
         log.info("Split %d items into %d batch(es) for parsing", len(all_items), len(batches))
 
-        records: list[ExhibitorRecord] = []
+        records: list[SellerLead] = []
         for batch in batches:
             batch_records = await self._parse_batch(batch, source_url=plan.url)
             records.extend(batch_records)
 
-        log.info("Parsed %d exhibitor records total", len(records))
+        log.info("Parsed %d seller lead records total", len(records))
         return records
 
     def _build_enriched_items(
@@ -160,7 +160,7 @@ class ParserAgent:
         enriched_items: list[dict],
         *,
         source_url: str,
-    ) -> list[ExhibitorRecord]:
+    ) -> list[SellerLead]:
         messages = [
             {"role": "system", "content": load_prompt("parser")},
             {
@@ -187,18 +187,18 @@ class ParserAgent:
             return []
 
         raw_records = result.get("records", []) if isinstance(result, dict) else []
-        records: list[ExhibitorRecord] = []
+        records: list[SellerLead] = []
         for raw in raw_records:
             raw["source_url"] = source_url
             try:
-                records.append(ExhibitorRecord.model_validate(raw))
+                records.append(SellerLead.model_validate(raw))
             except Exception as exc:
                 log.warning("Failed to validate record: %s — %s", raw.get("name", "?"), exc)
         return records
 
     @staticmethod
-    def _extract_detail_fields(html: str, plan: ScrapingPlan) -> str:
-        """Extract fields from a detail page HTML using the plan's selectors."""
+    def _extract_detail_fields_css(html: str, plan: ScrapingPlan) -> str:
+        """Extract fields from a detail page HTML using the plan's CSS selectors."""
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "lxml")
@@ -209,4 +209,35 @@ class ParserAgent:
                 attr = plan.detail_page_field_attributes.get(field)
                 val = el.get(attr) if attr else el.get_text(separator=" ", strip=True)
                 parts.append(f"{field}: {val}")
-        return "\n".join(parts) if parts else simplify_html(html, max_chars=4_000)
+        return "\n".join(parts)
+
+    @staticmethod
+    async def _extract_detail_fields_smart(html: str, plan: ScrapingPlan) -> str:
+        """Extract fields from a detail page using SmartScraperGraph."""
+        from app.utils.smart_scraper import smart_extract_detail
+
+        fields = list(plan.detail_page_fields.keys()) if plan.detail_page_fields else [
+            "name", "country", "city", "address", "email", "phone",
+            "website", "description", "product_categories",
+        ]
+        detail = await smart_extract_detail(html, fields)
+        if detail:
+            return "\n".join(f"{k}: {v}" for k, v in detail.items() if v)
+        return ""
+
+    async def _extract_detail_fields(self, html: str, plan: ScrapingPlan) -> str:
+        """Extract fields from detail page — SmartScraperGraph primary, CSS backup."""
+        # Primary: SmartScraperGraph
+        if settings.use_smart_scraper_primary:
+            smart_result = await self._extract_detail_fields_smart(html, plan)
+            if smart_result:
+                log.info("SmartScraperGraph extracted detail fields (primary)")
+                return smart_result
+            log.warning("SmartScraperGraph detail extraction empty — falling back to CSS")
+
+        # Backup: CSS selectors
+        css_result = self._extract_detail_fields_css(html, plan)
+        if css_result:
+            return css_result
+
+        return simplify_html(html, max_chars=4_000)

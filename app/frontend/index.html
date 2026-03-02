@@ -71,6 +71,28 @@ header p{font-size:.85rem;color:var(--text2);margin-top:2px}
 .checkbox-row label{font-size:.82rem;color:var(--text2);cursor:pointer}
 .field-hint{font-size:.72rem;color:var(--text2);margin-top:2px;opacity:.7}
 
+/* ── ScrapeGraphAI Tools ─────────────────────────────────────────── */
+.tool-tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0}
+.tool-tab{padding:8px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text2);font-size:.82rem;font-weight:500;transition:all .15s}
+.tool-tab:hover{color:var(--text)}
+.tool-tab.active{color:var(--accent2);border-bottom-color:var(--accent)}
+.tool-panel{display:none}
+.tool-panel.active{display:block}
+.tool-field{margin-bottom:12px}
+.tool-field label{display:block;font-size:.8rem;color:var(--text2);margin-bottom:4px}
+.tool-field textarea,.tool-field input[type=text],.tool-field input[type=url]{width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.88rem;outline:none;transition:border .2s;font-family:inherit;resize:vertical}
+.tool-field textarea:focus,.tool-field input:focus{border-color:var(--accent)}
+.tool-field textarea::placeholder,.tool-field input::placeholder{color:var(--text2)}
+.tool-field select{padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.88rem;outline:none;cursor:pointer}
+.tool-field select:focus{border-color:var(--accent)}
+.tool-result{margin-top:16px;display:none}
+.tool-result.visible{display:block}
+.tool-result pre{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:.8rem;color:var(--text);overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:500px;overflow-y:auto}
+.tool-result .tool-error{color:var(--red);font-size:.85rem;padding:12px;background:rgba(225,112,85,.08);border-radius:8px;border:1px solid rgba(225,112,85,.2)}
+.tool-result .tool-loading{color:var(--accent2);font-size:.85rem;display:flex;align-items:center;gap:8px}
+.tool-result .tool-loading .spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent2);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
 /* ── Jobs Table / List ────────────────────────────────────────────── */
 .section-header{display:flex;justify-content:space-between;align-items:center;margin:32px 0 14px}
 .section-header h2{font-size:1.05rem;display:flex;align-items:center;gap:8px}
@@ -181,7 +203,9 @@ tr:hover td{background:rgba(108,92,231,.04)}
     <svg width="36" height="36" viewBox="0 0 36 36" fill="none"><rect width="36" height="36" rx="8" fill="#6c5ce7"/><path d="M10 18c0-4.4 3.6-8 8-8m0 16c4.4 0 8-3.6 8-8" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="18" cy="18" r="3" fill="#fff"/><path d="M18 10v-3m0 22v-3m8-8h3M7 18h3" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
     <div>
       <h1>Web Crawler AI Agent</h1>
-      <p>Extract exhibitor &amp; seller data from trade fairs and marketplaces</p>
+      <p>Extract seller &amp; company data from marketplaces, trade fairs, and directories
+        <span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:2px 8px;border-radius:10px;background:rgba(0,184,148,.12);color:var(--green);font-size:.7rem;font-weight:600;letter-spacing:.03em">Powered by ScrapeGraphAI</span>
+      </p>
     </div>
   </header>
 
@@ -193,7 +217,7 @@ tr:hover td{background:rgba(108,92,231,.04)}
     </h2>
     <form id="crawlForm">
       <div class="form-row">
-        <input type="text" id="urlInput" placeholder="Enter exhibitor listing URL (e.g. https://www.fibo.com/.../exhibitor-directory.html)" required>
+        <input type="text" id="urlInput" placeholder="Enter listing page URL (marketplace, trade fair, directory, etc.)" required>
         <input type="text" id="maxPagesInput" class="max-pages" placeholder="Max pages" title="Maximum pages to crawl (optional)">
         <button type="submit" class="btn btn-primary" id="submitBtn">Start Crawl</button>
       </div>
@@ -207,14 +231,14 @@ tr:hover td{background:rgba(108,92,231,.04)}
         <div class="advanced-row">
           <label for="detailUrlInput">Detail page URL</label>
           <div style="flex:1">
-            <input type="url" id="detailUrlInput" placeholder="Paste a single exhibitor detail/profile page URL">
-            <div class="field-hint">Open one exhibitor's "Details" page and paste the URL here so the AI can analyse its structure</div>
+            <input type="url" id="detailUrlInput" placeholder="Paste a single seller/company detail page URL">
+            <div class="field-hint">Open one seller's or company's detail page and paste the URL here so the AI can analyse its structure</div>
           </div>
         </div>
         <div class="advanced-row">
           <label for="fieldsInput">Fields wanted</label>
           <div style="flex:1">
-            <input type="text" id="fieldsInput" placeholder="e.g. name, booth, country, email, phone, website, description">
+            <input type="text" id="fieldsInput" placeholder="e.g. name, country, email, phone, website, store_url, description">
             <div class="field-hint">Comma-separated list of fields you want extracted</div>
           </div>
         </div>
@@ -230,10 +254,79 @@ tr:hover td{background:rgba(108,92,231,.04)}
     <div class="examples">
       <span>Try:</span>
       <span class="example-chip" data-url="https://www.beauty-duesseldorf.com/vis/v1/en/directory/a">BEAUTY Dusseldorf</span>
-      <span class="example-chip" data-url="https://www.spogagafa.com/spoga-gafa-exhibitors/list-of-exhibitors/">spoga+gafa</span>
-      <span class="example-chip" data-url="https://outdoortradeshow.com/exhibitor-list/">Outdoor Trade Show</span>
       <span class="example-chip" data-url="https://www.fibo.com/germany/en-gb/exhibitor-directory.html#/">FIBO</span>
+      <span class="example-chip" data-url="https://www.spogagafa.com/spoga-gafa-exhibitors/list-of-exhibitors/">spoga+gafa</span>
       <span class="example-chip" data-url="https://www.eisenwarenmesse.com/eisenwarenmesse-exhibitors/list-of-exhibitors/">Eisenwarenmesse</span>
+    </div>
+  </div>
+
+  <!-- ── ScrapeGraphAI Tools ────────────────────────────────────── -->
+  <div class="card" style="margin-top:20px">
+    <h2>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+      ScrapeGraphAI Tools
+    </h2>
+
+    <div class="tool-tabs">
+      <button class="tool-tab active" data-tool="multi-scrape">Multi-Scrape</button>
+      <button class="tool-tab" data-tool="script-gen">Script Generator</button>
+      <button class="tool-tab" data-tool="script-gen-multi">Multi-Script Generator</button>
+    </div>
+
+    <!-- Multi-Scrape Panel -->
+    <div class="tool-panel active" id="tool-multi-scrape">
+      <div class="tool-field">
+        <label>URLs (one per line)</label>
+        <textarea id="multiScrapeUrls" rows="4" placeholder="https://example.com/sellers&#10;https://example.com/sellers?page=2"></textarea>
+      </div>
+      <div class="tool-field">
+        <label>Prompt</label>
+        <input type="text" id="multiScrapePrompt" placeholder="Extract all seller names, emails, and phone numbers">
+      </div>
+      <button class="btn btn-primary" id="multiScrapeBtn">Run Multi-Scrape</button>
+      <div class="tool-result" id="multiScrapeResult"></div>
+    </div>
+
+    <!-- Script Generator Panel -->
+    <div class="tool-panel" id="tool-script-gen">
+      <div class="tool-field">
+        <label>URL</label>
+        <input type="url" id="scriptGenUrl" placeholder="https://example.com/sellers">
+      </div>
+      <div class="tool-field">
+        <label>Prompt</label>
+        <input type="text" id="scriptGenPrompt" placeholder="Extract all seller names and contact information">
+      </div>
+      <div class="tool-field">
+        <label>Library</label>
+        <select id="scriptGenLibrary">
+          <option value="beautifulsoup4">BeautifulSoup4</option>
+          <option value="scrapy">Scrapy</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="scriptGenBtn">Generate Script</button>
+      <div class="tool-result" id="scriptGenResult"></div>
+    </div>
+
+    <!-- Multi-Script Generator Panel -->
+    <div class="tool-panel" id="tool-script-gen-multi">
+      <div class="tool-field">
+        <label>URLs (one per line)</label>
+        <textarea id="scriptGenMultiUrls" rows="4" placeholder="https://example.com/sellers&#10;https://example.com/products"></textarea>
+      </div>
+      <div class="tool-field">
+        <label>Prompt</label>
+        <input type="text" id="scriptGenMultiPrompt" placeholder="Extract all seller names and contact information">
+      </div>
+      <div class="tool-field">
+        <label>Library</label>
+        <select id="scriptGenMultiLibrary">
+          <option value="beautifulsoup4">BeautifulSoup4</option>
+          <option value="scrapy">Scrapy</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="scriptGenMultiBtn">Generate Merged Script</button>
+      <div class="tool-result" id="scriptGenMultiResult"></div>
     </div>
   </div>
 
@@ -272,8 +365,8 @@ const STAGE_ICONS = {
   failed:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
 };
 
-const TABLE_COLS = ['name','booth_or_stand','hall','country','city','address','postal_code','website','email','phone','description','product_categories'];
-const PREVIEW_FIELDS = ['name','booth_or_stand','hall','country','city','address','postal_code','website','email','phone','fax','description','product_categories','brands','logo_url','social_media'];
+const TABLE_COLS = ['name','country','city','address','postal_code','website','store_url','email','phone','description','product_categories','marketplace_name'];
+const PREVIEW_FIELDS = ['name','country','city','address','postal_code','website','store_url','email','phone','description','product_categories','brands','marketplace_name','logo_url','social_media'];
 
 let jobs = {};
 let expandedJobId = null;
@@ -509,7 +602,7 @@ function renderJobDetail(j){
       const recs=j.result.records;
       body+=`<div class="tab-panel active" id="tab-data-${j.id}">`;
       body+=`<div class="results-bar">
-        <span class="record-count">${recs.length} exhibitor${recs.length!==1?'s':''} extracted</span>
+        <span class="record-count">${recs.length} record${recs.length!==1?'s':''} extracted</span>
         ${isComplete?`<div class="dl-btns">
           <a href="${API}/crawl/${j.id}/json" class="btn btn-sm btn-outline" download>Download JSON</a>
           <a href="${API}/crawl/${j.id}/csv" class="btn btn-sm btn-green" download>Download CSV</a>
@@ -617,7 +710,7 @@ function renderPlanSummary(plan){
   if(detailApiPlan && detailApiPlan.sample_response){
     // For API interception, show meaningful keys from the sample response
     const sample = detailApiPlan.sample_response;
-    const skip = new Set(['type','id','write','tagsAreEditable','xtagsAreEditable','exhIsLead','logoUploadedByPubimport','premium','eventMap','areaMap','areaId','locationIsVirtual','lastModified']);
+    const skip = new Set(['type','id','write','lastModified','createdAt','updatedAt','media','pdfs','synonyms','tags','xtags']);
     detailFieldNames = Object.keys(sample).filter(k => !skip.has(k));
   } else if(detailPagePlan && Object.keys(detailPagePlan.field_selectors||{}).length){
     detailFieldNames = Object.keys(detailPagePlan.field_selectors);
@@ -650,6 +743,10 @@ function renderPlanSummary(plan){
   const jsRequired = plan.requires_javascript;
 
   return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:4px">
+    <div class="preview-field" style="grid-column:1/-1;border-color:rgba(0,184,148,.2)">
+      <div class="preview-field-label">Extraction Method</div>
+      <div class="preview-field-value"><strong style="color:var(--green)">&#9889; ScrapeGraphAI</strong> (primary) &mdash; CSS selectors (backup)</div>
+    </div>
     <div class="preview-field">
       <div class="preview-field-label">Pagination</div>
       <div class="preview-field-value">${esc(paginationType)}</div>
@@ -675,6 +772,67 @@ function renderPlanSummary(plan){
 
 /* ── Refresh button ───────────────────────────────────────────────── */
 document.getElementById('refreshBtn').addEventListener('click',loadJobs);
+
+/* ── ScrapeGraphAI Tools ──────────────────────────────────────────── */
+document.querySelectorAll('.tool-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tool-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tool-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tool-' + tab.dataset.tool).classList.add('active');
+  });
+});
+
+function showToolResult(el, html) { el.innerHTML = html; el.classList.add('visible'); }
+function showToolLoading(el) { showToolResult(el, '<div class="tool-loading"><div class="spinner"></div>Running… this may take a minute</div>'); }
+function showToolError(el, msg) { showToolResult(el, `<div class="tool-error">${esc(msg)}</div>`); }
+
+// Multi-Scrape
+document.getElementById('multiScrapeBtn').addEventListener('click', async () => {
+  const urls = document.getElementById('multiScrapeUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean);
+  const prompt = document.getElementById('multiScrapePrompt').value.trim();
+  const resultEl = document.getElementById('multiScrapeResult');
+  if(!urls.length || !prompt) { showToolError(resultEl,'Please enter URLs and a prompt.'); return; }
+  showToolLoading(resultEl);
+  try {
+    const resp = await fetch(API+'/smart-scrape-multi', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({urls,prompt})});
+    if(!resp.ok) { const e=await resp.json(); throw new Error(e.detail||resp.statusText); }
+    const data = await resp.json();
+    showToolResult(resultEl, `<pre>${esc(JSON.stringify(data.result, null, 2))}</pre>`);
+  } catch(e) { showToolError(resultEl, e.message); }
+});
+
+// Script Generator
+document.getElementById('scriptGenBtn').addEventListener('click', async () => {
+  const url = document.getElementById('scriptGenUrl').value.trim();
+  const prompt = document.getElementById('scriptGenPrompt').value.trim();
+  const library = document.getElementById('scriptGenLibrary').value;
+  const resultEl = document.getElementById('scriptGenResult');
+  if(!url || !prompt) { showToolError(resultEl,'Please enter a URL and a prompt.'); return; }
+  showToolLoading(resultEl);
+  try {
+    const resp = await fetch(API+'/generate-script', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,prompt,library})});
+    if(!resp.ok) { const e=await resp.json(); throw new Error(e.detail||resp.statusText); }
+    const data = await resp.json();
+    showToolResult(resultEl, `<pre>${esc(data.script)}</pre>`);
+  } catch(e) { showToolError(resultEl, e.message); }
+});
+
+// Multi-Script Generator
+document.getElementById('scriptGenMultiBtn').addEventListener('click', async () => {
+  const urls = document.getElementById('scriptGenMultiUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean);
+  const prompt = document.getElementById('scriptGenMultiPrompt').value.trim();
+  const library = document.getElementById('scriptGenMultiLibrary').value;
+  const resultEl = document.getElementById('scriptGenMultiResult');
+  if(!urls.length || !prompt) { showToolError(resultEl,'Please enter URLs and a prompt.'); return; }
+  showToolLoading(resultEl);
+  try {
+    const resp = await fetch(API+'/generate-script-multi', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({urls,prompt,library})});
+    if(!resp.ok) { const e=await resp.json(); throw new Error(e.detail||resp.statusText); }
+    const data = await resp.json();
+    showToolResult(resultEl, `<pre>${esc(data.script)}</pre>`);
+  } catch(e) { showToolError(resultEl, e.message); }
+});
 
 /* ── Init ─────────────────────────────────────────────────────────── */
 loadJobs();

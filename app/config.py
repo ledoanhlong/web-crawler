@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     max_pages_per_crawl: int = 500
     max_sub_links_per_detail: int = 3
 
+    # ScrapeGraphAI — when True, SmartScraperGraph is primary extractor (CSS selectors as backup)
+    use_smart_scraper_primary: bool = True
+
     # Playwright
     playwright_headless: bool = True
     playwright_ws_endpoint: str | None = None

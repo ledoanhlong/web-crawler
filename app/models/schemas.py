@@ -26,7 +26,7 @@ class ScrapingTarget(BaseModel):
     """Describes how to locate and extract items on a single listing page."""
 
     item_container_selector: str = Field(
-        description="CSS selector for the repeating container that wraps each exhibitor/seller."
+        description="CSS selector for the repeating container that wraps each item (seller, company, item)."
     )
     field_selectors: dict[str, str] = Field(
         description=(
@@ -43,7 +43,7 @@ class ScrapingTarget(BaseModel):
     )
     detail_link_selector: str | None = Field(
         default=None,
-        description="CSS selector for the link to an exhibitor's detail page (relative to item container).",
+        description="CSS selector for the link to an item's detail page (relative to item container).",
     )
     detail_button_selector: str | None = Field(
         default=None,
@@ -95,11 +95,11 @@ class DetailApiPlan(BaseModel):
     api_url_template: str = Field(
         description=(
             "URL template with {id} placeholder. "
-            "E.g. 'https://example.com/api/exhibitors/{id}/profile'"
+            "E.g. 'https://example.com/api/sellers/{id}/profile'"
         )
     )
     id_selector: str = Field(
-        description="CSS selector (relative to item container) for the element containing the exhibitor ID.",
+        description="CSS selector (relative to item container) for the element containing the item ID.",
     )
     id_attribute: str | None = Field(
         default=None,
@@ -146,7 +146,7 @@ class ScrapingPlan(BaseModel):
     target: ScrapingTarget
     detail_page_fields: dict[str, str] = Field(
         default_factory=dict,
-        description="Additional field selectors to extract from each exhibitor's detail page.",
+        description="Additional field selectors to extract from each item's detail page.",
     )
     detail_page_field_attributes: dict[str, str] = Field(
         default_factory=dict,
@@ -198,25 +198,30 @@ class PageData(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Parsed exhibitor record (output of ParserAgent)
+# Parsed seller lead record (output of ParserAgent)
 # ---------------------------------------------------------------------------
-class ExhibitorRecord(BaseModel):
-    """Normalized exhibitor / seller record."""
+class SellerLead(BaseModel):
+    """Normalized seller / company lead record."""
 
     name: str
-    booth_or_stand: str | None = None
     country: str | None = None
     city: str | None = None
     address: str | None = None
     postal_code: str | None = None
     website: str | None = None
+    store_url: str | None = Field(
+        default=None,
+        description="Seller's marketplace storefront URL (e.g. Amazon seller page).",
+    )
     email: str | None = None
     phone: str | None = None
-    fax: str | None = None
     description: str | None = None
     product_categories: list[str] = Field(default_factory=list)
     brands: list[str] = Field(default_factory=list)
-    hall: str | None = None
+    marketplace_name: str | None = Field(
+        default=None,
+        description="Name of the marketplace or trade fair this lead was found on.",
+    )
     logo_url: str | None = None
     social_media: dict[str, str] = Field(default_factory=dict)
     raw_extra: dict[str, str] = Field(
@@ -241,7 +246,7 @@ class CrawlStatus(str, enum.Enum):
 
 
 class CrawlRequest(BaseModel):
-    url: str = Field(description="The exhibitor listing URL to crawl.")
+    url: str = Field(description="The listing page URL to crawl (marketplace, trade fair, directory, etc.).")
     max_pages: int | None = Field(
         default=None, description="Override the default max pages for this crawl."
     )
@@ -249,7 +254,7 @@ class CrawlRequest(BaseModel):
         default=None,
         description=(
             "An example detail/profile page URL so the planner can analyse its structure. "
-            "E.g. click 'Details' on one exhibitor and paste that URL here."
+            "E.g. click on one seller/company and paste that URL here."
         ),
     )
     fields_wanted: str | None = Field(
@@ -290,7 +295,7 @@ class ConfirmPreviewRequest(BaseModel):
 
 
 class CrawlResult(BaseModel):
-    records: list[ExhibitorRecord] = Field(default_factory=list)
+    records: list[SellerLead] = Field(default_factory=list)
     json_path: str | None = None
     csv_path: str | None = None
 
@@ -300,7 +305,7 @@ class CrawlJob(BaseModel):
     request: CrawlRequest
     status: CrawlStatus = CrawlStatus.PENDING
     plan: ScrapingPlan | None = None
-    preview_record: ExhibitorRecord | None = Field(
+    preview_record: SellerLead | None = Field(
         default=None,
         description="Single sample record shown to the user for validation before full crawl.",
     )
@@ -312,3 +317,37 @@ class CrawlJob(BaseModel):
     error: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# ScrapeGraphAI tool requests / responses
+# ---------------------------------------------------------------------------
+class SmartScrapeMultiRequest(BaseModel):
+    urls: list[str] = Field(description="List of URLs to scrape.")
+    prompt: str = Field(description="Natural language prompt describing what to extract.")
+
+
+class ScriptCreatorRequest(BaseModel):
+    url: str = Field(description="URL to generate a scraping script for.")
+    prompt: str = Field(description="Natural language prompt describing what to extract.")
+    library: str = Field(
+        default="beautifulsoup4",
+        description="Python library for the generated script (beautifulsoup4, scrapy, etc.).",
+    )
+
+
+class ScriptCreatorMultiRequest(BaseModel):
+    urls: list[str] = Field(description="List of URLs to generate a merged scraping script for.")
+    prompt: str = Field(description="Natural language prompt describing what to extract.")
+    library: str = Field(
+        default="beautifulsoup4",
+        description="Python library for the generated script (beautifulsoup4, scrapy, etc.).",
+    )
+
+
+class SmartScrapeResult(BaseModel):
+    result: dict | list | str = Field(description="Extracted data from the scraped pages.")
+
+
+class ScriptResult(BaseModel):
+    script: str = Field(description="Generated Python scraping script.")

@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.config import settings
-from app.models.schemas import CrawlResult, ExhibitorRecord
+from app.models.schemas import CrawlResult, SellerLead
 from app.prompts import load_prompt
 from app.utils.llm import chat_completion_json
 from app.utils.logging import get_logger
@@ -29,7 +29,7 @@ class OutputAgent:
 
     async def build_output(
         self,
-        records: list[ExhibitorRecord],
+        records: list[SellerLead],
         job_id: str,
     ) -> CrawlResult:
         log.info("Building output for %d records (job %s)", len(records), job_id)
@@ -43,13 +43,13 @@ class OutputAgent:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         # --- JSON ---
-        json_path = out_dir / "exhibitors.json"
+        json_path = out_dir / "results.json"
         json_data = [r.model_dump(mode="json", exclude_none=True) for r in records]
         json_path.write_text(json.dumps(json_data, indent=2, ensure_ascii=False), encoding="utf-8")
         log.info("Wrote %s (%d records)", json_path, len(json_data))
 
         # --- CSV ---
-        csv_path = out_dir / "exhibitors.csv"
+        csv_path = out_dir / "results.csv"
         flat_records = self._flatten_for_csv(records)
         df = pd.DataFrame(flat_records)
         df.to_csv(csv_path, index=False, encoding="utf-8-sig")
@@ -61,7 +61,7 @@ class OutputAgent:
             csv_path=str(csv_path),
         )
 
-    async def _quality_pass(self, records: list[ExhibitorRecord]) -> list[ExhibitorRecord]:
+    async def _quality_pass(self, records: list[SellerLead]) -> list[SellerLead]:
         """Send records through GPT for dedup + consistency cleanup."""
         log.info("Running LLM quality pass on %d records", len(records))
         serialized = [r.model_dump(mode="json", exclude_none=True) for r in records]
@@ -82,7 +82,7 @@ class OutputAgent:
         if current:
             chunks.append(current)
 
-        cleaned: list[ExhibitorRecord] = []
+        cleaned: list[SellerLead] = []
         for chunk in chunks:
             messages = [
                 {"role": "system", "content": load_prompt("output_qa")},
@@ -98,14 +98,14 @@ class OutputAgent:
                 result = await chat_completion_json(messages, max_tokens=16_000)
                 for raw in result.get("records", []):
                     try:
-                        cleaned.append(ExhibitorRecord.model_validate(raw))
+                        cleaned.append(SellerLead.model_validate(raw))
                     except Exception as exc:
                         log.warning("QA pass: invalid record skipped: %s", exc)
             except Exception as exc:
                 log.warning("QA pass chunk failed (%d records), keeping originals: %s", len(chunk), exc)
                 for rec in chunk:
                     try:
-                        cleaned.append(ExhibitorRecord.model_validate(rec))
+                        cleaned.append(SellerLead.model_validate(rec))
                     except Exception:
                         pass
 
@@ -113,25 +113,24 @@ class OutputAgent:
         return cleaned if cleaned else records  # fallback to originals if all chunks fail
 
     @staticmethod
-    def _flatten_for_csv(records: list[ExhibitorRecord]) -> list[dict[str, str]]:
+    def _flatten_for_csv(records: list[SellerLead]) -> list[dict[str, str]]:
         """Flatten nested fields for a CSV-friendly representation."""
         rows: list[dict[str, str]] = []
         for r in records:
             row: dict[str, str] = {
                 "name": r.name,
-                "booth_or_stand": r.booth_or_stand or "",
                 "country": r.country or "",
                 "city": r.city or "",
                 "address": r.address or "",
                 "postal_code": r.postal_code or "",
                 "website": r.website or "",
+                "store_url": r.store_url or "",
                 "email": r.email or "",
                 "phone": r.phone or "",
-                "fax": r.fax or "",
                 "description": r.description or "",
                 "product_categories": "; ".join(r.product_categories),
                 "brands": "; ".join(r.brands),
-                "hall": r.hall or "",
+                "marketplace_name": r.marketplace_name or "",
                 "logo_url": r.logo_url or "",
                 "source_url": r.source_url or "",
             }

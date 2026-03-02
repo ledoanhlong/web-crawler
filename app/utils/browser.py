@@ -143,7 +143,7 @@ async def click_load_more(
 
 
 
-# URL fragments that indicate noise / third-party widgets (not exhibitor detail APIs)
+# URL fragments that indicate noise / third-party widgets (not detail APIs)
 _NOISE_URL_FRAGMENTS = {
     "config.json", "layout", "/chat", "ichat", "analytics", "tracking",
     "pixel", "beacon", "metrics", "/ads/", "consent", "cookie", "gdpr",
@@ -151,12 +151,13 @@ _NOISE_URL_FRAGMENTS = {
     "gtag", "gtm", "hotjar", "sentry", "newrelic", "datadog",
 }
 
-# Keys in JSON response that suggest exhibitor/company detail data
+# Keys in JSON response that suggest seller/company detail data
 _DETAIL_DATA_KEYS = {
     "name", "address", "phone", "email", "website", "description",
     "company", "contact", "fax", "city", "country", "postal", "zip",
     "street", "url", "profile", "social", "category", "product",
-    "brand", "booth", "stand", "hall", "exhibitor", "telephone",
+    "brand", "booth", "stand", "hall", "seller", "vendor", "exhibitor",
+    "telephone", "store", "rating", "marketplace",
 }
 
 
@@ -179,14 +180,14 @@ def _score_api_response(api_url: str, body: dict) -> int:
         if isinstance(v, dict):
             all_keys.update(kk.lower() for kk in v.keys())
 
-    # Count how many keys look like exhibitor data
+    # Count how many keys look like seller/company detail data
     detail_hits = sum(
         1 for k in all_keys if any(dk in k for dk in _DETAIL_DATA_KEYS)
     )
 
     # Bonus for URL patterns that suggest detail/profile endpoints
     url_bonus = 0
-    for kw in ("exhibitor", "profile", "detail", "company", "seller", "vendor"):
+    for kw in ("seller", "vendor", "profile", "detail", "company", "exhibitor", "store"):
         if kw in url_lower:
             url_bonus += 15
 
@@ -206,7 +207,7 @@ async def intercept_detail_api(
 
     Listens for all network responses that return JSON after clicking the detail
     button on the first item.  Scores each response to find the most likely
-    exhibitor detail API (filtering out noise like chat widgets, analytics, etc.).
+    detail API (filtering out noise like chat widgets, analytics, etc.).
 
     Returns ``(api_url, response_json)`` or ``(None, None)`` if nothing captured.
     """
