@@ -120,7 +120,7 @@ class Orchestrator:
             job.status = CrawlStatus.SCRAPING
             job.updated_at = datetime.utcnow()
             log.info("[%s] Stage 2: Full scraping", job.id)
-            page_data_list = await self.scraper.scrape(plan, max_items=req.max_items)
+            page_data_list = await self.scraper.scrape(plan, max_items=job.request.max_items)
             total_items = sum(len(pd.items) for pd in page_data_list)
             log.info("[%s] Scraped %d items from %d pages", job.id, total_items, len(page_data_list))
 

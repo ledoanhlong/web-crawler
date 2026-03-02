@@ -49,7 +49,7 @@ class ScraperAgent:
         if plan.pagination == PaginationStrategy.API_ENDPOINT and plan.api_endpoint:
             pages = await self._scrape_api(plan, max_items=max_items)
         elif plan.requires_javascript:
-            pages = await self._scrape_js(plan)
+            pages = await self._scrape_js(plan, max_items=max_items)
         elif settings.use_scrapy and self._can_use_scrapy(plan):
             try:
                 pages = await self._scrape_scrapy(plan, max_items=max_items)
@@ -68,9 +68,9 @@ class ScraperAgent:
                 pages = await self._enrich_detail_api(pages, plan)
             except Exception as exc:
                 log.warning("Scrapy failed, falling back to httpx: %s", exc)
-                pages = await self._scrape_static(plan)
+                pages = await self._scrape_static(plan, max_items=max_items)
         else:
-            pages = await self._scrape_static(plan)
+            pages = await self._scrape_static(plan, max_items=max_items)
 
         # Enforce max_items limit across all pages
         if max_items is not None:
@@ -135,28 +135,43 @@ class ScraperAgent:
     # ------------------------------------------------------------------
     # Static (httpx) path
     # ------------------------------------------------------------------
-    async def _scrape_static(self, plan: ScrapingPlan) -> list[PageData]:
+    async def _scrape_static(
+        self, plan: ScrapingPlan, *, max_items: int | None = None,
+    ) -> list[PageData]:
         urls = self._resolve_page_urls(plan)
         log.info("Static scrape: %d page URL(s)", len(urls))
         html_map = await fetch_pages(urls)
 
         pages: list[PageData] = []
+        total_items = 0
         for url, html in html_map.items():
+            if max_items is not None and total_items >= max_items:
+                break
             if not html:
                 continue
             items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+            if max_items is not None:
+                items = items[: max_items - total_items]
+            total_items += len(items)
             pages.append(PageData(url=url, items=items))
 
         # Detail page enrichment
-        pages = await self._enrich_detail_pages(pages, plan)
-        pages = await self._enrich_detail_api(pages, plan)
+        pages = await self._enrich_detail_pages(pages, plan, max_details=max_items)
+        pages = await self._enrich_detail_api(pages, plan, max_details=max_items)
         return pages
 
     # ------------------------------------------------------------------
     # JS-rendered (Playwright) path
     # ------------------------------------------------------------------
-    async def _scrape_js(self, plan: ScrapingPlan) -> list[PageData]:
+    async def _scrape_js(
+        self, plan: ScrapingPlan, *, max_items: int | None = None,
+    ) -> list[PageData]:
         pages: list[PageData] = []
+        total_items = 0
+
+        def _limit_reached() -> bool:
+            return max_items is not None and total_items >= max_items
+
         async with get_browser() as browser:
             match plan.pagination:
                 case PaginationStrategy.ALPHABET_TABS if plan.alphabet_tab_selector:
@@ -167,18 +182,25 @@ class ScraperAgent:
                         wait_selector=plan.wait_selector,
                     )
                     for html in htmls:
+                        if _limit_reached():
+                            break
                         items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+                        if max_items is not None:
+                            items = items[: max_items - total_items]
+                        total_items += len(items)
                         pages.append(PageData(url=plan.url, items=items))
 
                 case PaginationStrategy.INFINITE_SCROLL:
                     page = await browser.new_page()
                     try:
-                        await page.goto(plan.url, wait_until="domcontentloaded", timeout=60_000)
+                        await page.goto(plan.url, wait_until="domcontentloaded", timeout=120_000)
                         if plan.wait_selector:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         await scroll_to_bottom(page, max_scrolls=settings.max_pages_per_crawl)
                         html = await page.content()
                         items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+                        if max_items is not None:
+                            items = items[:max_items]
                         pages.append(PageData(url=plan.url, items=items))
                     finally:
                         await page.close()
@@ -186,12 +208,14 @@ class ScraperAgent:
                 case PaginationStrategy.LOAD_MORE_BUTTON if plan.pagination_selector:
                     page = await browser.new_page()
                     try:
-                        await page.goto(plan.url, wait_until="domcontentloaded", timeout=60_000)
+                        await page.goto(plan.url, wait_until="domcontentloaded", timeout=120_000)
                         if plan.wait_selector:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         await click_load_more(page, plan.pagination_selector)
                         html = await page.content()
                         items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+                        if max_items is not None:
+                            items = items[:max_items]
                         pages.append(PageData(url=plan.url, items=items))
                     finally:
                         await page.close()
@@ -199,13 +223,20 @@ class ScraperAgent:
                 case PaginationStrategy.NEXT_BUTTON if plan.pagination_selector:
                     page = await browser.new_page()
                     try:
-                        await page.goto(plan.url, wait_until="domcontentloaded", timeout=60_000)
+                        await page.goto(plan.url, wait_until="domcontentloaded", timeout=120_000)
                         if plan.wait_selector:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         for _ in range(settings.max_pages_per_crawl):
+                            if _limit_reached():
+                                break
                             html = await page.content()
                             items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+                            if max_items is not None:
+                                items = items[: max_items - total_items]
+                            total_items += len(items)
                             pages.append(PageData(url=page.url, items=items))
+                            if _limit_reached():
+                                break
                             btn = await page.query_selector(plan.pagination_selector)
                             if not btn or not await btn.is_visible():
                                 break
@@ -220,16 +251,21 @@ class ScraperAgent:
                     # Single page or page-number pagination with pre-resolved URLs
                     urls = self._resolve_page_urls(plan)
                     for url in urls[: settings.max_pages_per_crawl]:
+                        if _limit_reached():
+                            break
                         html = await fetch_page_js(
                             browser, url, wait_selector=plan.wait_selector
                         )
                         items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+                        if max_items is not None:
+                            items = items[: max_items - total_items]
+                        total_items += len(items)
                         pages.append(PageData(url=url, items=items))
                         await asyncio.sleep(settings.request_delay_ms / 1000)
 
         # Detail page enrichment (JS path — use Playwright for detail pages too)
-        pages = await self._enrich_detail_pages(pages, plan)
-        pages = await self._enrich_detail_api(pages, plan)
+        pages = await self._enrich_detail_pages(pages, plan, max_details=max_items)
+        pages = await self._enrich_detail_api(pages, plan, max_details=max_items)
         return pages
 
     # ------------------------------------------------------------------
@@ -551,7 +587,7 @@ class ScraperAgent:
             try:
                 # Prime the session: load listing page to set cookies / tokens
                 log.info("Priming browser session via %s", listing_url)
-                await page.goto(listing_url, wait_until="domcontentloaded", timeout=60_000)
+                await page.goto(listing_url, wait_until="domcontentloaded", timeout=120_000)
                 await asyncio.sleep(2)
 
                 for api_url in api_urls:

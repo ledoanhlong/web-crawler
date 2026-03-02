@@ -101,7 +101,7 @@ async def fetch_page_js(
     page: Page = await browser.new_page()
     try:
         log.info("Playwright GET %s", url)
-        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=120_000)
         if wait_selector:
             log.debug("Waiting for selector: %s", wait_selector)
             await page.wait_for_selector(wait_selector, timeout=wait_timeout_ms)
@@ -230,7 +230,7 @@ async def intercept_detail_api(
 
     try:
         page.on("response", _on_response)
-        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=120_000)
         if wait_selector:
             await page.wait_for_selector(wait_selector, timeout=15_000)
         else:
@@ -316,7 +316,7 @@ async def click_all_tabs(
     page = await browser.new_page()
     htmls: list[str] = []
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=120_000)
         tabs = await page.query_selector_all(tab_selector)
         log.info("Found %d tabs with selector '%s'", len(tabs), tab_selector)
         for i, tab in enumerate(tabs):
@@ -335,7 +335,7 @@ async def click_all_tabs(
                         # A previous click caused a page navigation — reload and re-query tabs
                         log.warning("Tab %d triggered navigation, reloading page", i)
                         try:
-                            await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                            await page.goto(url, wait_until="domcontentloaded", timeout=120_000)
                             tabs = await page.query_selector_all(tab_selector)
                             if i < len(tabs):
                                 await tabs[i].evaluate("el => el.click()")
@@ -352,7 +352,7 @@ async def click_all_tabs(
             # Check if click caused a full navigation — if so, go back
             if page.url != url and not page.url.startswith(url.split("?")[0]):
                 log.warning("Tab %d caused navigation to %s, navigating back", i, page.url)
-                await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=120_000)
                 tabs = await page.query_selector_all(tab_selector)
                 continue  # skip this tab's content since it navigated away
             if wait_selector:

@@ -118,46 +118,62 @@ class PlannerAgent:
 
         # --- 1. Fetch the listing page ---
         html_raw = await _fetch_html(url)
-        html_simple = simplify_html(html_raw)
-        log.debug("Simplified listing HTML: %d chars", len(html_simple))
 
         # --- 2. Optionally fetch the detail page ---
-        detail_html_simple = ""
+        detail_raw = ""
         if detail_page_url:
             log.info("Fetching user-provided detail page: %s", detail_page_url)
             try:
                 detail_raw = await _fetch_html(detail_page_url)
-                detail_html_simple = simplify_html(detail_raw)
-                log.debug("Simplified detail HTML: %d chars", len(detail_html_simple))
             except Exception as exc:
                 log.warning("Failed to fetch detail page %s: %s", detail_page_url, exc)
 
-        # --- 3. Build the prompt ---
-        user_content = (
-            f"Analyse the following HTML of the listing page at:\n{url}\n\n"
-            f"```html\n{html_simple}\n```"
-        )
+        # --- 3. Build the prompt (retry with aggressive sanitization on content filter) ---
+        plan_data: dict | None = None
+        for attempt, aggressive in enumerate([False, True]):
+            html_simple = simplify_html(html_raw, aggressive=aggressive)
+            log.debug("Simplified listing HTML: %d chars (aggressive=%s)", len(html_simple), aggressive)
 
-        if detail_html_simple:
-            user_content += (
-                f"\n\nThe user also provided an example DETAIL page at:\n{detail_page_url}\n\n"
-                f"Study this to identify the CSS selectors for ``detail_page_fields``.\n"
-                f"```html\n{detail_html_simple}\n```"
+            detail_html_simple = ""
+            if detail_raw:
+                detail_html_simple = simplify_html(detail_raw, aggressive=aggressive)
+                log.debug("Simplified detail HTML: %d chars (aggressive=%s)", len(detail_html_simple), aggressive)
+
+            user_content = (
+                f"Analyse the following HTML of the listing page at:\n{url}\n\n"
+                f"```html\n{html_simple}\n```"
             )
 
-        if fields_wanted:
-            user_content += (
-                f"\n\nThe user specifically wants these fields extracted: {fields_wanted}\n"
-                f"Make sure the plan captures all of these fields — from the listing page "
-                f"if available, otherwise from the detail page."
-            )
+            if detail_html_simple:
+                user_content += (
+                    f"\n\nThe user also provided an example DETAIL page at:\n{detail_page_url}\n\n"
+                    f"Study this to identify the CSS selectors for ``detail_page_fields``.\n"
+                    f"```html\n{detail_html_simple}\n```"
+                )
 
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
+            if fields_wanted:
+                user_content += (
+                    f"\n\nThe user specifically wants these fields extracted: {fields_wanted}\n"
+                    f"Make sure the plan captures all of these fields — from the listing page "
+                    f"if available, otherwise from the detail page."
+                )
 
-        plan_data: dict = await chat_completion_json(messages, max_tokens=8_000)
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ]
+
+            try:
+                plan_data = await chat_completion_json(messages, max_tokens=8_000)
+                break
+            except Exception as exc:
+                if attempt == 0 and "content_filter" in str(exc).lower():
+                    log.warning(
+                        "Content filter triggered on listing page; retrying with aggressive sanitization"
+                    )
+                    continue
+                raise
+
         log.info("Received scraping plan from LLM")
 
         # --- 4. Parse into ScrapingPlan ---
@@ -208,37 +224,48 @@ class PlannerAgent:
         log.info("Re-planning with user feedback: %s", user_feedback)
 
         html_raw = await _fetch_html(current_plan.url)
-        html_simple = simplify_html(html_raw)
-
         current_plan_json = current_plan.model_dump(mode="json")
 
-        messages = [
-            {"role": "system", "content": load_prompt("planner_listing")},
-            {
-                "role": "user",
-                "content": (
-                    f"Analyse the following HTML of the listing page at:\n{current_plan.url}\n\n"
-                    f"```html\n{html_simple}\n```"
-                ),
-            },
-            {
-                "role": "assistant",
-                "content": json.dumps(current_plan_json, ensure_ascii=False),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"The user reviewed a preview of the scraped data and gave this feedback:\n\n"
-                    f'"{user_feedback}"\n\n'
-                    f"Please update the scraping plan to address this feedback. "
-                    f"In particular, make sure to follow detail page links if the "
-                    f"user wants fields that are only available on detail pages. "
-                    f"Return the complete updated plan as JSON."
-                ),
-            },
-        ]
+        plan_data: dict | None = None
+        for attempt, aggressive in enumerate([False, True]):
+            html_simple = simplify_html(html_raw, aggressive=aggressive)
 
-        plan_data: dict = await chat_completion_json(messages, max_tokens=8_000)
+            messages = [
+                {"role": "system", "content": load_prompt("planner_listing")},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Analyse the following HTML of the listing page at:\n{current_plan.url}\n\n"
+                        f"```html\n{html_simple}\n```"
+                    ),
+                },
+                {
+                    "role": "assistant",
+                    "content": json.dumps(current_plan_json, ensure_ascii=False),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"The user reviewed a preview of the scraped data and gave this feedback:\n\n"
+                        f'"{user_feedback}"\n\n'
+                        f"Please update the scraping plan to address this feedback. "
+                        f"In particular, make sure to follow detail page links if the "
+                        f"user wants fields that are only available on detail pages. "
+                        f"Return the complete updated plan as JSON."
+                    ),
+                },
+            ]
+
+            try:
+                plan_data = await chat_completion_json(messages, max_tokens=8_000)
+                break
+            except Exception as exc:
+                if attempt == 0 and "content_filter" in str(exc).lower():
+                    log.warning(
+                        "Content filter triggered during replan; retrying with aggressive sanitization"
+                    )
+                    continue
+                raise
         plan_data["url"] = current_plan.url
         plan_data = _sanitize_plan_data(plan_data)
         plan = ScrapingPlan.model_validate(plan_data)
@@ -288,21 +315,37 @@ class PlannerAgent:
         log.info("Analysing sample detail page: %s", detail_url)
 
         html_raw = await self._fetch_page(detail_url, prefer_js=requires_js)
-        html_simple = simplify_html(html_raw)
-        log.debug("Detail page simplified HTML: %d chars", len(html_simple))
 
-        messages = [
-            {"role": "system", "content": load_prompt("planner_detail")},
-            {
-                "role": "user",
-                "content": (
-                    f"Analyse the following HTML of a detail page at:\n{detail_url}\n\n"
-                    f"```html\n{html_simple}\n```"
-                ),
-            },
-        ]
+        # Try normal simplification first, then aggressive if content filter triggers
+        for attempt, aggressive in enumerate([False, True]):
+            html_simple = simplify_html(html_raw, aggressive=aggressive)
+            log.debug(
+                "Detail page simplified HTML: %d chars (aggressive=%s)",
+                len(html_simple), aggressive,
+            )
 
-        result: dict = await chat_completion_json(messages, max_tokens=4_000)
+            messages = [
+                {"role": "system", "content": load_prompt("planner_detail")},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Analyse the following HTML of a detail page at:\n{detail_url}\n\n"
+                        f"```html\n{html_simple}\n```"
+                    ),
+                },
+            ]
+
+            try:
+                result: dict = await chat_completion_json(messages, max_tokens=4_000)
+                break
+            except Exception as exc:
+                if attempt == 0 and "content_filter" in str(exc).lower():
+                    log.warning(
+                        "Content filter triggered on detail page; retrying with aggressive sanitization"
+                    )
+                    continue
+                raise
+
         detail_plan = DetailPagePlan.model_validate(result)
         log.info(
             "Detail page plan: %d field selectors, %d sub-links",
