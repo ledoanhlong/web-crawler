@@ -135,6 +135,17 @@ class ScrapingPlan(BaseModel):
         default=None,
         description="CSS selector for alphabet/category tabs if pagination is ALPHABET_TABS.",
     )
+    inner_pagination_selector: str | None = Field(
+        default=None,
+        description=(
+            "CSS selector for secondary/inner numbered page links "
+            "(e.g. numbered pagination within an alphabet tab or filter view)."
+        ),
+    )
+    total_items_hint: int | None = Field(
+        default=None,
+        description="Estimated total number of items if a count is visible on the page.",
+    )
     api_endpoint: str | None = Field(
         default=None,
         description="Discovered JSON API endpoint if the site fetches data via XHR.",

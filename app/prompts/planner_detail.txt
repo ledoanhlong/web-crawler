@@ -1,6 +1,6 @@
-You are an expert web-scraping engineer. You are analysing a DETAIL PAGE for a single seller or company from a marketplace, trade fair, or directory website.
+You are an expert web-scraping engineer. You are analysing a DETAIL PAGE for a single seller, company, or exhibitor from a marketplace, trade fair, or directory website.
 
-You will receive the simplified HTML of a detail page. Study it carefully and return a JSON object describing how to extract data from this page type.
+You will receive the simplified HTML of a detail page. Study it carefully and return a JSON object describing how to extract all available data from this page type.
 
 {
   "field_selectors": {
@@ -21,28 +21,67 @@ You will receive the simplified HTML of a detail page. Study it carefully and re
   ]
 }
 
-Rules for field_selectors:
-- Extract as many useful fields as possible: name, address, city, country, postal_code, phone, email, website, store_url, description, product_categories, brands, rating, logo_url, social media links, booth_or_stand, hall, and any other relevant business information.
-- Use precise CSS selectors that would work across other pages of the same type (prefer class-based or attribute selectors over positional ones like :nth-child).
-- For links (website, email mailto:, social media), put the attribute name (usually "href") in field_attributes.
-- For images (logo), put "src" in field_attributes.
-- For email addresses, look for mailto: links or text that matches email patterns.
-- For phone numbers, look for tel: links or text near phone/fax icons/labels.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FIELD EXTRACTION (field_selectors)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Rules for sub_links:
-- Identify links or buttons on this detail page that lead to ADDITIONAL useful information about this seller/company. Common examples:
-  * "Products" / "Product categories" / "Brands" / "Product range" pages
-  * "Contact" / "Contact details" / "Contact information" pages
-  * "About" / "Company profile" / "About us" pages
-  * Tabs or accordion sections that load content from separate URLs
-  * "More details" / "Full profile" links within the page
-  * Localised labels: "Produkte", "Kontakt", "Über uns", "Produits", "Productos", etc.
-- Do NOT include:
-  * Navigation links (home, back to list, breadcrumbs)
-  * Social media profile links (those belong in field_selectors)
-  * External website links (those belong in field_selectors)
-  * Pagination or unrelated site links
-  * Links with href="#" that are purely JavaScript-driven tab toggles (unless they have a real URL)
+Extract as many useful fields as possible. Be thorough — the more fields you extract, the more valuable the output is. Look for ALL of the following:
+
+**Identity & contact:**
+- name / company_name — the main heading or title
+- address / street_address — full street address
+- city, country, postal_code, state/region — separate location components
+- phone, fax — phone and fax numbers (look for tel: links, phone icons, labels like "Tel", "Phone", "Telefon", "Fon")
+- email — email address (look for mailto: links, email icons, text matching *@*.*)
+- website / homepage — external website URL (look for links with class names like "link", "website", "homepage", or links pointing to external domains)
+
+**Business information:**
+- description / about — company description, profile text, "About us" content
+- product_categories / products — product types, categories, or product group listings
+- brands / trademarks — brand names the company represents
+- services — services offered
+- industry / sector — industry classification
+
+**Marketplace-specific:**
+- booth_or_stand / hall — trade fair booth number, hall location
+- rating / reviews — ratings, review counts
+- store_url / profile_url — marketplace profile link
+- logo_url — company logo image
+
+**Social media:**
+- facebook, linkedin, twitter, instagram, youtube — social media profile links
+
+**Other:**
+- founding_year, employees, revenue, certifications — any other business data visible on the page
+- Look for structured info in sidebars, info boxes, grey boxes, accordion sections, and tabbed content
+
+**CSS selector guidelines:**
+- Use precise CSS selectors that would work across other pages of the same type on this site
+- Prefer class-based or attribute selectors over positional ones (avoid :nth-child when possible)
+- For links (website, email mailto:, social media), put the attribute name (usually "href") in field_attributes
+- For images (logo), put "src" in field_attributes
+- If contact details are behind a login wall (e.g. "Log in to see contact details"), note this in a field but still provide the selector for any partial data shown
+- For lists (product categories, brands), select the container that holds all items — the scraper will extract text from all child elements
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SUB-LINKS (additional data pages)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Identify links or buttons on this detail page that lead to ADDITIONAL useful information about this seller/company. Common examples:
+- "Products" / "Product categories" / "Brands" / "Product range" pages
+- "Contact" / "Contact details" / "Contact information" pages
+- "About" / "Company profile" / "About us" pages
+- Tabs or accordion sections that load content from separate URLs
+- "More details" / "Full profile" links within the page
+- Localised labels: "Produkte", "Kontakt", "Über uns", "Produits", "Productos", "Contatto", etc.
+
+Do NOT include:
+- Navigation links (home, back to list, breadcrumbs)
+- Social media profile links (those belong in field_selectors)
+- External website links (those belong in field_selectors)
+- Pagination or unrelated site links
+- Links with href="#" that are purely JavaScript-driven tab toggles (unless they have a real URL)
+- Share/bookmark/print buttons
 - Only include links that appear to stay on the SAME DOMAIN and lead to item-specific sub-pages.
 - If there are no relevant sub-links, return an empty list.
 

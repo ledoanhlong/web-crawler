@@ -180,6 +180,9 @@ class ScraperAgent:
                         plan.url,
                         plan.alphabet_tab_selector,
                         wait_selector=plan.wait_selector,
+                        max_items=max_items,
+                        inner_pagination_selector=plan.inner_pagination_selector,
+                        pagination_urls=plan.pagination_urls or None,
                     )
                     for html in htmls:
                         if _limit_reached():
@@ -193,7 +196,7 @@ class ScraperAgent:
                 case PaginationStrategy.INFINITE_SCROLL:
                     page = await browser.new_page()
                     try:
-                        await page.goto(plan.url, wait_until="domcontentloaded", timeout=120_000)
+                        await page.goto(plan.url, wait_until="commit", timeout=120_000)
                         if plan.wait_selector:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         await scroll_to_bottom(page, max_scrolls=settings.max_pages_per_crawl)
@@ -208,7 +211,7 @@ class ScraperAgent:
                 case PaginationStrategy.LOAD_MORE_BUTTON if plan.pagination_selector:
                     page = await browser.new_page()
                     try:
-                        await page.goto(plan.url, wait_until="domcontentloaded", timeout=120_000)
+                        await page.goto(plan.url, wait_until="commit", timeout=120_000)
                         if plan.wait_selector:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         await click_load_more(page, plan.pagination_selector)
@@ -223,7 +226,7 @@ class ScraperAgent:
                 case PaginationStrategy.NEXT_BUTTON if plan.pagination_selector:
                     page = await browser.new_page()
                     try:
-                        await page.goto(plan.url, wait_until="domcontentloaded", timeout=120_000)
+                        await page.goto(plan.url, wait_until="commit", timeout=120_000)
                         if plan.wait_selector:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         for _ in range(settings.max_pages_per_crawl):
@@ -340,6 +343,7 @@ class ScraperAgent:
         field whose value looks like a relative/absolute URL with 'detail' in it.
         """
         if not plan.target.detail_link_selector:
+            log.debug("No detail_link_selector in plan — skipping detail enrichment")
             return pages
 
         # Collect detail URLs from items
@@ -349,15 +353,31 @@ class ScraperAgent:
 
         for pd in pages:
             for item in pd.items:
+                # Try "detail_link" first, then check all fields for URL-like values
                 link = item.get("detail_link")
+                if not link:
+                    # Fallback: look for any field containing a relative/absolute URL
+                    # that looks like a detail page link
+                    for key, val in item.items():
+                        if val and isinstance(val, str) and (
+                            val.startswith("/") or val.startswith("http")
+                        ) and any(kw in key.lower() for kw in ("detail", "link", "url", "href", "profile")):
+                            link = val
+                            item["detail_link"] = link
+                            log.debug("Using field '%s' as detail link: %s", key, link)
+                            break
                 if link:
                     if link.startswith("/"):
                         link = base_origin + link
-                    # Update item so the URL matches detail_pages keys later
                     item["detail_link"] = link
                     all_detail_urls.append(link)
 
         if not all_detail_urls:
+            log.debug(
+                "No detail URLs found in %d items (fields: %s)",
+                sum(len(pd.items) for pd in pages),
+                list(pages[0].items[0].keys()) if pages and pages[0].items else "empty",
+            )
             return pages
 
         if max_details is not None:
@@ -587,7 +607,7 @@ class ScraperAgent:
             try:
                 # Prime the session: load listing page to set cookies / tokens
                 log.info("Priming browser session via %s", listing_url)
-                await page.goto(listing_url, wait_until="domcontentloaded", timeout=120_000)
+                await page.goto(listing_url, wait_until="commit", timeout=120_000)
                 await asyncio.sleep(2)
 
                 for api_url in api_urls:
@@ -829,19 +849,61 @@ class ScraperAgent:
         target: ScrapingTarget,
         detail_api_plan: DetailApiPlan | None = None,
     ) -> list[dict[str, str | None]]:
-        """Extract items — SmartScraperGraph primary, CSS selectors backup."""
+        """Extract items — SmartScraperGraph primary, CSS selectors backup.
+
+        Compares SmartScraperGraph results against CSS selector results and
+        uses whichever extracted more items.  This prevents the common issue
+        where SmartScraperGraph sometimes returns only 1 item from a page
+        that actually has 20.
+        """
+        css_items = self._extract_items(html, target, detail_api_plan)
+
         # Primary: SmartScraperGraph (LLM-based extraction)
         if settings.use_smart_scraper_primary and len(html) >= 500:
             from app.utils.smart_scraper import smart_extract_items
 
             fields = list(target.field_selectors.keys())
+            # Ensure detail_link is always requested
+            if target.detail_link_selector and "detail_link" not in fields:
+                fields.append("detail_link")
             smart_items = await smart_extract_items(html, fields)
             if smart_items:
+                # Compare against CSS results — use whichever found more items
+                if len(css_items) > len(smart_items):
+                    log.warning(
+                        "SmartScraperGraph extracted %d items but CSS selectors found %d — using CSS results",
+                        len(smart_items), len(css_items),
+                    )
+                    return css_items
                 log.info("SmartScraperGraph extracted %d items (primary)", len(smart_items))
+                # Backfill detail_link from CSS if SmartScraperGraph missed it
+                if target.detail_link_selector:
+                    self._backfill_detail_links(html, smart_items, target)
                 return smart_items
             log.warning(
                 "SmartScraperGraph returned 0 items — falling back to CSS selectors"
             )
 
-        # Backup: CSS selector extraction
-        return self._extract_items(html, target, detail_api_plan)
+        return css_items
+
+    def _backfill_detail_links(
+        self,
+        html: str,
+        items: list[dict[str, str | None]],
+        target: ScrapingTarget,
+    ) -> None:
+        """Ensure every item has a detail_link by falling back to CSS selectors."""
+        # Check if any items are missing detail_link
+        missing = [i for i, item in enumerate(items) if not item.get("detail_link")]
+        if not missing:
+            return
+
+        soup = BeautifulSoup(html, "lxml")
+        containers = soup.select(target.item_container_selector)
+
+        for idx in missing:
+            if idx < len(containers):
+                link_el = containers[idx].select_one(target.detail_link_selector)
+                if link_el:
+                    items[idx]["detail_link"] = link_el.get("href")
+                    log.debug("Backfilled detail_link for item %d from CSS", idx)

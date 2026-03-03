@@ -164,7 +164,7 @@ class PlannerAgent:
             ]
 
             try:
-                plan_data = await chat_completion_json(messages, max_tokens=8_000)
+                plan_data = await chat_completion_json(messages, max_tokens=16_000)
                 break
             except Exception as exc:
                 if attempt == 0 and "content_filter" in str(exc).lower():
@@ -257,7 +257,7 @@ class PlannerAgent:
             ]
 
             try:
-                plan_data = await chat_completion_json(messages, max_tokens=8_000)
+                plan_data = await chat_completion_json(messages, max_tokens=16_000)
                 break
             except Exception as exc:
                 if attempt == 0 and "content_filter" in str(exc).lower():
@@ -336,7 +336,7 @@ class PlannerAgent:
             ]
 
             try:
-                result: dict = await chat_completion_json(messages, max_tokens=4_000)
+                result: dict = await chat_completion_json(messages, max_tokens=8_000)
                 break
             except Exception as exc:
                 if attempt == 0 and "content_filter" in str(exc).lower():

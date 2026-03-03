@@ -71,6 +71,12 @@ class Orchestrator:
                 if records:
                     job.preview_record = records[0]
                     log.info("[%s] Preview record: %s", job.id, records[0].name)
+                else:
+                    log.warning("[%s] Parser returned no records from preview items", job.id)
+                    job.error = "Preview extraction succeeded but parsing returned no structured records. Try providing different fields or a detail page URL."
+            else:
+                log.warning("[%s] No preview items extracted — scraper returned empty results", job.id)
+                job.error = "Could not extract any items from the page. The page may require different scraping settings or the content structure may not be recognized."
 
             # ---- Pause for user validation ----
             job.status = CrawlStatus.PREVIEW

@@ -33,29 +33,48 @@ def simplify_html(raw_html: str, *, max_chars: int = 80_000, aggressive: bool = 
             el.decompose()
 
     if aggressive:
+        # Strip the entire <head> — only body structure matters for CSS selectors
+        head = soup.find("head")
+        if head:
+            head.decompose()
+
         # Remove images (src may contain data URIs or external URLs that trigger filters)
         for img in soup.find_all("img"):
             # Keep a placeholder so CSS selectors still work
             img.attrs = {"src": "[removed]", **({"alt": img.get("alt", "")} if img.get("alt") else {})}
 
-        # Remove picture/source elements
-        for tag in soup.find_all(["picture", "source"]):
+        # Remove picture/source/video/audio/embed/object elements
+        for tag in soup.find_all(["picture", "source", "video", "audio", "embed", "object"]):
             tag.decompose()
 
-        # Strip data- attributes (often contain tracking/ad content)
+        # Remove all inline event handlers and javascript: hrefs
         for tag in soup.find_all(True):
-            to_remove = [attr for attr in tag.attrs if attr.startswith("data-")]
+            # Strip data- attributes
+            to_remove = [attr for attr in tag.attrs
+                         if attr.startswith("data-") or attr.startswith("on")]
             for attr in to_remove:
                 del tag[attr]
+            # Clean javascript: hrefs but keep the element
+            if tag.get("href", "").startswith("javascript:"):
+                tag["href"] = "#"
 
-        # Remove ad/tracking containers
+        # Remove ad/tracking/social containers
         for selector in [
             "[class*='ad-']", "[class*='tracking']", "[class*='analytics']",
             "[id*='ad-']", "[id*='tracking']",
             ".social-share", ".social-media", ".share-buttons",
+            ".shareholder", ".socialMediaContainer",
+            "[class*='cookie']", "[id*='cookie']",
+            "[class*='modal']", "[id*='modal']",
+            "[class*='leaderboard']", "[id*='leaderboard']",
         ]:
             for el in soup.select(selector):
                 el.decompose()
+
+        # Strip all external URLs from non-link attributes (style, etc.)
+        for tag in soup.find_all(True):
+            if tag.get("style"):
+                del tag["style"]
 
     html_str = str(soup)
 

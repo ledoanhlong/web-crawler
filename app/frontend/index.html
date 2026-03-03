@@ -665,6 +665,17 @@ function renderJobDetail(j){
 
   if(isPreview && j.preview_record){
     body += renderPreviewCard(j);
+  } else if(isPreview && !j.preview_record){
+    body += `<div class="preview-box" style="border-color:var(--red)">
+      <h3 style="color:var(--red)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        Preview Failed
+      </h3>
+      <p style="color:var(--text2);font-size:.85rem;margin:8px 0 14px">${j.error ? esc(j.error) : 'No data could be extracted from the page. The scraper could not identify any items.'}</p>
+      <div class="preview-actions">
+        <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Dismiss</button>
+      </div>
+    </div>`;
   }
 
   const hasPlan = !!j.plan;

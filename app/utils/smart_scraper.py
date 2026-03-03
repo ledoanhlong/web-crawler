@@ -40,15 +40,40 @@ def _build_graph_config() -> dict:
 
 
 def _run_smart_scraper(prompt: str, html: str) -> dict | list | None:
-    """Run SmartScraperGraph synchronously (it uses LangChain internally)."""
-    from scrapegraphai.graphs import SmartScraperGraph
+    """Run SmartScraperGraph synchronously (it uses LangChain internally).
 
-    graph = SmartScraperGraph(
-        prompt=prompt,
-        source=html,
-        config=_build_graph_config(),
-    )
-    return graph.run()
+    On Windows, forces UTF-8 stdout/stderr to prevent 'charmap' codec errors
+    when ScrapeGraphAI logs Unicode characters internally.
+    """
+    import io
+    import sys
+
+    # Fix Windows charmap encoding errors — redirect stdout/stderr to UTF-8
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    if sys.platform == "win32":
+        try:
+            sys.stdout = io.TextIOWrapper(
+                sys.stdout.buffer, encoding="utf-8", errors="replace"
+            )
+            sys.stderr = io.TextIOWrapper(
+                sys.stderr.buffer, encoding="utf-8", errors="replace"
+            )
+        except Exception:
+            pass  # If wrapping fails, continue with original streams
+
+    try:
+        from scrapegraphai.graphs import SmartScraperGraph
+
+        graph = SmartScraperGraph(
+            prompt=prompt,
+            source=html,
+            config=_build_graph_config(),
+        )
+        return graph.run()
+    finally:
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
 
 
 async def smart_extract_items(
