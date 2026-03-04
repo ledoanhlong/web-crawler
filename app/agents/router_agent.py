@@ -40,7 +40,7 @@ class RouterAgent:
         log.info(
             "RouterAgent: routing %d URL(s), prompt=%r, fields_wanted=%r",
             len(urls),
-            prompt[:80],
+            prompt,
             fields_wanted,
         )
 

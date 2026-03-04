@@ -176,6 +176,23 @@ header p{font-size:.82rem;color:var(--text2);margin-top:2px}
 .feedback-input:focus{border-color:var(--yellow)}
 .feedback-input::placeholder{color:var(--text2)}
 
+/* ── Dual Preview ────────────────────────────────────────────────── */
+.dual-preview{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+.dual-preview .preview-col{border:1px solid var(--border);border-radius:var(--radius);padding:16px;background:var(--surface2);position:relative}
+.dual-preview .preview-col.recommended{border-color:var(--green);box-shadow:0 0 0 1px var(--green)}
+.dual-preview .preview-col h4{font-size:.85rem;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.dual-preview .preview-col .rec-badge{font-size:.68rem;padding:2px 8px;border-radius:10px;background:rgba(0,184,148,.15);color:var(--green);font-weight:600}
+.recommendation-box{padding:14px 16px;background:rgba(116,185,255,.06);border:1px solid rgba(116,185,255,.2);border-radius:var(--radius);margin-bottom:14px;font-size:.84rem;color:var(--text);line-height:1.5}
+.recommendation-box strong{color:var(--blue)}
+.method-select{display:flex;gap:10px;margin-bottom:14px}
+.method-btn{padding:8px 18px;border:2px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text2);font-size:.84rem;font-weight:600;transition:all .15s}
+.method-btn:hover{border-color:var(--accent);color:var(--text)}
+.method-btn.selected{border-color:var(--accent);background:rgba(108,92,231,.12);color:var(--accent2)}
+
+@media(max-width:640px){
+  .dual-preview{grid-template-columns:1fr}
+}
+
 /* ── Data Table ───────────────────────────────────────────────────── */
 .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;max-height:480px;overflow-y:auto}
 table{width:100%;border-collapse:collapse;font-size:.82rem}
@@ -228,6 +245,14 @@ tr:hover td{background:rgba(108,92,231,.04)}
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
       Smart Crawl
     </h2>
+
+    <div class="field">
+      <label for="templateSelect">Template <span style="font-weight:400;opacity:.7">(optional — use a proven config)</span></label>
+      <select id="templateSelect" style="width:100%;padding:8px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:.9rem">
+        <option value="">No template — use AI planner</option>
+      </select>
+      <div class="field-hint" id="templateHint" style="display:none;margin-top:4px;font-size:.8rem;color:var(--green)"></div>
+    </div>
 
     <div class="field">
       <label for="crawlUrls">URLs (one per line)</label>
@@ -487,8 +512,8 @@ document.getElementById('crawlBtn').addEventListener('click', async () => {
     if(fields) body.fields_wanted = fields;
     if(detailUrl) body.detail_page_url = detailUrl;
     if(maxItems && !isNaN(+maxItems)) body.max_items = +maxItems;
-    // If test_single is checked or max_pages is set, we force full_pipeline via the router
-    // by including fields_wanted (the router sees it as needing full pipeline)
+    const templateId = document.getElementById('templateSelect').value;
+    if(templateId) body.template_id = templateId;
 
     const data = await apiPost('/smart-crawl', body);
 
@@ -517,9 +542,13 @@ document.getElementById('crawlBtn').addEventListener('click', async () => {
 });
 
 /* ── Confirm / Feedback ──────────────────────────────────────────── */
-async function confirmPreview(jobId, approved, feedback){
+async function confirmPreview(jobId, approved, feedback, extractionMethod){
   try{
-    const j = await apiPost(`/crawl/${jobId}/confirm`, {approved, feedback: feedback||null});
+    const j = await apiPost(`/crawl/${jobId}/confirm`, {
+      approved,
+      feedback: feedback||null,
+      extraction_method: extractionMethod||null,
+    });
     jobs[j.id] = j;
     render();
     if(approved) startPolling(jobId);
@@ -589,18 +618,35 @@ function render(){
     });
   });
 
+  /* attach method-select button handlers */
+  container.querySelectorAll('.method-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const id = btn.dataset.jobId;
+      const method = btn.dataset.method;
+      // Toggle selected class among siblings
+      btn.closest('.method-select').querySelectorAll('.method-btn').forEach(b=>b.classList.remove('selected'));
+      btn.classList.add('selected');
+      // Update hidden input
+      const hidden = document.getElementById('method-'+id);
+      if(hidden) hidden.value = method;
+    });
+  });
+
   /* attach preview confirm/feedback handlers */
   container.querySelectorAll('.preview-confirm-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const id = btn.dataset.jobId;
       const isTest = btn.dataset.testSingle === 'true';
+      const isDual = btn.dataset.dual === 'true';
       const feedbackEl = document.getElementById('feedback-'+id);
       const feedback = feedbackEl ? feedbackEl.value.trim() : '';
+      const methodEl = document.getElementById('method-'+id);
+      const extractionMethod = isDual && methodEl ? methodEl.value : null;
       btn.disabled = true;
       btn.innerHTML = isTest
         ? '<span class="spinner"></span> Finishing test...'
         : '<span class="spinner"></span> Starting full crawl...';
-      confirmPreview(id, true, feedback);
+      confirmPreview(id, true, feedback, extractionMethod);
     });
   });
 
@@ -609,7 +655,7 @@ function render(){
       const id = btn.dataset.jobId;
       if(confirm('Abort this crawl?')){
         btn.disabled = true;
-        confirmPreview(id, false, null);
+        confirmPreview(id, false, null, null);
       }
     });
   });
@@ -623,6 +669,7 @@ function renderJobCard(j){
     <div class="job-top">
       <span class="badge badge-${j.status}"><span class="dot"></span>${STAGE_LABELS[j.status]}</span>
       ${isTest ? '<span class="job-mode">Test</span>' : ''}
+      ${j.request.template_id ? '<span class="job-mode" style="background:rgba(0,184,148,.12);color:var(--green)">Template</span>' : ''}
       ${maxItems ? '<span class="job-mode" style="background:rgba(253,203,110,.12);color:var(--yellow)">Max '+maxItems+'</span>' : ''}
       <span class="job-url" title="${esc(j.request.url)}">${esc(j.request.url)}</span>
       <span class="job-time" title="${j.created_at}">${timeAgo(j.created_at)}</span>
@@ -663,7 +710,9 @@ function renderJobDetail(j){
     body += `<div class="error-box"><strong>Error:</strong> ${esc(j.error)}</div>`;
   }
 
-  if(isPreview && j.preview_record){
+  if(isPreview && (j.preview_record_css || j.preview_record_smart)){
+    body += renderDualPreviewCard(j);
+  } else if(isPreview && j.preview_record){
     body += renderPreviewCard(j);
   } else if(isPreview && !j.preview_record){
     body += `<div class="preview-box" style="border-color:var(--red)">
@@ -755,6 +804,121 @@ function renderPreviewCard(j){
       ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Optional: describe missing data">'}
       <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Abort</button>
     </div>
+  </div>`;
+  return html;
+}
+
+function renderDualPreviewCard(j){
+  const isTest = j.request.test_single;
+  const cssRec = j.preview_record_css;
+  const smartRec = j.preview_record_smart;
+  const recMethod = j.preview_recommended_method;
+  const hasBoth = cssRec && smartRec;
+
+  let html = `<div class="preview-box">
+    <h3>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Preview — Compare Extraction Methods
+    </h3>
+    <p class="preview-subtitle">${isTest
+      ? 'Test run — compare both extraction methods below.'
+      : 'Review both extraction results. Choose the method you prefer for the full crawl.'}</p>`;
+
+  // LLM recommendation
+  if(j.preview_recommendation){
+    html += `<div class="recommendation-box">
+      <strong>AI Recommendation:</strong> ${esc(j.preview_recommendation)}
+    </div>`;
+  }
+
+  // Side-by-side columns
+  html += `<div class="dual-preview">`;
+
+  // CSS column
+  if(cssRec){
+    const isCssRec = recMethod==='css';
+    html += `<div class="preview-col ${isCssRec?'recommended':''}">
+      <h4>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg>
+        CSS Selectors
+        ${isCssRec?'<span class="rec-badge">Recommended</span>':''}
+      </h4>
+      <div class="preview-fields">`;
+    PREVIEW_FIELDS.forEach(f=>{
+      let v = cssRec[f];
+      if(Array.isArray(v)) v = v.length ? v.join(', ') : null;
+      if(typeof v==='object' && v!==null) v = Object.entries(v).map(([k,val])=>`${k}: ${val}`).join(', ') || null;
+      const hasVal = v && v.trim && v.trim().length>0;
+      html += `<div class="preview-field">
+        <div class="preview-field-label">${esc(prettyLabel(f))}</div>
+        <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'Not captured'}</div>
+      </div>`;
+    });
+    html += `</div></div>`;
+  } else {
+    html += `<div class="preview-col" style="opacity:.5">
+      <h4>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg>
+        CSS Selectors
+      </h4>
+      <p style="color:var(--text2);font-size:.84rem">No data extracted</p>
+    </div>`;
+  }
+
+  // SmartScraperGraph column
+  if(smartRec){
+    const isSmartRec = recMethod==='smart_scraper';
+    html += `<div class="preview-col ${isSmartRec?'recommended':''}">
+      <h4>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/></svg>
+        AI Extraction
+        ${isSmartRec?'<span class="rec-badge">Recommended</span>':''}
+      </h4>
+      <div class="preview-fields">`;
+    PREVIEW_FIELDS.forEach(f=>{
+      let v = smartRec[f];
+      if(Array.isArray(v)) v = v.length ? v.join(', ') : null;
+      if(typeof v==='object' && v!==null) v = Object.entries(v).map(([k,val])=>`${k}: ${val}`).join(', ') || null;
+      const hasVal = v && v.trim && v.trim().length>0;
+      html += `<div class="preview-field">
+        <div class="preview-field-label">${esc(prettyLabel(f))}</div>
+        <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'Not captured'}</div>
+      </div>`;
+    });
+    html += `</div></div>`;
+  } else {
+    html += `<div class="preview-col" style="opacity:.5">
+      <h4>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/></svg>
+        AI Extraction
+      </h4>
+      <p style="color:var(--text2);font-size:.84rem">No data extracted</p>
+    </div>`;
+  }
+
+  html += `</div>`; // close dual-preview
+
+  // Method selection buttons
+  const defaultMethod = recMethod || (cssRec ? 'css' : 'smart_scraper');
+  html += `<div class="method-select">
+    <span style="font-size:.82rem;color:var(--text2);align-self:center;margin-right:4px">Use:</span>`;
+  if(cssRec){
+    html += `<button class="method-btn ${defaultMethod==='css'?'selected':''}" data-method="css" data-job-id="${j.id}">CSS Selectors</button>`;
+  }
+  if(smartRec){
+    html += `<button class="method-btn ${defaultMethod==='smart_scraper'?'selected':''}" data-method="smart_scraper" data-job-id="${j.id}">AI Extraction</button>`;
+  }
+  html += `</div>`;
+
+  // Hidden input to store selected method
+  html += `<input type="hidden" id="method-${j.id}" value="${defaultMethod}">`;
+
+  // Actions
+  html += `<div class="preview-actions">
+    <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}" data-dual="true">${isTest?'Looks good — Save':'Looks good — Start full crawl'}</button>
+    ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Optional: describe missing data">'}
+    <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Abort</button>
+  </div>
   </div>`;
   return html;
 }
@@ -940,8 +1104,46 @@ document.getElementById('scriptGenMultiBtn').addEventListener('click', async () 
   } catch(e) { showToolError(resultEl, e.message); }
 });
 
+/* ── Templates ───────────────────────────────────────────────────── */
+let templates = [];
+
+async function loadTemplates() {
+  try {
+    templates = await apiGet('/templates');
+    const sel = document.getElementById('templateSelect');
+    templates.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.name + (t.expected_record_count ? ` (~${t.expected_record_count} records)` : '');
+      sel.appendChild(opt);
+    });
+  } catch(e) {
+    console.warn('Failed to load templates', e);
+  }
+}
+
+document.getElementById('templateSelect').addEventListener('change', function() {
+  const tmpl = templates.find(t => t.id === this.value);
+  const hintEl = document.getElementById('templateHint');
+
+  if (!tmpl) {
+    hintEl.style.display = 'none';
+    return;
+  }
+
+  // Auto-fill form fields
+  document.getElementById('crawlUrls').value = tmpl.default_url;
+  document.getElementById('crawlPrompt').value = tmpl.default_prompt;
+  document.getElementById('crawlFields').value = tmpl.default_fields_wanted;
+
+  // Show description as hint
+  hintEl.textContent = tmpl.description;
+  hintEl.style.display = 'block';
+});
+
 /* ── Refresh & Init ──────────────────────────────────────────────── */
 document.getElementById('refreshBtn').addEventListener('click', loadJobs);
+loadTemplates();
 loadJobs();
 </script>
 </body>

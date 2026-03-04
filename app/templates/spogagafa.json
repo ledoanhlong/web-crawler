@@ -1,0 +1,69 @@
+{
+  "id": "spogagafa",
+  "name": "spoga+gafa (Koelnmesse)",
+  "description": "Koelnmesse exhibitor directory — A-Z alphabet tabs, JS-rendered, detail pages with full contact info. ~504 exhibitors.",
+  "platform": "koelnmesse",
+  "expected_record_count": 504,
+  "default_url": "https://www.spogagafa.com/spoga-gafa-exhibitors/list-of-exhibitors/",
+  "default_prompt": "Extract all exhibitor information including name, country, booth/hall/stand, website, email, phone, address, product categories, brands, and social media links.",
+  "default_fields_wanted": "name, country, city, address, postal_code, website, email, phone, description, product_categories, brands, hall, stand, social_media",
+  "plan": {
+    "url": "__PLACEHOLDER__",
+    "requires_javascript": true,
+    "pagination": "alphabet_tabs",
+    "pagination_selector": null,
+    "pagination_urls": [],
+    "alphabet_tab_selector": "#pagecontent .esr.search-results .filter a, #pagecontent .esr .letters a",
+    "inner_pagination_selector": null,
+    "total_items_hint": 504,
+    "api_endpoint": null,
+    "api_params": {},
+    "target": {
+      "item_container_selector": "#pagecontent .esr.search-results > .item",
+      "field_selectors": {
+        "name": ".col1ergebnis a.db-aslink",
+        "country": ".col1ergebnis .land",
+        "detail_link": ".col1ergebnis a.db-aslink",
+        "logo_img": ".col2ergebnis img.fairlogo",
+        "hall_stand_text": ".col3ergebnis a"
+      },
+      "field_attributes": {
+        "detail_link": "href",
+        "logo_img": "src",
+        "hall_stand_text": "href"
+      },
+      "detail_link_selector": ".col1ergebnis a.db-aslink",
+      "detail_button_selector": null
+    },
+    "detail_page_fields": {},
+    "detail_page_field_attributes": {},
+    "detail_page_plan": {
+      "field_selectors": {
+        "company_name": ".dbausstellerdetailheadline h2, .dbexhibheadline",
+        "address": ".dbausstellerdetailkontakt .adresse, .dbexhibcontact .address",
+        "phone": ".dbausstellerdetailkontakt .telefon, .dbexhibcontact .phone",
+        "fax": ".dbausstellerdetailkontakt .fax, .dbexhibcontact .fax",
+        "email": ".dbausstellerdetailkontakt a[href^='mailto:'], .dbexhibcontact a[href^='mailto:']",
+        "website": ".dbausstellerdetailkontakt a[href^='http']:not([href*='mailto:']), .dbexhibcontact a.url",
+        "description": ".dbausstellerdetailbeschreibung, .dbexhibdescription",
+        "products": ".dbausstellerdetailproduktgruppen, .dbexhibproductgroups",
+        "brands": ".dbausstellerdetailmarken, .dbexhibbrands",
+        "hall_stand": ".dbausstellerdetailstand, .dbexhibstand",
+        "social_facebook": "a[href*='facebook.com']",
+        "social_instagram": "a[href*='instagram.com']",
+        "social_linkedin": "a[href*='linkedin.com']"
+      },
+      "field_attributes": {
+        "email": "href",
+        "website": "href",
+        "social_facebook": "href",
+        "social_instagram": "href",
+        "social_linkedin": "href"
+      },
+      "sub_links": []
+    },
+    "detail_api_plan": null,
+    "wait_selector": "#pagecontent .esr.search-results > .item",
+    "notes": "Koelnmesse standard exhibitor directory. Uses A-Z alphabet tab navigation. Each exhibitor has a detail page with full contact information, product groups, brands, and social media links."
+  }
+}

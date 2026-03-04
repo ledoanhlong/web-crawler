@@ -182,6 +182,25 @@ class ScrapingPlan(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Scraping template (pre-configured plan for known site types)
+# ---------------------------------------------------------------------------
+class ScrapingTemplate(BaseModel):
+    """A pre-configured scraping template based on a successfully scraped site."""
+
+    id: str = Field(description="Unique template identifier (matches filename).")
+    name: str = Field(description="Human-readable template name.")
+    description: str = Field(description="What this template scrapes and how.")
+    platform: str = Field(default="", description="Platform/CMS identifier for grouping.")
+    expected_record_count: int | None = Field(
+        default=None, description="Approximate record count from the original scrape."
+    )
+    default_url: str = Field(description="The URL this template was designed for.")
+    default_prompt: str = Field(default="", description="Default extraction prompt.")
+    default_fields_wanted: str = Field(default="", description="Default fields list.")
+    plan: ScrapingPlan = Field(description="The proven ScrapingPlan configuration.")
+
+
+# ---------------------------------------------------------------------------
 # Raw page data (output of ScraperAgent)
 # ---------------------------------------------------------------------------
 class PageData(BaseModel):
@@ -245,6 +264,11 @@ class SellerLead(BaseModel):
 # ---------------------------------------------------------------------------
 # Crawl job lifecycle
 # ---------------------------------------------------------------------------
+class ExtractionMethod(str, enum.Enum):
+    CSS = "css"
+    SMART_SCRAPER = "smart_scraper"
+
+
 class CrawlStatus(str, enum.Enum):
     PENDING = "pending"
     PLANNING = "planning"
@@ -283,6 +307,10 @@ class CrawlRequest(BaseModel):
         default=None,
         description="Maximum number of items to scrape (for testing). None means no limit.",
     )
+    template_id: str | None = Field(
+        default=None,
+        description="Template ID to use instead of LLM planning.",
+    )
 
     @field_validator("url")
     @classmethod
@@ -307,6 +335,10 @@ class ConfirmPreviewRequest(BaseModel):
         default=None,
         description="Optional user feedback describing what data is missing or wrong.",
     )
+    extraction_method: ExtractionMethod | None = Field(
+        default=None,
+        description="User's chosen extraction method for the full crawl (css or smart_scraper).",
+    )
 
 
 class CrawlResult(BaseModel):
@@ -323,6 +355,26 @@ class CrawlJob(BaseModel):
     preview_record: SellerLead | None = Field(
         default=None,
         description="Single sample record shown to the user for validation before full crawl.",
+    )
+    preview_record_css: SellerLead | None = Field(
+        default=None,
+        description="Preview record extracted via CSS selectors.",
+    )
+    preview_record_smart: SellerLead | None = Field(
+        default=None,
+        description="Preview record extracted via SmartScraperGraph (AI).",
+    )
+    preview_recommendation: str | None = Field(
+        default=None,
+        description="LLM explanation of which extraction method is better.",
+    )
+    preview_recommended_method: ExtractionMethod | None = Field(
+        default=None,
+        description="LLM-recommended extraction method.",
+    )
+    extraction_method: ExtractionMethod | None = Field(
+        default=None,
+        description="User's chosen extraction method for the full crawl.",
     )
     user_feedback: str | None = Field(
         default=None,
@@ -420,6 +472,10 @@ class SmartCrawlRequest(BaseModel):
     max_items: int | None = Field(
         default=None,
         description="Maximum number of items to scrape (for testing). None means no limit.",
+    )
+    template_id: str | None = Field(
+        default=None,
+        description="Template ID to use instead of LLM planning.",
     )
 
 

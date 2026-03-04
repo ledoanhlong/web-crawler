@@ -83,16 +83,44 @@ def _sanitize_plan_data(plan_data: dict) -> dict:
     return plan_data
 
 
-async def _fetch_html(url: str) -> str:
-    """Fetch a page — try httpx first, fall back to Playwright."""
+async def _fetch_html(url: str) -> tuple[str, bool]:
+    """Fetch a page — try httpx first, fall back to Playwright.
+
+    Returns (html, needs_js) so callers can override ``requires_javascript``.
+    """
     html_raw = ""
     needs_js = False
-    try:
-        html_raw = await fetch_page(url)
-        if len(html_raw) < 2_000 or "<noscript>" in html_raw.lower():
-            needs_js = True
-    except Exception:
+
+    # Heuristic 1: URL hash routing → always needs JS
+    if "#/" in url or "#!/" in url:
         needs_js = True
+        log.info("URL contains hash routing — will use Playwright for %s", url)
+
+    if not needs_js:
+        try:
+            html_raw = await fetch_page(url)
+            if len(html_raw) < 2_000 or "<noscript>" in html_raw.lower():
+                needs_js = True
+
+            # Heuristic 2: SPA framework markers in raw HTML
+            if not needs_js:
+                lower = html_raw.lower()
+                spa_markers = [
+                    'id="app"', 'id="root"', 'id="__next"', 'id="__nuxt"',
+                    "ng-app", "data-ng-app", "<app-root", "data-reactroot",
+                ]
+                if any(m in lower for m in spa_markers):
+                    needs_js = True
+                    log.info("SPA framework marker detected in HTML for %s", url)
+
+            # Heuristic 3: Large HTML shell with almost no visible text
+            if not needs_js and len(html_raw) >= 2_000:
+                body = BeautifulSoup(html_raw, "lxml").find("body")
+                if body and len(body.get_text(strip=True)) < 200:
+                    needs_js = True
+                    log.info("HTML shell has <200 chars of text — likely JS-rendered for %s", url)
+        except Exception:
+            needs_js = True
 
     if needs_js:
         log.info("httpx fetch insufficient; falling back to Playwright for %s", url)
@@ -101,7 +129,7 @@ async def _fetch_html(url: str) -> str:
         async with get_browser() as browser:
             html_raw = await fetch_page_js(browser, url)
 
-    return html_raw
+    return html_raw, needs_js
 
 
 class PlannerAgent:
@@ -117,14 +145,14 @@ class PlannerAgent:
         log.info("Planning scrape for %s", url)
 
         # --- 1. Fetch the listing page ---
-        html_raw = await _fetch_html(url)
+        html_raw, heuristic_needs_js = await _fetch_html(url)
 
         # --- 2. Optionally fetch the detail page ---
         detail_raw = ""
         if detail_page_url:
             log.info("Fetching user-provided detail page: %s", detail_page_url)
             try:
-                detail_raw = await _fetch_html(detail_page_url)
+                detail_raw, _ = await _fetch_html(detail_page_url)
             except Exception as exc:
                 log.warning("Failed to fetch detail page %s: %s", detail_page_url, exc)
 
@@ -179,6 +207,12 @@ class PlannerAgent:
         # --- 4. Parse into ScrapingPlan ---
         plan_data["url"] = url
         plan_data = _sanitize_plan_data(plan_data)
+
+        # Override requires_javascript if heuristics detected JS was needed
+        if heuristic_needs_js and not plan_data.get("requires_javascript"):
+            log.info("Overriding requires_javascript=True (heuristic detected JS-rendered page)")
+            plan_data["requires_javascript"] = True
+
         plan = ScrapingPlan.model_validate(plan_data)
         log.info(
             "Plan: js=%s, pagination=%s, fields=%s, detail_link=%s",
@@ -223,7 +257,7 @@ class PlannerAgent:
         """
         log.info("Re-planning with user feedback: %s", user_feedback)
 
-        html_raw = await _fetch_html(current_plan.url)
+        html_raw, _ = await _fetch_html(current_plan.url)
         current_plan_json = current_plan.model_dump(mode="json")
 
         plan_data: dict | None = None

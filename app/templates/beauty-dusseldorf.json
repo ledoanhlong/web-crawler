@@ -1,0 +1,52 @@
+{
+  "id": "beauty-dusseldorf",
+  "name": "BEAUTY Düsseldorf",
+  "description": "Koelnmesse VIS platform — A-Z alphabet tabs, JS-rendered, detail data via intercepted API. ~737 exhibitors.",
+  "platform": "koelnmesse-vis",
+  "expected_record_count": 737,
+  "default_url": "https://www.beauty-duesseldorf.com/vis/v1/en/directory/a",
+  "default_prompt": "Extract all exhibitor information including name, booth/stand, country, city, address, website, email, phone, description, product categories, brands, and hall number.",
+  "default_fields_wanted": "name, booth, country, city, address, postal_code, website, email, phone, description, product_categories, brands, hall",
+  "plan": {
+    "url": "__PLACEHOLDER__",
+    "requires_javascript": true,
+    "pagination": "alphabet_tabs",
+    "pagination_selector": null,
+    "pagination_urls": [],
+    "alphabet_tab_selector": "#finder-directory .js-directory-tab-link",
+    "inner_pagination_selector": null,
+    "total_items_hint": 737,
+    "api_endpoint": null,
+    "api_params": {},
+    "target": {
+      "item_container_selector": "#finder-directory #vis__directory .directory__results ul.directory__result-list > li.directory__result-list-item",
+      "field_selectors": {
+        "name": "h3.teaser-row__name, .teaser-row__title",
+        "listing_type": "span.teaser-row__type",
+        "location_text": "span.teaser-row__location",
+        "booth_text": "span.teaser-row__stand, .hall-map-link",
+        "booth_map_link": "a.hall-map-link",
+        "logo_img": "img.teaser-row__logo",
+        "details_button": "button.teaser-row__details"
+      },
+      "field_attributes": {
+        "booth_map_link": "href",
+        "logo_img": "src"
+      },
+      "detail_link_selector": null,
+      "detail_button_selector": "button.teaser-row__details"
+    },
+    "detail_page_fields": {},
+    "detail_page_field_attributes": {},
+    "detail_page_plan": null,
+    "detail_api_plan": {
+      "api_url_template": "https://www.beauty-duesseldorf.com/vis-api/vis/v1/en/exhibitors/beauty2026.{id}/slices/profile",
+      "id_selector": "a.hall-map-link[href*='actionItem=']",
+      "id_attribute": "href",
+      "id_regex": "actionItem=(\\d+)",
+      "sample_response": null
+    },
+    "wait_selector": "#finder-directory #vis__directory ul.directory__result-list li.directory__result-list-item",
+    "notes": "Koelnmesse VIS platform. Uses A-Z alphabet tab navigation. Detail data is fetched via API interception (button click triggers XHR). The API URL contains the exhibitor ID extracted from the hall map link."
+  }
+}

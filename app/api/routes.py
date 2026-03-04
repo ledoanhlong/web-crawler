@@ -23,6 +23,7 @@ from app.models.schemas import (
     SmartScrapeResult,
 )
 from app.services.orchestrator import Orchestrator
+from app.services.template_loader import get_plan_from_template, list_templates
 
 router = APIRouter(prefix="/api/v1", tags=["crawl"])
 
@@ -66,8 +67,9 @@ async def confirm_preview(
         job.error = "Crawl aborted by user after preview."
         return job
 
-    # Store user feedback (may be None)
+    # Store user feedback and extraction method choice
     job.user_feedback = body.feedback
+    job.extraction_method = body.extraction_method
     background_tasks.add_task(_run_full, job)
     return job
 
@@ -113,6 +115,24 @@ async def download_csv(job_id: str) -> FileResponse:
 async def list_jobs() -> list[CrawlJob]:
     """List all crawl jobs (most recent first)."""
     return sorted(_jobs.values(), key=lambda j: j.created_at, reverse=True)
+
+
+@router.get("/templates", tags=["templates"])
+async def get_templates() -> list[dict]:
+    """List available scraping templates (without full plan details)."""
+    return [
+        {
+            "id": t.id,
+            "name": t.name,
+            "description": t.description,
+            "platform": t.platform,
+            "expected_record_count": t.expected_record_count,
+            "default_url": t.default_url,
+            "default_prompt": t.default_prompt,
+            "default_fields_wanted": t.default_fields_wanted,
+        }
+        for t in list_templates()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +206,31 @@ async def smart_crawl(
     - SmartScraperMultiGraph for multi-URL extraction
     - ScriptCreatorGraph + auto-execute for script generation
     """
+    # --- Template shortcut: skip router, use pre-built plan ---
+    if body.template_id:
+        try:
+            plan = get_plan_from_template(body.template_id, body.urls[0])
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+        crawl_req = CrawlRequest(
+            url=body.urls[0],
+            fields_wanted=body.fields_wanted,
+            detail_page_url=body.detail_page_url,
+            max_items=body.max_items,
+            template_id=body.template_id,
+        )
+        job = CrawlJob(request=crawl_req)
+        job.plan = plan  # Pre-set plan → orchestrator skips planner
+        _jobs[job.id] = job
+        background_tasks.add_task(_run_preview, job)
+
+        return SmartCrawlResult(
+            strategy_used="full_pipeline",
+            strategy_explanation=f"Using template: {body.template_id}",
+            job_id=job.id,
+        )
+
     from app.agents.router_agent import RouterAgent
     from app.utils.smart_scraper import generate_scraper_script, smart_scrape_multi
 

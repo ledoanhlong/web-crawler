@@ -100,7 +100,13 @@ async def smart_extract_items(
 
     log.info("SmartScraperGraph fallback: extracting items (fields: %s)", fields_str)
     try:
-        result = await asyncio.to_thread(_run_smart_scraper, prompt, html)
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_run_smart_scraper, prompt, html),
+            timeout=120,  # 2-minute timeout to prevent hanging
+        )
+    except asyncio.TimeoutError:
+        log.warning("SmartScraperGraph item extraction timed out after 120s — falling back to CSS")
+        return []
     except Exception as exc:
         log.warning("SmartScraperGraph item extraction failed: %s", exc)
         return []
@@ -156,7 +162,13 @@ async def smart_extract_detail(
 
     log.info("SmartScraperGraph: extracting detail page fields")
     try:
-        result = await asyncio.to_thread(_run_smart_scraper, prompt, html)
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_run_smart_scraper, prompt, html),
+            timeout=120,
+        )
+    except asyncio.TimeoutError:
+        log.warning("SmartScraperGraph detail extraction timed out after 120s")
+        return {}
     except Exception as exc:
         log.warning("SmartScraperGraph detail extraction failed: %s", exc)
         return {}

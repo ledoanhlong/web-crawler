@@ -24,7 +24,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.config import settings
-from app.models.schemas import DetailApiPlan, PageData, PaginationStrategy, ScrapingPlan, ScrapingTarget
+from app.models.schemas import DetailApiPlan, ExtractionMethod, PageData, PaginationStrategy, ScrapingPlan, ScrapingTarget
 from app.utils.browser import (
     click_all_tabs,
     click_load_more,
@@ -43,13 +43,14 @@ class ScraperAgent:
 
     async def scrape(
         self, plan: ScrapingPlan, *, max_items: int | None = None,
+        extraction_method: ExtractionMethod | None = None,
     ) -> list[PageData]:
-        log.info("Starting scrape for %s (js=%s, max_items=%s)", plan.url, plan.requires_javascript, max_items)
+        log.info("Starting scrape for %s (js=%s, max_items=%s, method=%s)", plan.url, plan.requires_javascript, max_items, extraction_method)
 
         if plan.pagination == PaginationStrategy.API_ENDPOINT and plan.api_endpoint:
             pages = await self._scrape_api(plan, max_items=max_items)
         elif plan.requires_javascript:
-            pages = await self._scrape_js(plan, max_items=max_items)
+            pages = await self._scrape_js(plan, max_items=max_items, extraction_method=extraction_method)
         elif settings.use_scrapy and self._can_use_scrapy(plan):
             try:
                 pages = await self._scrape_scrapy(plan, max_items=max_items)
@@ -68,9 +69,9 @@ class ScraperAgent:
                 pages = await self._enrich_detail_api(pages, plan)
             except Exception as exc:
                 log.warning("Scrapy failed, falling back to httpx: %s", exc)
-                pages = await self._scrape_static(plan, max_items=max_items)
+                pages = await self._scrape_static(plan, max_items=max_items, extraction_method=extraction_method)
         else:
-            pages = await self._scrape_static(plan, max_items=max_items)
+            pages = await self._scrape_static(plan, max_items=max_items, extraction_method=extraction_method)
 
         # Enforce max_items limit across all pages
         if max_items is not None:
@@ -110,6 +111,49 @@ class ScraperAgent:
 
         return pages
 
+    async def scrape_preview_dual(self, plan: ScrapingPlan) -> tuple[list[PageData], list[PageData]]:
+        """Scrape preview using both CSS and SmartScraperGraph, returning both results.
+
+        Returns (css_pages, smart_pages). Each contains at most 1 item.
+        """
+        log.info("Dual preview scrape for %s", plan.url)
+
+        # Fetch the page HTML once
+        used_js = plan.requires_javascript
+        if plan.requires_javascript:
+            async with get_browser() as browser:
+                html = await fetch_page_js(browser, plan.url, wait_selector=plan.wait_selector)
+        else:
+            html = await fetch_page(plan.url)
+
+        if not html:
+            return [], []
+
+        # Run both extraction methods
+        css_items, smart_items = await self._extract_items_dual(html, plan.target, plan.detail_api_plan)
+
+        # If CSS found 0 items and we used httpx, retry with Playwright
+        # (SmartScraperGraph may extract garbage from static HTML of JS pages)
+        if not css_items and not used_js:
+            log.warning("CSS found 0 items with static fetch — retrying with Playwright for %s", plan.url)
+            async with get_browser() as browser:
+                html = await fetch_page_js(browser, plan.url, wait_selector=plan.wait_selector)
+            if html:
+                css_items, smart_items = await self._extract_items_dual(html, plan.target, plan.detail_api_plan)
+
+        css_pages = [PageData(url=plan.url, items=css_items[:1])] if css_items else []
+        smart_pages = [PageData(url=plan.url, items=smart_items[:1])] if smart_items else []
+
+        # Enrich both with detail pages
+        if css_pages and css_pages[0].items:
+            css_pages = await self._enrich_detail_pages(css_pages, plan, max_details=1)
+            css_pages = await self._enrich_detail_api(css_pages, plan, max_details=1)
+        if smart_pages and smart_pages[0].items:
+            smart_pages = await self._enrich_detail_pages(smart_pages, plan, max_details=1)
+            smart_pages = await self._enrich_detail_api(smart_pages, plan, max_details=1)
+
+        return css_pages, smart_pages
+
     # ------------------------------------------------------------------
     # Preview helpers
     # ------------------------------------------------------------------
@@ -137,6 +181,7 @@ class ScraperAgent:
     # ------------------------------------------------------------------
     async def _scrape_static(
         self, plan: ScrapingPlan, *, max_items: int | None = None,
+        extraction_method: ExtractionMethod | None = None,
     ) -> list[PageData]:
         urls = self._resolve_page_urls(plan)
         log.info("Static scrape: %d page URL(s)", len(urls))
@@ -149,7 +194,7 @@ class ScraperAgent:
                 break
             if not html:
                 continue
-            items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+            items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
             if max_items is not None:
                 items = items[: max_items - total_items]
             total_items += len(items)
@@ -165,6 +210,7 @@ class ScraperAgent:
     # ------------------------------------------------------------------
     async def _scrape_js(
         self, plan: ScrapingPlan, *, max_items: int | None = None,
+        extraction_method: ExtractionMethod | None = None,
     ) -> list[PageData]:
         pages: list[PageData] = []
         total_items = 0
@@ -187,7 +233,7 @@ class ScraperAgent:
                     for html in htmls:
                         if _limit_reached():
                             break
-                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
                         if max_items is not None:
                             items = items[: max_items - total_items]
                         total_items += len(items)
@@ -201,7 +247,7 @@ class ScraperAgent:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         await scroll_to_bottom(page, max_scrolls=settings.max_pages_per_crawl)
                         html = await page.content()
-                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
                         if max_items is not None:
                             items = items[:max_items]
                         pages.append(PageData(url=plan.url, items=items))
@@ -216,7 +262,7 @@ class ScraperAgent:
                             await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                         await click_load_more(page, plan.pagination_selector)
                         html = await page.content()
-                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
                         if max_items is not None:
                             items = items[:max_items]
                         pages.append(PageData(url=plan.url, items=items))
@@ -233,7 +279,7 @@ class ScraperAgent:
                             if _limit_reached():
                                 break
                             html = await page.content()
-                            items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+                            items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
                             if max_items is not None:
                                 items = items[: max_items - total_items]
                             total_items += len(items)
@@ -259,7 +305,7 @@ class ScraperAgent:
                         html = await fetch_page_js(
                             browser, url, wait_selector=plan.wait_selector
                         )
-                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
+                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
                         if max_items is not None:
                             items = items[: max_items - total_items]
                         total_items += len(items)
@@ -843,45 +889,94 @@ class ScraperAgent:
             items.append(record)
         return items
 
+    async def _extract_items_dual(
+        self,
+        html: str,
+        target: ScrapingTarget,
+        detail_api_plan: DetailApiPlan | None = None,
+    ) -> tuple[list[dict[str, str | None]], list[dict[str, str | None]]]:
+        """Run both CSS and SmartScraperGraph extraction, returning (css_items, smart_items)."""
+        css_items = self._extract_items(html, target, detail_api_plan)
+        log.info("Dual extraction — CSS found %d items", len(css_items))
+
+        smart_items: list[dict[str, str | None]] = []
+        if settings.use_smart_scraper_primary and len(html) >= 500:
+            from app.utils.smart_scraper import smart_extract_items
+
+            fields = list(target.field_selectors.keys())
+            if target.detail_link_selector and "detail_link" not in fields:
+                fields.append("detail_link")
+            smart_items = await smart_extract_items(html, fields)
+            if smart_items and target.detail_link_selector:
+                self._backfill_detail_links(html, smart_items, target)
+            log.info("Dual extraction — SmartScraperGraph found %d items", len(smart_items))
+        else:
+            log.info("Dual extraction — SmartScraperGraph skipped (disabled or HTML too short)")
+
+        return css_items, smart_items
+
     async def _extract_items_with_fallback(
         self,
         html: str,
         target: ScrapingTarget,
         detail_api_plan: DetailApiPlan | None = None,
+        *,
+        extraction_method: ExtractionMethod | None = None,
     ) -> list[dict[str, str | None]]:
-        """Extract items — SmartScraperGraph primary, CSS selectors backup.
+        """Extract items using the specified method.
 
-        Compares SmartScraperGraph results against CSS selector results and
-        uses whichever extracted more items.  This prevents the common issue
-        where SmartScraperGraph sometimes returns only 1 item from a page
-        that actually has 20.
+        - CSS: only CSS selectors (fast, reliable)
+        - SMART_SCRAPER: SmartScraperGraph primary, CSS fallback on failure
+        - None: CSS if it finds items, else SmartScraperGraph fallback
         """
+        if extraction_method == ExtractionMethod.CSS:
+            items = self._extract_items(html, target, detail_api_plan)
+            log.info("CSS-only extraction: %d items", len(items))
+            return items
+
+        if extraction_method == ExtractionMethod.SMART_SCRAPER:
+            if settings.use_smart_scraper_primary and len(html) >= 500:
+                from app.utils.smart_scraper import smart_extract_items
+
+                fields = list(target.field_selectors.keys())
+                if target.detail_link_selector and "detail_link" not in fields:
+                    fields.append("detail_link")
+                smart_items = await smart_extract_items(html, fields)
+                if smart_items:
+                    if target.detail_link_selector:
+                        self._backfill_detail_links(html, smart_items, target)
+                    log.info("SmartScraperGraph extraction: %d items", len(smart_items))
+                    return smart_items
+                log.warning("SmartScraperGraph returned 0 items — falling back to CSS")
+            return self._extract_items(html, target, detail_api_plan)
+
+        # None / auto — original fallback logic
         css_items = self._extract_items(html, target, detail_api_plan)
 
-        # Primary: SmartScraperGraph (LLM-based extraction)
+        if len(css_items) >= 3:
+            log.info("CSS selectors extracted %d items — skipping SmartScraperGraph", len(css_items))
+            return css_items
+
         if settings.use_smart_scraper_primary and len(html) >= 500:
             from app.utils.smart_scraper import smart_extract_items
 
             fields = list(target.field_selectors.keys())
-            # Ensure detail_link is always requested
             if target.detail_link_selector and "detail_link" not in fields:
                 fields.append("detail_link")
             smart_items = await smart_extract_items(html, fields)
             if smart_items:
-                # Compare against CSS results — use whichever found more items
                 if len(css_items) > len(smart_items):
                     log.warning(
                         "SmartScraperGraph extracted %d items but CSS selectors found %d — using CSS results",
                         len(smart_items), len(css_items),
                     )
                     return css_items
-                log.info("SmartScraperGraph extracted %d items (primary)", len(smart_items))
-                # Backfill detail_link from CSS if SmartScraperGraph missed it
+                log.info("SmartScraperGraph extracted %d items (fallback, CSS had %d)", len(smart_items), len(css_items))
                 if target.detail_link_selector:
                     self._backfill_detail_links(html, smart_items, target)
                 return smart_items
             log.warning(
-                "SmartScraperGraph returned 0 items — falling back to CSS selectors"
+                "SmartScraperGraph returned 0 items — using CSS results (%d items)", len(css_items)
             )
 
         return css_items
