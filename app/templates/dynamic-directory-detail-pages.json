@@ -1,0 +1,15 @@
+{
+  "id": "dynamic-directory-detail-pages",
+  "name": "Dynamic Directory (Detail Pages)",
+  "description": "For JavaScript-heavy directory sites where each listing item links to a separate detail page with full company/seller information.",
+  "platform": "dynamic-directory-detail-page",
+  "default_prompt": "Extract all exhibitor/seller details including company name, contact information, location, product categories, brands, and social media.",
+  "default_fields_wanted": "name, country, city, address, postal_code, website, email, phone, description, product_categories, brands",
+  "hints": {
+    "requires_javascript": true,
+    "pagination": "alphabet_tabs",
+    "has_detail_pages": true,
+    "has_detail_api": false,
+    "notes": "This pattern is common for trade show / exhibition exhibitor directories. The listing page is JS-rendered with A-Z alphabet tab navigation. Each item card links to a separate detail page containing full contact info, product categories, brands, and social media links. The planner should look for tab/letter navigation and item cards with detail links."
+  }
+}

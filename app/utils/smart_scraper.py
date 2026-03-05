@@ -1,8 +1,10 @@
-"""ScrapeGraphAI wrappers — SmartScraper, MultiGraph, and ScriptCreator.
+"""Smart scraper utilities — LLM-based extraction and ScrapeGraphAI wrappers.
 
-Uses the same Azure OpenAI credentials as the rest of the pipeline.
-SmartScraperGraph accepts raw HTML as source (no extra HTTP requests).
-Multi and ScriptCreator graphs accept URLs and fetch pages themselves.
+``smart_extract_items`` and ``smart_extract_detail`` use the project's
+own async Azure OpenAI client (``chat_completion_json``) for reliable,
+non-blocking extraction.  The remaining ScrapeGraphAI wrappers
+(SmartScraperMultiGraph, ScriptCreatorGraph) are kept for their
+multi-URL / script-generation features.
 """
 
 from __future__ import annotations
@@ -15,10 +17,17 @@ from app.utils.logging import get_logger
 
 log = get_logger(__name__)
 
+# Maximum HTML size (chars) to feed into the LLM.
+# Large pages cause token overflow / timeouts.
+_MAX_HTML_CHARS = 100_000
+
 
 @lru_cache(maxsize=1)
 def _build_graph_config() -> dict:
-    """Build a ScrapeGraphAI graph_config using our Azure OpenAI credentials."""
+    """Build a ScrapeGraphAI graph_config using our Azure OpenAI credentials.
+
+    Only used by the legacy SmartScraperMultiGraph / ScriptCreator wrappers.
+    """
     from langchain_openai import AzureChatOpenAI
 
     llm_instance = AzureChatOpenAI(
@@ -39,76 +48,67 @@ def _build_graph_config() -> dict:
     }
 
 
-def _run_smart_scraper(prompt: str, html: str) -> dict | list | None:
-    """Run SmartScraperGraph synchronously (it uses LangChain internally).
-
-    On Windows, forces UTF-8 stdout/stderr to prevent 'charmap' codec errors
-    when ScrapeGraphAI logs Unicode characters internally.
-    """
-    import io
-    import sys
-
-    # Fix Windows charmap encoding errors — redirect stdout/stderr to UTF-8
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    if sys.platform == "win32":
-        try:
-            sys.stdout = io.TextIOWrapper(
-                sys.stdout.buffer, encoding="utf-8", errors="replace"
-            )
-            sys.stderr = io.TextIOWrapper(
-                sys.stderr.buffer, encoding="utf-8", errors="replace"
-            )
-        except Exception:
-            pass  # If wrapping fails, continue with original streams
-
-    try:
-        from scrapegraphai.graphs import SmartScraperGraph
-
-        graph = SmartScraperGraph(
-            prompt=prompt,
-            source=html,
-            config=_build_graph_config(),
-        )
-        return graph.run()
-    finally:
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
+# ── Direct-LLM extraction (replaces ScrapeGraphAI for items/detail) ──────
 
 
 async def smart_extract_items(
     html: str,
     fields: list[str],
     source_url: str = "",
+    *,
+    max_items: int | None = None,
 ) -> list[dict[str, str | None]]:
-    """Extract listing items from raw HTML using SmartScraperGraph.
+    """Extract listing items from raw HTML using a direct LLM call.
+
+    Uses the project's own ``chat_completion_json`` (async Azure OpenAI)
+    instead of ScrapeGraphAI, avoiding all threading / timeout issues.
 
     Returns a list of dicts with field names as keys, matching the format
-    produced by ScraperAgent._extract_items().
+    produced by ``ScraperAgent._extract_items()``.
+
+    Args:
+        max_items: If set, instruct the LLM to extract only this many items
+                   (used during preview to avoid processing the whole page).
     """
+    from app.utils.llm import chat_completion_json
+
     if not html or len(html) < 500:
         return []
 
+    # Truncate oversized HTML
+    if len(html) > _MAX_HTML_CHARS:
+        log.warning("LLM extraction: truncating HTML from %d to %d chars", len(html), _MAX_HTML_CHARS)
+        html = html[:_MAX_HTML_CHARS]
+
     fields_str = ", ".join(fields)
+    if max_items and max_items > 0:
+        item_instruction = f"Extract only the first {max_items} seller/company/exhibitor entry from this HTML."
+    else:
+        item_instruction = "Extract ALL seller/company/exhibitor entries from this HTML."
+
     prompt = (
-        f"Extract ALL seller/company entries from this page. "
-        f"For each entry, extract these fields: {fields_str}. "
-        f"Return a JSON object with a key 'items' containing a list of objects. "
-        f"Each object should have the field names as keys and the extracted text as values. "
-        f"If a field is not found for an entry, set it to null."
+        f"{item_instruction}\n"
+        f"For each entry, extract these fields: {fields_str}.\n"
+        f"Return a JSON object with a key \"items\" containing a list of objects.\n"
+        f"Each object should have the field names as keys and the extracted text as values.\n"
+        f"If a field is not found for an entry, set it to null.\n"
+        f"For any URL fields (like detail_link, logo, logo_url), return the full or relative URL as-is from the HTML."
     )
 
-    log.info("SmartScraperGraph fallback: extracting items (fields: %s)", fields_str)
+    log.info(
+        "LLM extraction: extracting items (fields: %s, html_size: %d chars)",
+        fields_str, len(html),
+    )
     try:
-        result = await asyncio.wait_for(
-            asyncio.to_thread(_run_smart_scraper, prompt, html),
-            timeout=120,  # 2-minute timeout to prevent hanging
+        result = await chat_completion_json(
+            [
+                {"role": "system", "content": "You are a precise data extraction assistant. Extract structured data from HTML."},
+                {"role": "user", "content": f"{prompt}\n\n--- HTML ---\n{html}"},
+            ],
+            temperature=0.1,
         )
-    except asyncio.TimeoutError:
-        log.warning("SmartScraperGraph item extraction timed out after 120s — falling back to CSS")
-        return []
     except Exception as exc:
-        log.warning("SmartScraperGraph item extraction failed: %s", exc)
+        log.warning("LLM item extraction failed: %s", exc)
         return []
 
     if result is None:
@@ -121,7 +121,6 @@ async def smart_extract_items(
     if isinstance(result, list):
         raw_items = result
     elif isinstance(result, dict):
-        # Try common wrapper keys
         for key in ("items", "data", "results", "records", "entries"):
             if key in result and isinstance(result[key], list):
                 raw_items = result[key]
@@ -134,7 +133,7 @@ async def smart_extract_items(
             item = {k: str(v) if v is not None else None for k, v in raw.items()}
             items.append(item)
 
-    log.info("SmartScraperGraph extracted %d items", len(items))
+    log.info("LLM extraction: extracted %d items", len(items))
     return items
 
 
@@ -143,34 +142,40 @@ async def smart_extract_detail(
     fields: list[str],
     source_url: str = "",
 ) -> dict[str, str]:
-    """Extract structured data from a single detail page using SmartScraperGraph.
+    """Extract structured data from a single detail page using a direct LLM call.
 
     Returns a dict of field_name -> value, suitable for enrichment in the
     parser pipeline.
     """
+    from app.utils.llm import chat_completion_json
+
     if not html or len(html) < 200:
         return {}
+
+    if len(html) > _MAX_HTML_CHARS:
+        log.warning("LLM detail extraction: truncating HTML from %d to %d chars", len(html), _MAX_HTML_CHARS)
+        html = html[:_MAX_HTML_CHARS]
 
     fields_str = ", ".join(fields)
     prompt = (
         f"Extract the following information about this seller/company from the page: "
-        f"{fields_str}. "
+        f"{fields_str}.\n"
         f"Also extract any contact information (email, phone, address, website) "
-        f"and social media links you can find. "
+        f"and social media links you can find.\n"
         f"Return a flat JSON object with field names as keys."
     )
 
-    log.info("SmartScraperGraph: extracting detail page fields")
+    log.info("LLM detail extraction: extracting fields (html_size: %d chars)", len(html))
     try:
-        result = await asyncio.wait_for(
-            asyncio.to_thread(_run_smart_scraper, prompt, html),
-            timeout=120,
+        result = await chat_completion_json(
+            [
+                {"role": "system", "content": "You are a precise data extraction assistant. Extract structured data from HTML."},
+                {"role": "user", "content": f"{prompt}\n\n--- HTML ---\n{html}"},
+            ],
+            temperature=0.1,
         )
-    except asyncio.TimeoutError:
-        log.warning("SmartScraperGraph detail extraction timed out after 120s")
-        return {}
     except Exception as exc:
-        log.warning("SmartScraperGraph detail extraction failed: %s", exc)
+        log.warning("LLM detail extraction failed: %s", exc)
         return {}
 
     if not isinstance(result, dict):
@@ -182,7 +187,7 @@ async def smart_extract_detail(
         if v is not None:
             detail[k] = str(v) if not isinstance(v, str) else v
 
-    log.info("SmartScraperGraph extracted %d detail fields", len(detail))
+    log.info("LLM detail extraction: extracted %d fields", len(detail))
     return detail
 
 

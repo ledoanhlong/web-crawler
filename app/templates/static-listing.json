@@ -1,0 +1,15 @@
+{
+  "id": "static-listing",
+  "name": "Static Listing Page",
+  "description": "For simple single-page or multi-page listing websites where all data is in the server-rendered HTML — no JavaScript required.",
+  "platform": "static-listing",
+  "default_prompt": "Extract all exhibitor/seller details including company name, description, email, and website.",
+  "default_fields_wanted": "name, description, email, website, logo_url",
+  "hints": {
+    "requires_javascript": false,
+    "pagination": "none",
+    "has_detail_pages": false,
+    "has_detail_api": false,
+    "notes": "This pattern is for simple server-rendered HTML pages (no SPA framework). All listing data is visible in the initial HTML source. May use standard numbered pagination or show everything on one page. The planner should use httpx (no Playwright needed) and look for repeating item cards with visible text content."
+  }
+}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from urllib.parse import urlparse
 
@@ -154,6 +154,14 @@ class ScrapingPlan(BaseModel):
         default_factory=dict,
         description="Query parameters template for the API endpoint.",
     )
+    api_page_param: str = Field(
+        default="page",
+        description="Name of the pagination query parameter (e.g. 'page', 'p', 'offset', 'start', 'pageNumber').",
+    )
+    api_page_start: int = Field(
+        default=0,
+        description="First page index — 0 for zero-indexed APIs, 1 for one-indexed APIs.",
+    )
     target: ScrapingTarget
     detail_page_fields: dict[str, str] = Field(
         default_factory=dict,
@@ -182,22 +190,55 @@ class ScrapingPlan(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Scraping template (pre-configured plan for known site types)
+# Template hints (structural pattern — no CSS selectors)
+# ---------------------------------------------------------------------------
+class TemplateHints(BaseModel):
+    """Structural hints describing a website pattern.
+
+    These guide the planner agent without prescribing CSS selectors,
+    making templates reusable across any website that follows the pattern.
+    """
+
+    requires_javascript: bool = Field(
+        default=True,
+        description="Whether the page needs Playwright (JS-rendered SPA).",
+    )
+    pagination: str = Field(
+        default="none",
+        description="Expected pagination strategy: none, alphabet_tabs, page_numbers, etc.",
+    )
+    has_detail_pages: bool = Field(
+        default=False,
+        description="Whether each listing item links to a separate detail page.",
+    )
+    has_detail_api: bool = Field(
+        default=False,
+        description="Whether detail data is loaded via XHR/API (not page navigation).",
+    )
+    notes: str = Field(
+        default="",
+        description="Free-form guidance for the planner about the website pattern.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scraping template (website pattern — reusable across sites)
 # ---------------------------------------------------------------------------
 class ScrapingTemplate(BaseModel):
-    """A pre-configured scraping template based on a successfully scraped site."""
+    """A reusable scraping template describing a website pattern.
+
+    Templates provide structural hints (JS need, pagination type, detail page
+    strategy) that guide the planner agent.  They do NOT contain CSS selectors
+    — the planner generates those by analysing the actual target page.
+    """
 
     id: str = Field(description="Unique template identifier (matches filename).")
     name: str = Field(description="Human-readable template name.")
-    description: str = Field(description="What this template scrapes and how.")
+    description: str = Field(description="What this template pattern looks like.")
     platform: str = Field(default="", description="Platform/CMS identifier for grouping.")
-    expected_record_count: int | None = Field(
-        default=None, description="Approximate record count from the original scrape."
-    )
-    default_url: str = Field(description="The URL this template was designed for.")
     default_prompt: str = Field(default="", description="Default extraction prompt.")
     default_fields_wanted: str = Field(default="", description="Default fields list.")
-    plan: ScrapingPlan = Field(description="The proven ScrapingPlan configuration.")
+    hints: TemplateHints = Field(description="Structural hints for the planner agent.")
 
 
 # ---------------------------------------------------------------------------
@@ -225,13 +266,17 @@ class PageData(BaseModel):
         default_factory=dict,
         description="Map of item ID -> parsed JSON response from the detail API.",
     )
+    structured_data: dict = Field(
+        default_factory=dict,
+        description="JSON-LD, Open Graph, and Microdata extracted from the page HTML.",
+    )
 
 
 # ---------------------------------------------------------------------------
 # Parsed seller lead record (output of ParserAgent)
 # ---------------------------------------------------------------------------
 class SellerLead(BaseModel):
-    """Normalized seller / company lead record."""
+    """Normalized company / seller lead record."""
 
     name: str
     country: str | None = None
@@ -250,7 +295,7 @@ class SellerLead(BaseModel):
     brands: list[str] = Field(default_factory=list)
     marketplace_name: str | None = Field(
         default=None,
-        description="Name of the marketplace or trade fair this lead was found on.",
+        description="Name of the marketplace, directory, or platform this lead was found on.",
     )
     logo_url: str | None = None
     social_media: dict[str, str] = Field(default_factory=dict)
@@ -281,7 +326,7 @@ class CrawlStatus(str, enum.Enum):
 
 
 class CrawlRequest(BaseModel):
-    url: str = Field(description="The listing page URL to crawl (marketplace, trade fair, directory, etc.).")
+    url: str = Field(description="The listing page URL to crawl (directory, marketplace, brand page, etc.).")
     max_pages: int | None = Field(
         default=None, description="Override the default max pages for this crawl."
     )
@@ -289,7 +334,7 @@ class CrawlRequest(BaseModel):
         default=None,
         description=(
             "An example detail/profile page URL so the planner can analyse its structure. "
-            "E.g. click on one seller/company and paste that URL here."
+            "E.g. click on one company or seller and paste that URL here."
         ),
     )
     fields_wanted: str | None = Field(
@@ -297,6 +342,22 @@ class CrawlRequest(BaseModel):
         description=(
             "Comma-separated list of fields the user wants extracted. "
             "E.g. 'name, booth, country, city, email, phone, website, description'."
+        ),
+    )
+    item_description: str | None = Field(
+        default=None,
+        description=(
+            "Describes what each item on the page represents and looks like. "
+            "E.g. 'exhibitor card with company name, logo, and booth number' or "
+            "'product listing with title, price, and rating'."
+        ),
+    )
+    site_notes: str | None = Field(
+        default=None,
+        description=(
+            "Any observations about the site that might help scraping. "
+            "E.g. 'items load via AJAX after clicking a tab', 'site is behind Cloudflare', "
+            "'pagination is at the bottom with page numbers 1-80'."
         ),
     )
     test_single: bool = Field(
@@ -382,8 +443,20 @@ class CrawlJob(BaseModel):
     )
     result: CrawlResult | None = None
     error: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    quality_report: dict | None = Field(
+        default=None,
+        description="Quality assessment of extracted data (scores, coverage, recommendations).",
+    )
+    platform_info: dict | None = Field(
+        default=None,
+        description="Detected platform/technology stack of the target website.",
+    )
+    progress: dict | None = Field(
+        default=None,
+        description="Real-time progress information (items scraped, pages processed, etc.).",
+    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +538,14 @@ class SmartCrawlRequest(BaseModel):
         default=None,
         description="Comma-separated list of fields to extract.",
     )
+    item_description: str | None = Field(
+        default=None,
+        description="Describes what each item on the page represents.",
+    )
+    site_notes: str | None = Field(
+        default=None,
+        description="Any observations about the site that might help scraping.",
+    )
     detail_page_url: str | None = Field(
         default=None,
         description="Example detail page URL for the planner.",
@@ -472,6 +553,10 @@ class SmartCrawlRequest(BaseModel):
     max_items: int | None = Field(
         default=None,
         description="Maximum number of items to scrape (for testing). None means no limit.",
+    )
+    test_single: bool = Field(
+        default=False,
+        description="If true, only scrape and output a single item for testing.",
     )
     template_id: str | None = Field(
         default=None,

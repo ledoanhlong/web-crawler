@@ -34,6 +34,7 @@ from app.utils.browser import (
 )
 from app.utils.http import fetch_page, fetch_pages
 from app.utils.logging import get_logger
+from app.utils.structured_data import extract_all_structured_data
 
 log = get_logger(__name__)
 
@@ -112,13 +113,16 @@ class ScraperAgent:
         return pages
 
     async def scrape_preview_dual(self, plan: ScrapingPlan) -> tuple[list[PageData], list[PageData]]:
-        """Scrape preview using both CSS and SmartScraperGraph, returning both results.
+        """Fetch the *landing page only* and return two 1-item previews.
 
-        Returns (css_pages, smart_pages). Each contains at most 1 item.
+        Returns (css_pages, smart_pages).  Each contains at most 1 item.
+        This is intentionally lightweight — no pagination, no tab clicking,
+        no scrolling — just the first page load and a single sample item
+        from each extraction method.
         """
         log.info("Dual preview scrape for %s", plan.url)
 
-        # Fetch the page HTML once
+        # ── Fetch the landing page once (no pagination / tabs) ──────────
         used_js = plan.requires_javascript
         if plan.requires_javascript:
             async with get_browser() as browser:
@@ -129,22 +133,43 @@ class ScraperAgent:
         if not html:
             return [], []
 
-        # Run both extraction methods
-        css_items, smart_items = await self._extract_items_dual(html, plan.target, plan.detail_api_plan)
-
         # If CSS found 0 items and we used httpx, retry with Playwright
-        # (SmartScraperGraph may extract garbage from static HTML of JS pages)
+        preview_html = self._slice_html_for_preview(html, plan.target.item_container_selector)
+        css_items = self._extract_items(preview_html, plan.target, plan.detail_api_plan)[:1]
+
         if not css_items and not used_js:
             log.warning("CSS found 0 items with static fetch — retrying with Playwright for %s", plan.url)
             async with get_browser() as browser:
                 html = await fetch_page_js(browser, plan.url, wait_selector=plan.wait_selector)
             if html:
-                css_items, smart_items = await self._extract_items_dual(html, plan.target, plan.detail_api_plan)
+                preview_html = self._slice_html_for_preview(html, plan.target.item_container_selector)
+                css_items = self._extract_items(preview_html, plan.target, plan.detail_api_plan)[:1]
 
-        css_pages = [PageData(url=plan.url, items=css_items[:1])] if css_items else []
-        smart_pages = [PageData(url=plan.url, items=smart_items[:1])] if smart_items else []
+        # ── Run SmartScraperGraph on the sliced HTML ────────────────────
+        import time as _time
 
-        # Enrich both with detail pages
+        smart_items: list[dict[str, str | None]] = []
+        if settings.use_smart_scraper_primary and len(preview_html) >= 500:
+            from app.utils.smart_scraper import smart_extract_items
+
+            fields = list(plan.target.field_selectors.keys())
+            if plan.target.detail_link_selector and "detail_link" not in fields:
+                fields.append("detail_link")
+            t0 = _time.monotonic()
+            log.info("SmartScraper preview starting (%d chars HTML)", len(preview_html))
+            smart_items = await smart_extract_items(preview_html, fields, max_items=1)
+            log.info("SmartScraper preview finished in %.1fs (%d items)", _time.monotonic() - t0, len(smart_items))
+            if smart_items and plan.target.detail_link_selector:
+                self._backfill_detail_links(preview_html, smart_items, plan.target)
+            smart_items = smart_items[:1]
+
+        log.info("Dual preview — CSS: %d items, Smart: %d items", len(css_items), len(smart_items))
+
+        sd = extract_all_structured_data(html)
+        css_pages = [PageData(url=plan.url, items=css_items, structured_data=sd)] if css_items else []
+        smart_pages = [PageData(url=plan.url, items=smart_items, structured_data=sd)] if smart_items else []
+
+        # Enrich both with detail pages (1 item each)
         if css_pages and css_pages[0].items:
             css_pages = await self._enrich_detail_pages(css_pages, plan, max_details=1)
             css_pages = await self._enrich_detail_api(css_pages, plan, max_details=1)
@@ -165,7 +190,7 @@ class ScraperAgent:
         items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
         if items:
             items = items[:1]
-        return [PageData(url=plan.url, items=items)]
+        return [PageData(url=plan.url, items=items, structured_data=extract_all_structured_data(html))]
 
     async def _scrape_preview_js(self, plan: ScrapingPlan) -> list[PageData]:
         """Use Playwright to fetch the first page and extract only the first item."""
@@ -174,7 +199,7 @@ class ScraperAgent:
             items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan)
             if items:
                 items = items[:1]
-            return [PageData(url=plan.url, items=items)]
+            return [PageData(url=plan.url, items=items, structured_data=extract_all_structured_data(html))]
 
     # ------------------------------------------------------------------
     # Static (httpx) path
@@ -198,7 +223,7 @@ class ScraperAgent:
             if max_items is not None:
                 items = items[: max_items - total_items]
             total_items += len(items)
-            pages.append(PageData(url=url, items=items))
+            pages.append(PageData(url=url, items=items, structured_data=extract_all_structured_data(html)))
 
         # Detail page enrichment
         pages = await self._enrich_detail_pages(pages, plan, max_details=max_items)
@@ -237,20 +262,23 @@ class ScraperAgent:
                         if max_items is not None:
                             items = items[: max_items - total_items]
                         total_items += len(items)
-                        pages.append(PageData(url=plan.url, items=items))
+                        pages.append(PageData(url=plan.url, items=items, structured_data=extract_all_structured_data(html)))
 
                 case PaginationStrategy.INFINITE_SCROLL:
                     page = await browser.new_page()
                     try:
                         await page.goto(plan.url, wait_until="commit", timeout=120_000)
                         if plan.wait_selector:
-                            await page.wait_for_selector(plan.wait_selector, timeout=15_000)
+                            try:
+                                await page.wait_for_selector(plan.wait_selector, timeout=15_000)
+                            except Exception:
+                                log.warning("wait_for_selector timed out for '%s' — continuing", plan.wait_selector)
                         await scroll_to_bottom(page, max_scrolls=settings.max_pages_per_crawl)
                         html = await page.content()
                         items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
                         if max_items is not None:
                             items = items[:max_items]
-                        pages.append(PageData(url=plan.url, items=items))
+                        pages.append(PageData(url=plan.url, items=items, structured_data=extract_all_structured_data(html)))
                     finally:
                         await page.close()
 
@@ -259,13 +287,16 @@ class ScraperAgent:
                     try:
                         await page.goto(plan.url, wait_until="commit", timeout=120_000)
                         if plan.wait_selector:
-                            await page.wait_for_selector(plan.wait_selector, timeout=15_000)
+                            try:
+                                await page.wait_for_selector(plan.wait_selector, timeout=15_000)
+                            except Exception:
+                                log.warning("wait_for_selector timed out for '%s' — continuing", plan.wait_selector)
                         await click_load_more(page, plan.pagination_selector)
                         html = await page.content()
                         items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
                         if max_items is not None:
                             items = items[:max_items]
-                        pages.append(PageData(url=plan.url, items=items))
+                        pages.append(PageData(url=plan.url, items=items, structured_data=extract_all_structured_data(html)))
                     finally:
                         await page.close()
 
@@ -274,7 +305,11 @@ class ScraperAgent:
                     try:
                         await page.goto(plan.url, wait_until="commit", timeout=120_000)
                         if plan.wait_selector:
-                            await page.wait_for_selector(plan.wait_selector, timeout=15_000)
+                            try:
+                                await page.wait_for_selector(plan.wait_selector, timeout=15_000)
+                            except Exception:
+                                log.warning("wait_for_selector timed out for '%s' — continuing", plan.wait_selector)
+
                         for _ in range(settings.max_pages_per_crawl):
                             if _limit_reached():
                                 break
@@ -283,7 +318,7 @@ class ScraperAgent:
                             if max_items is not None:
                                 items = items[: max_items - total_items]
                             total_items += len(items)
-                            pages.append(PageData(url=page.url, items=items))
+                            pages.append(PageData(url=page.url, items=items, structured_data=extract_all_structured_data(html)))
                             if _limit_reached():
                                 break
                             btn = await page.query_selector(plan.pagination_selector)
@@ -309,7 +344,7 @@ class ScraperAgent:
                         if max_items is not None:
                             items = items[: max_items - total_items]
                         total_items += len(items)
-                        pages.append(PageData(url=url, items=items))
+                        pages.append(PageData(url=url, items=items, structured_data=extract_all_structured_data(html)))
                         await asyncio.sleep(settings.request_delay_ms / 1000)
 
         # Detail page enrichment (JS path — use Playwright for detail pages too)
@@ -330,7 +365,7 @@ class ScraperAgent:
         total_collected = 0
         async with httpx.AsyncClient(timeout=settings.request_timeout_s) as client:
             while page_num < settings.max_pages_per_crawl:
-                params = {**plan.api_params, "page": str(page_num)}
+                params = {**plan.api_params, plan.api_page_param: str(page_num + plan.api_page_start)}
                 resp = await client.get(plan.api_endpoint, params=params)
                 if resp.status_code != 200:
                     break
@@ -344,8 +379,13 @@ class ScraperAgent:
                 if isinstance(data, list):
                     items_raw = data
                 elif isinstance(data, dict):
-                    # Try common wrapper keys
-                    for key in ("data", "items", "results", "records", "list", "sellers", "exhibitors", "entries"):
+                    # Try common wrapper keys (ordered most-generic first)
+                    for key in (
+                        "data", "items", "results", "records", "list",
+                        "hits", "rows", "content", "response", "payload",
+                        "members", "companies", "organizations", "people",
+                        "vendors", "sellers", "exhibitors", "entries",
+                    ):
                         if key in data and isinstance(data[key], list):
                             items_raw = data[key]
                             break
@@ -664,7 +704,6 @@ class ScraperAgent:
                                     credentials: "include",
                                     headers: {
                                         "Accept": "application/json, text/plain, */*",
-                                        "X-Vis-Domain": window.location.hostname,
                                         "Referer": window.location.href
                                     }
                                 });
@@ -836,7 +875,9 @@ class ScraperAgent:
     # ------------------------------------------------------------------
     def _resolve_page_urls(self, plan: ScrapingPlan) -> list[str]:
         if plan.pagination_urls:
-            return plan.pagination_urls[: settings.max_pages_per_crawl]
+            from urllib.parse import urljoin
+            resolved = [urljoin(plan.url, u) for u in plan.pagination_urls]
+            return resolved[: settings.max_pages_per_crawl]
         return [plan.url]
 
     def _extract_items(
@@ -856,7 +897,16 @@ class ScraperAgent:
         for container in containers:
             record: dict[str, str | None] = {}
             for field, selector in target.field_selectors.items():
-                el = container.select_one(selector)
+                if not selector or not selector.strip():
+                    log.debug("Skipping field '%s' — empty CSS selector", field)
+                    record[field] = None
+                    continue
+                try:
+                    el = container.select_one(selector)
+                except Exception as exc:
+                    log.warning("Invalid CSS selector for field '%s': '%s' — %s", field, selector, exc)
+                    record[field] = None
+                    continue
                 if el is None:
                     record[field] = None
                     continue
@@ -867,27 +917,104 @@ class ScraperAgent:
                     record[field] = el.get_text(separator=" ", strip=True)
 
             # Also extract detail link if selector is present
-            if target.detail_link_selector and "detail_link" not in record:
-                link_el = container.select_one(target.detail_link_selector)
-                if link_el:
-                    record["detail_link"] = link_el.get("href")  # type: ignore[assignment]
+            if target.detail_link_selector and target.detail_link_selector.strip() and "detail_link" not in record:
+                try:
+                    link_el = container.select_one(target.detail_link_selector)
+                    if link_el:
+                        record["detail_link"] = link_el.get("href")  # type: ignore[assignment]
+                except Exception as exc:
+                    log.warning("Invalid detail_link_selector '%s': %s", target.detail_link_selector, exc)
 
             # Extract API detail ID if a detail_api_plan exists
-            if detail_api_plan and "_detail_api_id" not in record:
-                id_el = container.select_one(detail_api_plan.id_selector)
-                if id_el:
-                    if detail_api_plan.id_attribute:
-                        raw_id = id_el.get(detail_api_plan.id_attribute, "")
-                    else:
-                        raw_id = id_el.get_text(strip=True)
-                    if detail_api_plan.id_regex and raw_id:
-                        match = re.search(detail_api_plan.id_regex, str(raw_id))
-                        if match:
-                            raw_id = match.group(1)
-                    record["_detail_api_id"] = str(raw_id) if raw_id else None
+            if detail_api_plan and detail_api_plan.id_selector and detail_api_plan.id_selector.strip() and "_detail_api_id" not in record:
+                try:
+                    id_el = container.select_one(detail_api_plan.id_selector)
+                    if id_el:
+                        if detail_api_plan.id_attribute:
+                            raw_id = id_el.get(detail_api_plan.id_attribute, "")
+                        else:
+                            raw_id = id_el.get_text(strip=True)
+                        if detail_api_plan.id_regex and raw_id:
+                            match = re.search(detail_api_plan.id_regex, str(raw_id))
+                            if match:
+                                raw_id = match.group(1)
+                        record["_detail_api_id"] = str(raw_id) if raw_id else None
+                except Exception as exc:
+                    log.warning("Invalid id_selector '%s': %s", detail_api_plan.id_selector, exc)
 
             items.append(record)
         return items
+
+    @staticmethod
+    def _slice_html_for_preview(html: str, item_container_selector: str) -> str:
+        """Return a *minimal* HTML document containing at most 3 item containers.
+
+        Preserves the full ancestor chain (with IDs/classes) so that CSS
+        selectors like ``#exhibitor-directory .filter-results .directory-item``
+        still match.  Strips scripts, styles, and all sibling content to
+        keep the result small.
+
+        Falls back to the first 50 KB if the selector doesn't match.
+        """
+        selector = (item_container_selector or "").strip()
+        if not selector:
+            return html[:50_000]
+
+        try:
+            soup = BeautifulSoup(html, "lxml")
+            containers = soup.select(selector)
+            if not containers:
+                log.debug("Preview slice: selector '%s' matched 0 elements, using first 50KB", selector)
+                return html[:50_000]
+
+            # Keep only the first 3 containers
+            keep = containers[:3]
+
+            # Walk up from the first container to <body>, collecting ancestors
+            # so we can reconstruct the full selector chain.
+            ancestors: list = []
+            node = keep[0].parent
+            while node and node.name and node.name not in ("[document]",):
+                ancestors.append(node)
+                node = node.parent
+            ancestors.reverse()  # top-down: html → body → ... → parent
+
+            # Remove every <script> and <style> from the whole soup first
+            for tag in soup.find_all(["script", "style", "link", "noscript", "svg", "img"]):
+                tag.decompose()
+
+            # In the direct parent of the containers, remove all children
+            # that are NOT one of the kept containers.
+            direct_parent = keep[0].parent
+            if direct_parent:
+                for child in list(direct_parent.children):
+                    if hasattr(child, 'name') and child not in keep:
+                        child.decompose()
+                    elif not hasattr(child, 'name'):
+                        # NavigableString — remove if it's not just whitespace
+                        pass  # keep whitespace for formatting
+
+            # In each ancestor (except the direct parent), remove siblings
+            # that are not on the path to the containers.  This includes
+            # <html> (strips <head>) and <body> (strips header/nav/footer).
+            for i, anc in enumerate(ancestors):
+                if anc == direct_parent:
+                    continue
+                # The child on the path is the next ancestor (or direct_parent)
+                path_child = ancestors[i + 1] if i + 1 < len(ancestors) else direct_parent
+                for child in list(anc.children):
+                    if hasattr(child, 'name') and child != path_child:
+                        child.decompose()
+
+            minimal = str(soup)
+            log.debug(
+                "Preview slice: extracted %d/%d containers, HTML %d → %d chars",
+                len(keep), len(containers), len(html), len(minimal),
+            )
+            return minimal
+        except Exception as exc:
+            log.debug("Preview slice failed (%s), using first 50KB", exc)
+            return html[:50_000]
 
     async def _extract_items_dual(
         self,
@@ -895,10 +1022,16 @@ class ScraperAgent:
         target: ScrapingTarget,
         detail_api_plan: DetailApiPlan | None = None,
     ) -> tuple[list[dict[str, str | None]], list[dict[str, str | None]]]:
-        """Run both CSS and SmartScraperGraph extraction, returning (css_items, smart_items)."""
+        """Run both CSS and SmartScraperGraph extraction concurrently.
+
+        Returns (css_items, smart_items).  Both always run so the user can
+        compare results side-by-side and pick the better one.
+        """
+        # CSS extraction (synchronous, fast)
         css_items = self._extract_items(html, target, detail_api_plan)
         log.info("Dual extraction — CSS found %d items", len(css_items))
 
+        # SmartScraperGraph extraction (async, may be slow)
         smart_items: list[dict[str, str | None]] = []
         if settings.use_smart_scraper_primary and len(html) >= 500:
             from app.utils.smart_scraper import smart_extract_items
@@ -953,7 +1086,7 @@ class ScraperAgent:
         # None / auto — original fallback logic
         css_items = self._extract_items(html, target, detail_api_plan)
 
-        if len(css_items) >= 3:
+        if len(css_items) >= 1:
             log.info("CSS selectors extracted %d items — skipping SmartScraperGraph", len(css_items))
             return css_items
 

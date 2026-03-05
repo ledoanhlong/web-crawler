@@ -20,7 +20,7 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from app.models.schemas import DetailApiPlan, DetailPagePlan, ScrapingPlan
+from app.models.schemas import DetailApiPlan, DetailPagePlan, ScrapingPlan, TemplateHints
 from app.prompts import load_prompt
 from app.utils.html import simplify_html
 from app.utils.http import fetch_page
@@ -105,13 +105,25 @@ async def _fetch_html(url: str) -> tuple[str, bool]:
             # Heuristic 2: SPA framework markers in raw HTML
             if not needs_js:
                 lower = html_raw.lower()
-                spa_markers = [
-                    'id="app"', 'id="root"', 'id="__next"', 'id="__nuxt"',
+                # High-confidence SPA markers (framework-specific)
+                spa_markers_strong = [
+                    'id="__next"', 'id="__nuxt"',
                     "ng-app", "data-ng-app", "<app-root", "data-reactroot",
+                    "__vue_app__", 'id="__svelte"', 'id="svelte"',
+                    "ember-application", "data-turbo",
                 ]
-                if any(m in lower for m in spa_markers):
+                # Weak markers — only flag as SPA if body text is also short
+                spa_markers_weak = [
+                    'id="app"', 'id="root"',
+                ]
+                if any(m in lower for m in spa_markers_strong):
                     needs_js = True
                     log.info("SPA framework marker detected in HTML for %s", url)
+                elif any(m in lower for m in spa_markers_weak):
+                    body = BeautifulSoup(html_raw, "lxml").find("body")
+                    if body and len(body.get_text(strip=True)) < 500:
+                        needs_js = True
+                        log.info("Weak SPA marker + sparse body text for %s", url)
 
             # Heuristic 3: Large HTML shell with almost no visible text
             if not needs_js and len(html_raw) >= 2_000:
@@ -141,6 +153,9 @@ class PlannerAgent:
         *,
         detail_page_url: str | None = None,
         fields_wanted: str | None = None,
+        item_description: str | None = None,
+        site_notes: str | None = None,
+        template_hints: TemplateHints | None = None,
     ) -> ScrapingPlan:
         log.info("Planning scrape for %s", url)
 
@@ -172,6 +187,20 @@ class PlannerAgent:
                 f"```html\n{html_simple}\n```"
             )
 
+            if item_description:
+                user_content += (
+                    f"\n\n━━ ITEM DESCRIPTION (from user) ━━\n"
+                    f"The user describes each item on this page as: {item_description}\n"
+                    f"Use this to identify the correct repeating container and fields."
+                )
+
+            if site_notes:
+                user_content += (
+                    f"\n\n━━ SITE NOTES (from user) ━━\n"
+                    f"The user provided these observations about the site: {site_notes}\n"
+                    f"Take these into account when building the scraping plan."
+                )
+
             if detail_html_simple:
                 user_content += (
                     f"\n\nThe user also provided an example DETAIL page at:\n{detail_page_url}\n\n"
@@ -185,6 +214,21 @@ class PlannerAgent:
                     f"Make sure the plan captures all of these fields — from the listing page "
                     f"if available, otherwise from the detail page."
                 )
+
+            # Inject template hints so the LLM has structural guidance
+            if template_hints:
+                user_content += (
+                    "\n\n━━ TEMPLATE HINTS (structural guidance) ━━\n"
+                    "The user selected a website pattern template. Use these hints "
+                    "to guide your analysis — but always derive actual CSS "
+                    "selectors from the HTML above.\n"
+                    f"- requires_javascript: {template_hints.requires_javascript}\n"
+                    f"- expected pagination: {template_hints.pagination}\n"
+                    f"- has_detail_pages: {template_hints.has_detail_pages}\n"
+                    f"- has_detail_api: {template_hints.has_detail_api}\n"
+                )
+                if template_hints.notes:
+                    user_content += f"- pattern notes: {template_hints.notes}\n"
 
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -208,12 +252,19 @@ class PlannerAgent:
         plan_data["url"] = url
         plan_data = _sanitize_plan_data(plan_data)
 
-        # Override requires_javascript if heuristics detected JS was needed
+        # Override requires_javascript if heuristics or template hints say so
         if heuristic_needs_js and not plan_data.get("requires_javascript"):
             log.info("Overriding requires_javascript=True (heuristic detected JS-rendered page)")
             plan_data["requires_javascript"] = True
+        if template_hints and template_hints.requires_javascript and not plan_data.get("requires_javascript"):
+            log.info("Overriding requires_javascript=True (template hint)")
+            plan_data["requires_javascript"] = True
 
         plan = ScrapingPlan.model_validate(plan_data)
+
+        # --- 4b. Validate CSS selectors against the actual HTML ---
+        plan = await self._validate_selectors(plan, html_raw, fields_wanted)
+
         log.info(
             "Plan: js=%s, pagination=%s, fields=%s, detail_link=%s",
             plan.requires_javascript,
@@ -458,6 +509,107 @@ class PlannerAgent:
             detail_api.id_selector,
         )
         return detail_api
+
+    # ------------------------------------------------------------------
+    # Selector validation
+    # ------------------------------------------------------------------
+    async def _validate_selectors(
+        self,
+        plan: ScrapingPlan,
+        html_raw: str,
+        fields_wanted: str | None = None,
+        *,
+        max_retries: int = 2,
+    ) -> ScrapingPlan:
+        """Test LLM-generated CSS selectors against the actual HTML.
+
+        If ``item_container_selector`` matches 0 elements, re-prompt the LLM
+        with feedback (up to *max_retries* times).  Returns the validated or
+        best-effort plan.
+        """
+        soup = BeautifulSoup(html_raw, "lxml")
+
+        for attempt in range(max_retries):
+            try:
+                matches = soup.select(plan.target.item_container_selector)
+            except Exception as exc:
+                log.warning(
+                    "Invalid CSS selector '%s': %s",
+                    plan.target.item_container_selector, exc,
+                )
+                matches = []
+
+            if matches:
+                log.info(
+                    "Selector validation: '%s' matched %d elements",
+                    plan.target.item_container_selector, len(matches),
+                )
+                return plan
+
+            # Selector matched nothing — build a hint of the page's actual structure
+            log.warning(
+                "Selector '%s' matched 0 elements (attempt %d/%d) — asking LLM to revise",
+                plan.target.item_container_selector, attempt + 1, max_retries,
+            )
+
+            # Collect some real container candidates from the page
+            body = soup.find("body")
+            hint_parts: list[str] = []
+            if body:
+                for tag in body.find_all(True, recursive=False):
+                    snippet = str(tag)[:300]
+                    hint_parts.append(snippet)
+                    if len(hint_parts) >= 8:
+                        break
+            structure_hint = "\n".join(hint_parts) if hint_parts else "(no body content)"
+
+            html_simple = simplify_html(html_raw, aggressive=True)
+
+            feedback_content = (
+                f"Your previous selector `{plan.target.item_container_selector}` matched "
+                f"0 elements on the page. Please revise your selectors.\n\n"
+                f"Here is a snapshot of the page's top-level body structure:\n"
+                f"```html\n{structure_hint}\n```\n\n"
+                f"Here is the simplified HTML again:\n"
+                f"```html\n{html_simple}\n```\n\n"
+                f"Return the complete revised plan as JSON."
+            )
+
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Analyse the following HTML of the listing page at:\n{plan.url}\n\n"
+                        f"```html\n{html_simple}\n```"
+                    ),
+                },
+                {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        plan.model_dump(mode="json", exclude={"url"}),
+                        ensure_ascii=False,
+                    ),
+                },
+                {"role": "user", "content": feedback_content},
+            ]
+
+            if fields_wanted:
+                messages[-1]["content"] += (
+                    f"\n\nReminder: the user wants these fields: {fields_wanted}"
+                )
+
+            try:
+                revised = await chat_completion_json(messages, max_tokens=16_000)
+                revised["url"] = plan.url
+                revised = _sanitize_plan_data(revised)
+                plan = ScrapingPlan.model_validate(revised)
+                log.info("Received revised plan from LLM (attempt %d)", attempt + 1)
+            except Exception as exc:
+                log.warning("Selector validation retry failed: %s", exc)
+                break
+
+        return plan
 
     # ------------------------------------------------------------------
     # Helpers

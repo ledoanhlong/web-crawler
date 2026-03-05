@@ -68,15 +68,23 @@ class PlanSpider(scrapy.Spider):
 
             # Extract fields using plan selectors
             for field, selector in field_selectors.items():
-                attr = field_attributes.get(field)
-                if attr:
-                    record[field] = container.css(selector).attrib.get(attr)
-                else:
-                    # Join all descendant text to match BeautifulSoup get_text()
-                    texts = container.css(selector + " ::text").getall()
-                    record[field] = (
-                        " ".join(t.strip() for t in texts if t.strip()) or None
-                    )
+                if not selector or not selector.strip():
+                    self.logger.debug("Skipping field '%s' — empty CSS selector", field)
+                    record[field] = None
+                    continue
+                try:
+                    attr = field_attributes.get(field)
+                    if attr:
+                        record[field] = container.css(selector).attrib.get(attr)
+                    else:
+                        # Join all descendant text to match BeautifulSoup get_text()
+                        texts = container.css(selector + " ::text").getall()
+                        record[field] = (
+                            " ".join(t.strip() for t in texts if t.strip()) or None
+                        )
+                except Exception as exc:
+                    self.logger.warning("Invalid CSS selector for field '%s': '%s' — %s", field, selector, exc)
+                    record[field] = None
 
             # Extract detail link
             if detail_link_sel:

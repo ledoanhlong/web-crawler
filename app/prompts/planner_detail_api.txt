@@ -23,11 +23,13 @@ Return a JSON object:
 }
 
 Examples of ID patterns:
-- data-id="3043124" on a button → id_selector: "button.details", id_attribute: "data-id", id_regex: null
-- data-url="/sellers/event2026.3043124/profile" → id_selector: "[data-url]", id_attribute: "data-url", id_regex: "sellers/[^.]*\\.(\\d+)/"
-- class="seller-item item-3043124" → id_selector: ".seller-item", id_attribute: "class", id_regex: "item-(\\d+)"
-- href="/floorplan?actionItem=3043124&_event=event2026" → id_selector: "a[href*='actionItem']", id_attribute: "href", id_regex: "actionItem=(\\d+)"
-- A hidden <input type="hidden" value="3043124"> → id_selector: "input[type='hidden']", id_attribute: "value", id_regex: null
+- data-id="12345" on a button → id_selector: "button.details", id_attribute: "data-id", id_regex: null
+- data-entity-id="abc-123" on a card → id_selector: "[data-entity-id]", id_attribute: "data-entity-id", id_regex: null
+- href="/companies/12345/profile" → id_selector: "a[href*='/companies/']", id_attribute: "href", id_regex: "companies/(\\d+)/"
+- data-url="/sellers/platform.12345/profile" → id_selector: "[data-url]", id_attribute: "data-url", id_regex: "sellers/[^.]*\\.(\\d+)/"
+- class="company-item item-12345" → id_selector: ".company-item", id_attribute: "class", id_regex: "item-(\\d+)"
+- href="/profile?id=12345&source=listing" → id_selector: "a[href*='id=']", id_attribute: "href", id_regex: "id=(\\d+)"
+- A hidden <input type="hidden" value="12345"> → id_selector: "input[type='hidden']", id_attribute: "value", id_regex: null
 
 Important notes:
 - The {id} placeholder in api_url_template replaces ONLY the variable part of the URL (the item-specific ID). Keep all static path segments intact.

@@ -15,6 +15,27 @@ class Settings(BaseSettings):
     max_pages_per_crawl: int = 500
     max_sub_links_per_detail: int = 3
 
+    # HTTP retry
+    http_max_retries: int = 3
+    http_backoff_factor: float = 1.0
+    http_retry_status_codes: list[int] = [429, 500, 502, 503, 504, 408]
+
+    # Rate limiting
+    min_request_delay_ms: int = 200
+    max_request_delay_ms: int = 30_000
+
+    # Stealth / anti-detection
+    stealth_enabled: bool = True
+    proxy_urls: list[str] = []
+
+    # Sitemap & robots.txt
+    use_sitemap_discovery: bool = True
+    respect_robots_txt: bool = True
+
+    # Page caching (incremental crawling)
+    enable_page_cache: bool = False
+    page_cache_max_age_hours: int = 24
+
     # ScrapeGraphAI — when True, SmartScraperGraph is primary extractor (CSS selectors as backup)
     use_smart_scraper_primary: bool = True
 

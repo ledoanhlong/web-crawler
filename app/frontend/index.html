@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Web Crawler AI Agent</title>
+<title>Lead Scraper</title>
 <style>
 /* ── Reset & Base ─────────────────────────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -11,7 +11,7 @@
   --bg:#0f1117;--surface:#181a20;--surface2:#1e2028;--border:#2a2d37;
   --text:#e4e5e9;--text2:#9ca0ab;--accent:#6c5ce7;--accent2:#a29bfe;
   --green:#00b894;--yellow:#fdcb6e;--red:#e17055;--blue:#74b9ff;
-  --radius:10px;--shadow:0 2px 12px rgba(0,0,0,.35);
+  --radius:12px;--shadow:0 2px 12px rgba(0,0,0,.35);
 }
 html{font-size:15px}
 body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.55}
@@ -20,33 +20,46 @@ a:hover{text-decoration:underline}
 button{cursor:pointer;font-family:inherit}
 
 /* ── Layout ───────────────────────────────────────────────────────── */
-.app{max-width:960px;margin:0 auto;padding:24px 20px 60px}
-header{display:flex;align-items:center;gap:14px;margin-bottom:28px;padding-bottom:18px;border-bottom:1px solid var(--border)}
-header svg{flex-shrink:0}
-header h1{font-size:1.4rem;font-weight:700;letter-spacing:-.02em}
-header p{font-size:.82rem;color:var(--text2);margin-top:2px}
+.app{max-width:960px;margin:0 auto;padding:28px 20px 60px}
+
+header{text-align:center;margin-bottom:32px;padding-bottom:20px;border-bottom:1px solid var(--border)}
+header .logo{width:48px;height:48px;background:var(--accent);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;margin-bottom:10px}
+header h1{font-size:1.5rem;font-weight:700;letter-spacing:-.02em}
+header p{font-size:.88rem;color:var(--text2);margin-top:4px;max-width:440px;margin-left:auto;margin-right:auto}
 
 /* ── Card ─────────────────────────────────────────────────────────── */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;box-shadow:var(--shadow);margin-bottom:20px}
-.card h2{font-size:1rem;margin-bottom:16px;display:flex;align-items:center;gap:8px;font-weight:600}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;box-shadow:var(--shadow);margin-bottom:24px}
+
+/* ── Steps indicator ──────────────────────────────────────────────── */
+.steps{display:flex;gap:0;margin-bottom:22px}
+.step{flex:1;text-align:center;padding:8px 4px;font-size:.75rem;font-weight:600;color:var(--text2);position:relative;border-bottom:2px solid var(--border)}
+.step.active{color:var(--accent2);border-bottom-color:var(--accent)}
+.step .step-num{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);font-size:.7rem;margin-bottom:3px}
+.step.active .step-num{background:var(--accent);color:#fff;border-color:var(--accent)}
+.step-label{display:block;margin-top:2px}
 
 /* ── Form Elements ────────────────────────────────────────────────── */
-.field{margin-bottom:14px}
-.field label{display:block;font-size:.8rem;color:var(--text2);margin-bottom:5px;font-weight:500}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:.85rem;color:var(--text);margin-bottom:6px;font-weight:600}
+.field .hint{font-size:.75rem;color:var(--text2);margin-top:4px;line-height:1.4}
 .field textarea,.field input[type=text],.field input[type=url],.field input[type=number],.field select{
-  width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.88rem;outline:none;transition:border .2s;font-family:inherit;resize:vertical}
+  width:100%;padding:12px 16px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:.9rem;outline:none;transition:border .2s;font-family:inherit;resize:vertical}
 .field textarea:focus,.field input:focus,.field select:focus{border-color:var(--accent)}
-.field textarea::placeholder,.field input::placeholder{color:var(--text2)}
-.field-hint{font-size:.72rem;color:var(--text2);margin-top:3px;opacity:.7}
-.field-row{display:flex;gap:10px;align-items:flex-end}
-.field-row .field{flex:1;margin-bottom:0}
-.field-inline{width:120px;flex-shrink:0}
+.field textarea::placeholder,.field input::placeholder{color:var(--text2);opacity:.6}
+.field select{appearance:auto}
 
-.btn{padding:10px 22px;border:none;border-radius:8px;font-size:.88rem;font-weight:600;transition:background .2s,opacity .2s}
-.btn-primary{background:var(--accent);color:#fff}
+/* ── Field Chips ──────────────────────────────────────────────────── */
+.chip-group{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{font-size:.78rem;padding:5px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;color:var(--text2);cursor:pointer;transition:all .15s;white-space:nowrap;user-select:none}
+.chip:hover{border-color:var(--accent);color:var(--accent2)}
+.chip.selected{background:rgba(108,92,231,.15);border-color:var(--accent);color:var(--accent2)}
+
+/* ── Buttons ──────────────────────────────────────────────────────── */
+.btn{padding:12px 28px;border:none;border-radius:10px;font-size:.92rem;font-weight:600;transition:background .2s,opacity .2s}
+.btn-primary{background:var(--accent);color:#fff;width:100%;display:flex;align-items:center;justify-content:center;gap:8px}
 .btn-primary:hover{background:#5b4bd5}
 .btn-primary:disabled{opacity:.5;cursor:not-allowed}
-.btn-sm{padding:6px 14px;font-size:.8rem}
+.btn-sm{padding:7px 16px;font-size:.82rem}
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text2)}
 .btn-outline:hover{border-color:var(--text2);color:var(--text)}
 .btn-green{background:var(--green);color:#fff}
@@ -54,66 +67,75 @@ header p{font-size:.82rem;color:var(--text2);margin-top:2px}
 .btn-red{background:var(--red);color:#fff}
 .btn-red:hover{background:#d35845}
 
+/* ── Template Section (two-column) ────────────────────────────────── */
+.template-section{display:flex;gap:20px;align-items:flex-start}
+.template-left{flex:1;min-width:0}
+.template-right{width:320px;flex-shrink:0}
+
+/* ── Template Cards ───────────────────────────────────────────────── */
+.template-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:0}
+.template-card{padding:14px;background:var(--surface2);border:2px solid var(--border);border-radius:10px;cursor:pointer;transition:all .15s;text-align:center}
+.template-card:hover{border-color:var(--accent)}
+.template-card.selected{border-color:var(--accent);background:rgba(108,92,231,.1)}
+.template-card .t-name{font-size:.84rem;font-weight:600;color:var(--text);margin-bottom:4px}
+.template-card .t-desc{font-size:.7rem;color:var(--text2);line-height:1.3}
+.template-card .t-count{font-size:.68rem;color:var(--accent2);margin-top:4px;font-weight:500}
+.template-none{padding:14px;background:var(--surface2);border:2px solid var(--border);border-radius:10px;cursor:pointer;transition:all .15s;text-align:center}
+.template-none:hover{border-color:var(--accent)}
+.template-none.selected{border-color:var(--accent);background:rgba(108,92,231,.1)}
+.template-none .t-name{font-size:.84rem;font-weight:600;color:var(--text)}
+.template-none .t-desc{font-size:.7rem;color:var(--text2);margin-top:2px}
+
+/* ── Template Preview (wireframe) ─────────────────────────────────── */
+.template-preview{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;min-height:240px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.template-preview .tp-title{font-size:.78rem;font-weight:600;color:var(--accent2);margin-bottom:12px;text-align:center;letter-spacing:.02em}
+.tp-wireframe{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--bg);overflow:hidden;font-size:0}
+.tp-browser-bar{display:flex;align-items:center;gap:5px;padding:6px 10px;background:var(--surface);border-bottom:1px solid var(--border)}
+.tp-dot{width:6px;height:6px;border-radius:50%;background:var(--border)}
+.tp-url-bar{flex:1;height:12px;background:var(--bg);border-radius:3px;margin-left:6px}
+.tp-body{padding:12px;min-height:160px}
+.tp-tabs{display:flex;gap:3px;margin-bottom:10px}
+.tp-tab{width:18px;height:14px;border-radius:3px;background:var(--surface);border:1px solid var(--border);font-size:.5rem;display:flex;align-items:center;justify-content:center;color:var(--text2);font-weight:700}
+.tp-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.tp-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:5px;background:var(--surface)}
+.tp-avatar{width:18px;height:18px;border-radius:3px;background:var(--border);flex-shrink:0}
+.tp-lines{flex:1}
+.tp-line{height:4px;border-radius:2px;background:var(--border);margin-bottom:3px}
+.tp-line:last-child{margin-bottom:0}
+.tp-line.short{width:60%}
+.tp-line.med{width:80%}
+.tp-line.accent{background:var(--accent);opacity:.4;width:40%}
+.tp-arrow{color:var(--text2);font-size:.6rem;flex-shrink:0}
+.tp-popup{border:1px solid var(--accent);border-radius:6px;padding:8px;margin-top:8px;background:rgba(108,92,231,.06)}
+.tp-popup-title{font-size:.58rem;color:var(--accent2);font-weight:600;margin-bottom:5px}
+.tp-detail-page{display:flex;gap:8px;margin-top:8px}
+.tp-detail-left{flex:1}
+.tp-detail-right{flex:1;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--surface)}
+.tp-detail-label{font-size:.48rem;color:var(--text2);text-transform:uppercase;margin-bottom:2px;font-weight:600;letter-spacing:.03em}
+.tp-hint{font-size:.72rem;color:var(--text2);margin-top:10px;text-align:center;line-height:1.35;font-style:italic}
+
+/* ── Toggle (advanced) ────────────────────────────────────────────── */
+.adv-toggle{display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:var(--text2);font-size:.78rem;font-weight:500;user-select:none;transition:color .15s;margin-top:4px}
+.adv-toggle:hover{color:var(--accent2)}
+.adv-toggle svg{transition:transform .2s}
+.adv-toggle.open svg{transform:rotate(90deg)}
+.adv-panel{display:none;margin-top:14px;padding:16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px}
+.adv-panel.open{display:block}
+.adv-row{display:flex;gap:12px;flex-wrap:wrap}
+.adv-row .field{flex:1;min-width:140px;margin-bottom:0}
 .checkbox-row{display:flex;align-items:center;gap:8px}
 .checkbox-row input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
 .checkbox-row label{font-size:.82rem;color:var(--text2);cursor:pointer}
 
-/* ── Collapsible Toggle ───────────────────────────────────────────── */
-.toggle{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text2);font-size:.82rem;font-weight:500;user-select:none;transition:color .15s;margin-top:6px}
-.toggle:hover{color:var(--accent2)}
-.toggle svg{transition:transform .2s}
-.toggle.open svg{transform:rotate(90deg)}
-.toggle-panel{display:none;margin-top:12px;padding:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px}
-.toggle-panel.open{display:block}
-
-/* ── Example Chips ────────────────────────────────────────────────── */
-.examples{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
-.examples span{font-size:.78rem;color:var(--text2)}
-.example-chip{font-size:.75rem;padding:4px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;color:var(--text2);cursor:pointer;transition:all .15s;white-space:nowrap}
-.example-chip:hover{border-color:var(--accent);color:var(--accent2)}
-
-/* ── Action Bar ───────────────────────────────────────────────────── */
-.action-bar{display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap}
-
 /* ── Tool Result ──────────────────────────────────────────────────── */
-.tool-result{margin-top:16px;display:none}
+.tool-result{margin-top:18px;display:none}
 .tool-result.visible{display:block}
-.tool-result pre{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:.8rem;color:var(--text);overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:500px;overflow-y:auto}
-.tool-error{color:var(--red);font-size:.85rem;padding:12px;background:rgba(225,112,85,.08);border-radius:8px;border:1px solid rgba(225,112,85,.2)}
-.tool-loading{color:var(--accent2);font-size:.85rem;display:flex;align-items:center;gap:8px}
-.strategy-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:8px;font-size:.82rem;font-weight:500;background:rgba(108,92,231,.1);color:var(--accent2);margin-bottom:14px;border:1px solid rgba(108,92,231,.15)}
-.strategy-badge strong{font-weight:700}
+.tool-error{color:var(--red);font-size:.88rem;padding:14px;background:rgba(225,112,85,.08);border-radius:10px;border:1px solid rgba(225,112,85,.2)}
+.tool-loading{color:var(--accent2);font-size:.88rem;display:flex;align-items:center;gap:10px;padding:16px 0}
 
-/* ── Exec sections ────────────────────────────────────────────────── */
-.exec-section{margin-top:12px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.exec-header{padding:10px 14px;background:var(--surface2);font-size:.82rem;font-weight:600;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none}
-.exec-header:hover{color:var(--text)}
-.exec-header svg{transition:transform .2s}
-.exec-header.open svg{transform:rotate(90deg)}
-.exec-body{display:none;padding:12px 14px}
-.exec-body.open{display:block}
-.exec-stdout{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:.8rem;color:var(--green);white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;font-family:'Cascadia Code','Fira Code',monospace}
-.exec-stderr{background:rgba(225,112,85,.06);border:1px solid rgba(225,112,85,.2);border-radius:6px;padding:12px;font-size:.8rem;color:var(--red);white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto;margin-top:8px;font-family:'Cascadia Code','Fira Code',monospace}
-.exec-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:.7rem;font-weight:600;letter-spacing:.03em}
-.exec-badge-success{background:rgba(0,184,148,.12);color:var(--green)}
-.exec-badge-error{background:rgba(225,112,85,.12);color:var(--red)}
-.exec-badge-timeout{background:rgba(253,203,110,.15);color:var(--yellow)}
-.exec-badge-blocked{background:rgba(156,160,171,.12);color:var(--text2)}
-
-/* ── Tool tabs (for advanced tools) ───────────────────────────────── */
-.tool-tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0}
-.tool-tab{padding:8px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text2);font-size:.82rem;font-weight:500;transition:all .15s}
-.tool-tab:hover{color:var(--text)}
-.tool-tab.active{color:var(--accent2);border-bottom-color:var(--accent)}
-.tool-panel{display:none}
-.tool-panel.active{display:block}
-.tool-checkbox{display:flex;align-items:center;gap:8px;margin-bottom:12px}
-.tool-checkbox input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
-.tool-checkbox label{font-size:.82rem;color:var(--text2);cursor:pointer}
-
-/* ── Jobs ─────────────────────────────────────────────────────────── */
-.section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
-.section-header h2{font-size:1rem;display:flex;align-items:center;gap:8px;font-weight:600}
+/* ── Jobs Section ─────────────────────────────────────────────────── */
+.section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.section-header h2{font-size:1.05rem;display:flex;align-items:center;gap:8px;font-weight:600}
 .job-count{font-size:.78rem;color:var(--text2);background:var(--surface2);padding:2px 10px;border-radius:12px}
 .empty-state{text-align:center;padding:40px 20px;color:var(--text2)}
 .empty-state svg{margin-bottom:10px;opacity:.4}
@@ -122,7 +144,7 @@ header p{font-size:.82rem;color:var(--text2);margin-top:2px}
 .job-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow);cursor:pointer;transition:border .2s}
 .job-card:hover{border-color:var(--accent)}
 .job-card.expanded{border-color:var(--accent)}
-.job-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.job-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .job-url{flex:1;min-width:0;font-size:.86rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
 .job-time{font-size:.75rem;color:var(--text2);white-space:nowrap}
 .job-mode{font-size:.7rem;padding:2px 8px;border-radius:10px;background:rgba(116,185,255,.12);color:var(--blue);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
@@ -145,34 +167,51 @@ header p{font-size:.82rem;color:var(--text2);margin-top:2px}
 /* ── Pipeline ─────────────────────────────────────────────────────── */
 .job-detail{margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}
 .pipeline{display:flex;align-items:center;gap:0;margin-bottom:16px;overflow-x:auto;padding-bottom:4px}
-.pipe-step{display:flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:.78rem;font-weight:500;color:var(--text2);background:var(--surface2);white-space:nowrap;transition:all .3s}
+.pipe-step{display:flex;align-items:center;gap:5px;padding:7px 12px;border-radius:8px;font-size:.76rem;font-weight:500;color:var(--text2);background:var(--surface2);white-space:nowrap;transition:all .3s}
 .pipe-step.active{background:rgba(108,92,231,.15);color:var(--accent2)}
 .pipe-step.preview-active{background:rgba(253,203,110,.12);color:var(--yellow)}
 .pipe-step.done{background:rgba(0,184,148,.1);color:var(--green)}
 .pipe-step.error{background:rgba(225,112,85,.1);color:var(--red)}
-.pipe-arrow{color:var(--border);margin:0 3px;font-size:.65rem;flex-shrink:0}
-.pipe-icon{width:16px;height:16px;display:flex;align-items:center;justify-content:center}
+.pipe-arrow{color:var(--border);margin:0 2px;font-size:.6rem;flex-shrink:0}
+.pipe-icon{width:14px;height:14px;display:flex;align-items:center;justify-content:center}
 
 /* ── Results ──────────────────────────────────────────────────────── */
 .results-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
-.record-count{font-size:.85rem;color:var(--text2)}
+.record-count{font-size:.88rem;color:var(--text2);font-weight:500}
+
+/* ── Quality Report ───────────────────────────────────────────────── */
+.quality-card{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.quality-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.quality-score{font-size:1.4rem;font-weight:700}
+.quality-score.good{color:var(--green)}.quality-score.moderate{color:var(--yellow)}.quality-score.low{color:var(--red)}
+.quality-label{font-size:.82rem;color:var(--text2)}
+.quality-bar{height:6px;background:var(--bg);border-radius:3px;overflow:hidden;margin-bottom:10px}
+.quality-bar-fill{height:100%;border-radius:3px;transition:width .5s}
+.quality-fields{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.quality-field{font-size:.72rem;padding:3px 10px;border-radius:12px;display:flex;align-items:center;gap:4px}
+.quality-field .qf-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.quality-warnings{font-size:.78rem;color:var(--text2);line-height:1.5}
+.quality-warnings li{margin-bottom:3px}
+
+/* ── Platform Badge ───────────────────────────────────────────────── */
+.platform-badge{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;padding:3px 10px;border-radius:12px;background:rgba(116,185,255,.1);color:var(--blue);font-weight:500;margin-left:6px}
 .dl-btns{display:flex;gap:8px;margin-left:auto}
-.error-box{padding:12px 16px;background:rgba(225,112,85,.08);border:1px solid rgba(225,112,85,.25);border-radius:8px;color:var(--red);font-size:.85rem;margin-bottom:14px}
-.plan-box{padding:12px 16px;background:rgba(108,92,231,.06);border:1px solid rgba(108,92,231,.18);border-radius:8px;font-size:.82rem;color:var(--text2);margin-bottom:14px;overflow-x:auto}
+.error-box{padding:12px 16px;background:rgba(225,112,85,.08);border:1px solid rgba(225,112,85,.25);border-radius:10px;color:var(--red);font-size:.85rem;margin-bottom:14px}
+.plan-box{padding:12px 16px;background:rgba(108,92,231,.06);border:1px solid rgba(108,92,231,.18);border-radius:10px;font-size:.82rem;color:var(--text2);margin-bottom:14px;overflow-x:auto}
 .plan-box pre{white-space:pre-wrap;word-break:break-word;font-family:'Cascadia Code','Fira Code',monospace;font-size:.78rem;line-height:1.5}
 
 /* ── Preview Card ─────────────────────────────────────────────────── */
-.preview-box{border:1px solid rgba(253,203,110,.3);border-radius:var(--radius);padding:18px;margin-bottom:14px;background:rgba(253,203,110,.04)}
-.preview-box h3{font-size:.92rem;color:var(--yellow);margin-bottom:4px;display:flex;align-items:center;gap:8px}
-.preview-box .preview-subtitle{font-size:.8rem;color:var(--text2);margin-bottom:14px}
-.preview-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;margin-bottom:16px}
+.preview-box{border:1px solid rgba(253,203,110,.3);border-radius:var(--radius);padding:20px;margin-bottom:14px;background:rgba(253,203,110,.04)}
+.preview-box h3{font-size:.95rem;color:var(--yellow);margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.preview-box .preview-subtitle{font-size:.82rem;color:var(--text2);margin-bottom:14px}
+.preview-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;margin-bottom:16px}
 .preview-field{background:var(--surface2);border-radius:8px;padding:10px 12px;border:1px solid var(--border)}
 .preview-field-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:2px;font-weight:600}
 .preview-field-value{font-size:.84rem;color:var(--text);word-break:break-word}
 .preview-field-value.empty{color:var(--text2);font-style:italic}
 .preview-actions{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
 .preview-actions .btn{flex-shrink:0}
-.feedback-input{flex:1;min-width:200px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.85rem;outline:none;transition:border .2s}
+.feedback-input{flex:1;min-width:180px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:.85rem;outline:none;transition:border .2s}
 .feedback-input:focus{border-color:var(--yellow)}
 .feedback-input::placeholder{color:var(--text2)}
 
@@ -194,14 +233,6 @@ header p{font-size:.82rem;color:var(--text2);margin-top:2px}
 }
 
 /* ── Data Table ───────────────────────────────────────────────────── */
-.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;max-height:480px;overflow-y:auto}
-table{width:100%;border-collapse:collapse;font-size:.82rem}
-th{position:sticky;top:0;background:var(--surface2);padding:9px 12px;text-align:left;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);white-space:nowrap}
-td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-tr:last-child td{border-bottom:none}
-tr:hover td{background:rgba(108,92,231,.04)}
-
-/* ── Tabs (within job detail) ─────────────────────────────────────── */
 .tabs{display:flex;gap:4px;margin-bottom:14px}
 .tab{padding:6px 14px;border-radius:6px;font-size:.8rem;font-weight:500;color:var(--text2);background:transparent;border:none;transition:all .15s}
 .tab:hover{color:var(--text)}
@@ -209,21 +240,33 @@ tr:hover td{background:rgba(108,92,231,.04)}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 
+.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;max-height:480px;overflow-y:auto}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{position:sticky;top:0;background:var(--surface2);padding:9px 12px;text-align:left;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(108,92,231,.04)}
+
 /* ── Spinner ──────────────────────────────────────────────────────── */
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent2);border-radius:50%;animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── Responsive ───────────────────────────────────────────────────── */
+@media(max-width:780px){
+  .template-section{flex-direction:column}
+  .template-right{width:100%}
+}
 @media(max-width:640px){
-  .field-row{flex-direction:column}
-  .field-inline{width:100%}
-  .action-bar{flex-direction:column;align-items:stretch}
+  .app{padding:16px 12px 40px}
+  .template-grid{grid-template-columns:1fr 1fr}
+  .adv-row{flex-direction:column}
   .pipeline{gap:0}
-  .pipe-step{padding:5px 8px;font-size:.72rem}
+  .pipe-step{padding:5px 8px;font-size:.7rem}
   .dl-btns{margin-left:0;width:100%}
   .dl-btns .btn{flex:1}
   .preview-fields{grid-template-columns:1fr}
   .preview-actions{flex-direction:column}
+  .steps{gap:0}
 }
 </style>
 </head>
@@ -232,186 +275,147 @@ tr:hover td{background:rgba(108,92,231,.04)}
 <div class="app">
   <!-- ── Header ──────────────────────────────────────────────────── -->
   <header>
-    <svg width="34" height="34" viewBox="0 0 36 36" fill="none"><rect width="36" height="36" rx="8" fill="#6c5ce7"/><path d="M10 18c0-4.4 3.6-8 8-8m0 16c4.4 0 8-3.6 8-8" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="18" cy="18" r="3" fill="#fff"/><path d="M18 10v-3m0 22v-3m8-8h3M7 18h3" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
-    <div>
-      <h1>Web Crawler AI Agent</h1>
-      <p>Extract seller &amp; company data from marketplaces, trade fairs, and directories</p>
+    <div class="logo">
+      <svg width="26" height="26" viewBox="0 0 36 36" fill="none"><path d="M10 18c0-4.4 3.6-8 8-8m0 16c4.4 0 8-3.6 8-8" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="18" cy="18" r="3" fill="#fff"/><path d="M18 10v-3m0 22v-3m8-8h3M7 18h3" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
     </div>
+    <h1>Lead Scraper</h1>
+    <p>Extract company and seller data from any directory or marketplace. Just paste a URL, tell us what you need, and we'll do the rest.</p>
   </header>
 
-  <!-- ── Main Crawl Form ─────────────────────────────────────────── -->
+  <!-- ── Main Form Card ──────────────────────────────────────────── -->
   <div class="card">
-    <h2>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-      Smart Crawl
-    </h2>
-
-    <div class="field">
-      <label for="templateSelect">Template <span style="font-weight:400;opacity:.7">(optional — use a proven config)</span></label>
-      <select id="templateSelect" style="width:100%;padding:8px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:.9rem">
-        <option value="">No template — use AI planner</option>
-      </select>
-      <div class="field-hint" id="templateHint" style="display:none;margin-top:4px;font-size:.8rem;color:var(--green)"></div>
+    <!-- Step indicators -->
+    <div class="steps">
+      <div class="step active" id="step1"><div class="step-num">1</div><span class="step-label">Pick a source</span></div>
+      <div class="step" id="step2"><div class="step-num">2</div><span class="step-label">Describe data</span></div>
+      <div class="step" id="step3"><div class="step-num">3</div><span class="step-label">Choose fields</span></div>
     </div>
 
-    <div class="field">
-      <label for="crawlUrls">URLs (one per line)</label>
-      <textarea id="crawlUrls" rows="2" placeholder="https://example.com/exhibitors&#10;Paste one or more URLs"></textarea>
-    </div>
-
-    <div class="field">
-      <label for="crawlPrompt">What do you want to extract?</label>
-      <input type="text" id="crawlPrompt" placeholder="e.g. Extract all exhibitor names, emails, phone numbers, and addresses">
-    </div>
-
-    <div class="field">
-      <label for="crawlFields">Fields wanted <span style="font-weight:400;opacity:.7">(optional, comma-separated)</span></label>
-      <input type="text" id="crawlFields" placeholder="e.g. name, email, phone, website, address, product_categories">
-    </div>
-
-    <!-- Advanced Options -->
-    <div class="toggle" id="advancedToggle">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-      Advanced Options
-    </div>
-    <div class="toggle-panel" id="advancedPanel">
-      <div class="field">
-        <label for="crawlDetailUrl">Detail page URL <span style="font-weight:400;opacity:.7">(example)</span></label>
-        <input type="url" id="crawlDetailUrl" placeholder="Paste a single seller/company detail page URL">
-        <div class="field-hint">Open one seller's detail page and paste the URL so the AI can analyse its structure</div>
+    <!-- ── Step 1: Source ──────────────────────────────────────── -->
+    <div class="field" style="margin-bottom:20px">
+      <label>Start from a template or paste your own URL</label>
+      <div class="hint" style="margin-bottom:10px">Templates are grouped by website type — choose the one that best matches your target site.</div>
+      <div class="template-section">
+        <div class="template-left">
+          <div class="template-grid" id="templateGrid">
+            <div class="template-none selected" data-template-id="">
+              <div class="t-name">Custom URL</div>
+              <div class="t-desc">Paste any website URL</div>
+            </div>
+            <!-- templates populated by JS -->
+          </div>
+        </div>
+        <div class="template-right">
+          <div class="template-preview" id="templatePreview">
+            <div class="tp-title">Website Example</div>
+            <div id="templatePreviewContent">
+              <div style="text-align:center;color:var(--text2);font-size:.8rem;padding:20px 10px">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:6px;opacity:.4"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                <p>Select a template to see what that type of website looks like.</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="field-row" style="margin-top:10px">
-        <div class="field field-inline">
+    </div>
+
+    <div class="field">
+      <label for="crawlUrls">Website URL</label>
+      <textarea id="crawlUrls" rows="2" placeholder="Paste the URL of the page with the list of companies, sellers, or exhibitors&#10;e.g. https://www.example-tradeshow.com/exhibitors"></textarea>
+      <div class="hint">Paste the page that shows the list of companies, exhibitors, or sellers you want to extract.</div>
+    </div>
+
+    <!-- ── Step 2: Prompt ──────────────────────────────────────── -->
+    <div class="field">
+      <label for="crawlPrompt">What data do you need?</label>
+      <input type="text" id="crawlPrompt" value="Extract all exhibitor/seller details including company name, contact information, location, product categories, and brands.">
+      <div class="hint">Describe in plain English what information you want to capture from each company or seller.</div>
+    </div>
+
+    <div class="field">
+      <label for="crawlItemDesc">What does each listing look like? <span style="color:var(--text2);font-weight:400">(optional)</span></label>
+      <input type="text" id="crawlItemDesc" placeholder="e.g. 'company card with logo, name, and country flag' or 'seller row with store name and rating'">
+      <div class="hint">Help the scraper identify the right repeating elements on the page.</div>
+    </div>
+
+    <div class="field">
+      <label for="crawlSiteNotes">Anything special about this site? <span style="color:var(--text2);font-weight:400">(optional)</span></label>
+      <input type="text" id="crawlSiteNotes" placeholder="e.g. 'exhibitors load after clicking A-Z tabs' or 'pagination at bottom: pages 1-50'">
+      <div class="hint">Any observations about how the site works — pagination, loading behavior, login walls, etc.</div>
+    </div>
+
+    <!-- ── Step 3: Fields ──────────────────────────────────────── -->
+    <div class="field">
+      <label>Which fields do you want?</label>
+      <div class="hint" style="margin-bottom:6px">Click the fields you need, or type custom ones below.</div>
+      <div class="chip-group" id="fieldChips">
+        <span class="chip selected" data-field="name">Company Name</span>
+        <span class="chip selected" data-field="email">Email</span>
+        <span class="chip selected" data-field="phone">Phone</span>
+        <span class="chip selected" data-field="website">Website</span>
+        <span class="chip selected" data-field="country">Country</span>
+        <span class="chip selected" data-field="city">City</span>
+        <span class="chip" data-field="address">Address</span>
+        <span class="chip" data-field="postal_code">Postal Code</span>
+        <span class="chip" data-field="store_url">Store / Profile URL</span>
+        <span class="chip" data-field="description">Description</span>
+        <span class="chip" data-field="product_categories">Products / Categories</span>
+        <span class="chip" data-field="brands">Brands</span>
+        <span class="chip" data-field="booth">Booth / Stand</span>
+        <span class="chip" data-field="hall">Hall</span>
+        <span class="chip" data-field="social_media">Social Media</span>
+        <span class="chip" data-field="logo_url">Logo</span>
+      </div>
+      <input type="text" id="crawlFields" placeholder="Or type additional fields separated by commas" style="margin-top:10px">
+    </div>
+
+    <!-- ── Advanced Settings (collapsed) ──────────────────────── -->
+    <div class="adv-toggle" id="advToggle">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+      More options
+    </div>
+    <div class="adv-panel" id="advPanel">
+      <div class="field" style="margin-bottom:14px">
+        <label for="crawlDetailUrl">Example detail page URL</label>
+        <input type="url" id="crawlDetailUrl" placeholder="Paste a single company's detail/profile page URL (optional)">
+        <div class="hint">If each company has its own page with more info, paste one example here so we can extract more data.</div>
+      </div>
+      <div class="adv-row">
+        <div class="field">
+          <label for="crawlMaxItems">Max results</label>
+          <input type="number" id="crawlMaxItems" placeholder="All" min="1">
+        </div>
+        <div class="field">
           <label for="crawlMaxPages">Max pages</label>
           <input type="number" id="crawlMaxPages" placeholder="All" min="1">
         </div>
-        <div class="field" style="flex:1;display:flex;align-items:flex-end">
+        <div class="field" style="display:flex;align-items:flex-end;padding-bottom:2px">
           <div class="checkbox-row">
             <input type="checkbox" id="crawlTestSingle">
-            <label for="crawlTestSingle">Test with single item only</label>
+            <label for="crawlTestSingle">Test with 1 item first</label>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Action Bar -->
-    <div class="action-bar">
-      <button class="btn btn-primary" id="crawlBtn">Scrape</button>
-      <div class="field field-inline" style="margin-bottom:0">
-        <label for="crawlMaxItems" style="margin-bottom:3px">Max items</label>
-        <input type="number" id="crawlMaxItems" placeholder="All" min="1" title="Limit total items scraped (for testing)">
-      </div>
-    </div>
+    <!-- ── Submit ─────────────────────────────────────────────── -->
+    <button class="btn btn-primary" id="crawlBtn" style="margin-top:20px">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      Start Scraping
+    </button>
 
-    <div class="examples">
-      <span>Try:</span>
-      <span class="example-chip" data-url="https://www.beauty-duesseldorf.com/vis/v1/en/directory/a">BEAUTY Dusseldorf</span>
-      <span class="example-chip" data-url="https://www.fibo.com/germany/en-gb/exhibitor-directory.html#/">FIBO</span>
-      <span class="example-chip" data-url="https://www.spogagafa.com/spoga-gafa-exhibitors/list-of-exhibitors/">spoga+gafa</span>
-      <span class="example-chip" data-url="https://www.eisenwarenmesse.com/eisenwarenmesse-exhibitors/list-of-exhibitors/">Eisenwarenmesse</span>
-    </div>
-
-    <!-- Smart Crawl Result -->
+    <!-- Result area -->
     <div class="tool-result" id="crawlResult"></div>
   </div>
 
-  <!-- ── Advanced Tools (collapsible) ────────────────────────────── -->
-  <div class="card">
-    <div class="toggle" id="advToolsToggle" style="margin-top:0">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:2px"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-      Advanced Tools
-      <span style="font-size:.72rem;color:var(--text2);font-weight:400;margin-left:4px">Multi-Scrape, Script Generator</span>
-    </div>
-    <div class="toggle-panel" id="advToolsPanel" style="margin-top:12px;padding:0;background:transparent;border:none">
-      <div class="tool-tabs">
-        <button class="tool-tab active" data-tool="multi-scrape">Multi-Scrape</button>
-        <button class="tool-tab" data-tool="script-gen">Script Generator</button>
-        <button class="tool-tab" data-tool="script-gen-multi">Multi-Script</button>
-      </div>
-
-      <!-- Multi-Scrape Panel -->
-      <div class="tool-panel active" id="tool-multi-scrape">
-        <div class="field">
-          <label>URLs (one per line)</label>
-          <textarea id="multiScrapeUrls" rows="3" placeholder="https://example.com/sellers&#10;https://example.com/sellers?page=2"></textarea>
-        </div>
-        <div class="field">
-          <label>Prompt</label>
-          <input type="text" id="multiScrapePrompt" placeholder="Extract all seller names, emails, and phone numbers">
-        </div>
-        <button class="btn btn-primary" id="multiScrapeBtn">Run Multi-Scrape</button>
-        <div class="tool-result" id="multiScrapeResult"></div>
-      </div>
-
-      <!-- Script Generator Panel -->
-      <div class="tool-panel" id="tool-script-gen">
-        <div class="field">
-          <label>URL</label>
-          <input type="url" id="scriptGenUrl" placeholder="https://example.com/sellers">
-        </div>
-        <div class="field">
-          <label>Prompt</label>
-          <input type="text" id="scriptGenPrompt" placeholder="Extract all seller names and contact information">
-        </div>
-        <div class="field-row">
-          <div class="field" style="max-width:200px">
-            <label>Library</label>
-            <select id="scriptGenLibrary">
-              <option value="beautifulsoup4">BeautifulSoup4</option>
-              <option value="scrapy">Scrapy</option>
-            </select>
-          </div>
-          <div class="field" style="flex:1;display:flex;align-items:flex-end">
-            <div class="tool-checkbox" style="margin-bottom:0">
-              <input type="checkbox" id="scriptGenAutoExec" checked>
-              <label for="scriptGenAutoExec">Auto-execute script</label>
-            </div>
-          </div>
-        </div>
-        <button class="btn btn-primary" style="margin-top:12px" id="scriptGenBtn">Generate &amp; Run</button>
-        <div class="tool-result" id="scriptGenResult"></div>
-      </div>
-
-      <!-- Multi-Script Generator Panel -->
-      <div class="tool-panel" id="tool-script-gen-multi">
-        <div class="field">
-          <label>URLs (one per line)</label>
-          <textarea id="scriptGenMultiUrls" rows="3" placeholder="https://example.com/sellers&#10;https://example.com/products"></textarea>
-        </div>
-        <div class="field">
-          <label>Prompt</label>
-          <input type="text" id="scriptGenMultiPrompt" placeholder="Extract all seller names and contact information">
-        </div>
-        <div class="field-row">
-          <div class="field" style="max-width:200px">
-            <label>Library</label>
-            <select id="scriptGenMultiLibrary">
-              <option value="beautifulsoup4">BeautifulSoup4</option>
-              <option value="scrapy">Scrapy</option>
-            </select>
-          </div>
-          <div class="field" style="flex:1;display:flex;align-items:flex-end">
-            <div class="tool-checkbox" style="margin-bottom:0">
-              <input type="checkbox" id="scriptGenMultiAutoExec" checked>
-              <label for="scriptGenMultiAutoExec">Auto-execute script</label>
-            </div>
-          </div>
-        </div>
-        <button class="btn btn-primary" style="margin-top:12px" id="scriptGenMultiBtn">Generate &amp; Run Merged</button>
-        <div class="tool-result" id="scriptGenMultiResult"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Jobs Section ──────────────────────────────────────────────── -->
+  <!-- ── Jobs Section ──────────────────────────────────────────── -->
   <div class="section-header">
     <h2>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-      Crawl Jobs
+      Your Scraping Jobs
       <span class="job-count" id="jobCount">0</span>
     </h2>
-    <button class="btn btn-sm btn-outline" id="refreshBtn" title="Refresh jobs">
+    <button class="btn btn-sm btn-outline" id="refreshBtn" title="Refresh">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 105.64-12.36L1 10"/></svg>
       Refresh
     </button>
@@ -421,12 +425,12 @@ tr:hover td{background:rgba(108,92,231,.04)}
 
 <script>
 /* ═══════════════════════════════════════════════════════════════════
-   Web Crawler AI Agent – Frontend
+   Lead Scraper – Frontend
    ═══════════════════════════════════════════════════════════════════ */
 const API = window.location.origin + '/api/v1';
 
 const STAGES = ['pending','planning','scraping','preview','parsing','output','completed'];
-const STAGE_LABELS = {pending:'Queued',planning:'Planning',scraping:'Scraping',preview:'Preview',parsing:'Parsing',output:'Building Output',completed:'Completed',failed:'Failed'};
+const STAGE_LABELS = {pending:'Queued',planning:'Analyzing',scraping:'Collecting',preview:'Review',parsing:'Processing',output:'Saving',completed:'Done',failed:'Failed'};
 const STAGE_ICONS = {
   pending:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
   planning:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>',
@@ -444,11 +448,13 @@ const PREVIEW_FIELDS = ['name','country','city','address','postal_code','website
 let jobs = {};
 let expandedJobId = null;
 let pollingTimers = {};
+let selectedTemplate = '';
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 function esc(s){ if(!s) return ''; const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 function timeAgo(iso){
-  const s=Math.floor((Date.now()-new Date(iso+'Z').getTime())/1000);
+  const cleaned = iso.replace(/\+00:00$/, 'Z');
+  const s=Math.floor((Date.now()-new Date(cleaned.endsWith('Z')?cleaned:cleaned+'Z').getTime())/1000);
   if(s<60) return s+'s ago'; if(s<3600) return Math.floor(s/60)+'m ago';
   if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago';
 }
@@ -466,79 +472,253 @@ async function apiGet(path){
   return r.json();
 }
 
-/* ── Collapsible toggles ─────────────────────────────────────────── */
-function setupToggle(toggleId, panelId) {
-  document.getElementById(toggleId).addEventListener('click', function(){
-    this.classList.toggle('open');
-    document.getElementById(panelId).classList.toggle('open');
-  });
+/* ── Step highlight ──────────────────────────────────────────────── */
+function highlightSteps(){
+  const hasUrl = document.getElementById('crawlUrls').value.trim().length > 0;
+  const hasPrompt = document.getElementById('crawlPrompt').value.trim().length > 0;
+  document.getElementById('step1').classList.toggle('active', true);
+  document.getElementById('step2').classList.toggle('active', hasUrl);
+  document.getElementById('step3').classList.toggle('active', hasUrl && hasPrompt);
 }
-setupToggle('advancedToggle', 'advancedPanel');
-setupToggle('advToolsToggle', 'advToolsPanel');
+document.getElementById('crawlUrls').addEventListener('input', highlightSteps);
+document.getElementById('crawlPrompt').addEventListener('input', highlightSteps);
 
-/* ── Example chips ────────────────────────────────────────────────── */
-document.querySelectorAll('.example-chip').forEach(chip=>{
-  chip.addEventListener('click',()=>{
-    document.getElementById('crawlUrls').value = chip.dataset.url;
-    document.getElementById('crawlUrls').focus();
+/* ── Field Chips ─────────────────────────────────────────────────── */
+document.getElementById('fieldChips').addEventListener('click', e => {
+  const chip = e.target.closest('.chip');
+  if(!chip) return;
+  chip.classList.toggle('selected');
+});
+
+function getSelectedFields(){
+  const chipFields = [...document.querySelectorAll('#fieldChips .chip.selected')].map(c=>c.dataset.field);
+  const customFields = document.getElementById('crawlFields').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const all = [...new Set([...chipFields, ...customFields])];
+  return all.join(', ');
+}
+
+/* Set chips from a comma-separated string (when template auto-fills) */
+function setFieldChips(fieldsStr){
+  const fields = fieldsStr.split(',').map(s=>s.trim()).filter(Boolean);
+  const knownChips = document.querySelectorAll('#fieldChips .chip');
+  knownChips.forEach(c => {
+    c.classList.toggle('selected', fields.includes(c.dataset.field));
   });
+  // Put unmatched fields in the text input
+  const knownFields = new Set([...knownChips].map(c=>c.dataset.field));
+  const custom = fields.filter(f => !knownFields.has(f));
+  document.getElementById('crawlFields').value = custom.join(', ');
+}
+
+/* ── Advanced toggle ─────────────────────────────────────────────── */
+document.getElementById('advToggle').addEventListener('click', function(){
+  this.classList.toggle('open');
+  document.getElementById('advPanel').classList.toggle('open');
 });
 
 /* ── Tool result helpers ─────────────────────────────────────────── */
 function showToolResult(el, html) { el.innerHTML = html; el.classList.add('visible'); }
-function showToolLoading(el) { showToolResult(el, '<div class="tool-loading"><div class="spinner"></div>Running... this may take a minute</div>'); }
+function showToolLoading(el) { showToolResult(el, '<div class="tool-loading"><div class="spinner"></div>Working on it... this may take a minute or two</div>'); }
 function showToolError(el, msg) { showToolResult(el, `<div class="tool-error">${esc(msg)}</div>`); }
 
-/* ── Main Crawl Submit ───────────────────────────────────────────── */
+/* ── Templates ───────────────────────────────────────────────────── */
+let templates = [];
+
+/* Per-template prompt suggestions */
+const TEMPLATE_PROMPTS = {
+  '': 'Extract all exhibitor details including company name, contact information, location, product categories, and brands.',
+  'dynamic-directory-detail-pages': 'Extract all company details including name, address, phone, email, website, product categories, brands, and social media links.',
+  'dynamic-directory-api': 'Extract all company details including name, booth/stand number, location, contact details, and product categories.',
+  'static-listing': 'Extract all company details including name, description, email, and website.'
+};
+
+/* Wireframe HTML for each template type */
+function wireframeBrowserBar(){
+  return `<div class="tp-browser-bar"><span class="tp-dot"></span><span class="tp-dot"></span><span class="tp-dot"></span><div class="tp-url-bar"></div></div>`;
+}
+
+const TEMPLATE_PREVIEWS = {
+  '': `<div style="text-align:center;color:var(--text2);font-size:.8rem;padding:20px 10px">
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:6px;opacity:.4"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+    <p>Select a template to see what that type of website looks like.</p>
+  </div>`,
+
+  'dynamic-directory-detail-pages': `<div class="tp-wireframe">
+    ${wireframeBrowserBar()}
+    <div class="tp-body">
+      <div class="tp-tabs">
+        <div class="tp-tab active">A</div><div class="tp-tab">B</div><div class="tp-tab">C</div><div class="tp-tab">…</div><div class="tp-tab">Z</div>
+      </div>
+      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div></div><span class="tp-arrow" style="color:var(--accent2)">→</span></div>
+      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div></div><span class="tp-arrow" style="color:var(--accent2)">→</span></div>
+      <div class="tp-detail-page">
+        <div class="tp-detail-left">
+          <div style="font-size:.5rem;color:var(--accent2);margin-bottom:4px;font-weight:600">↗ Opens detail page</div>
+          <div class="tp-detail-right">
+            <div class="tp-detail-label">Name</div><div class="tp-line med" style="height:3px;margin-bottom:4px"></div>
+            <div class="tp-detail-label">Address</div><div class="tp-line short" style="height:3px;margin-bottom:4px"></div>
+            <div class="tp-detail-label">Email</div><div class="tp-line accent" style="height:3px;margin-bottom:4px"></div>
+            <div class="tp-detail-label">Brands</div><div class="tp-line short" style="height:3px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="tp-hint">A-Z tabbed directory where each company links to a separate detail page with full contact info.</div>`,
+
+  'dynamic-directory-api': `<div class="tp-wireframe">
+    ${wireframeBrowserBar()}
+    <div class="tp-body">
+      <div class="tp-tabs">
+        <div class="tp-tab active">A</div><div class="tp-tab">B</div><div class="tp-tab">C</div><div class="tp-tab">D</div><div class="tp-tab">…</div><div class="tp-tab">Z</div>
+      </div>
+      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div></div><span class="tp-arrow">▶</span></div>
+      <div class="tp-row" style="border-color:var(--accent)"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div></div><span class="tp-arrow">▶</span></div>
+      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div></div><span class="tp-arrow">▶</span></div>
+      <div class="tp-popup">
+        <div class="tp-popup-title">⟵ Detail loaded via API</div>
+        <div class="tp-line med" style="height:3px;margin-bottom:3px"></div>
+        <div class="tp-line short" style="height:3px;margin-bottom:3px"></div>
+        <div class="tp-line accent" style="height:3px"></div>
+      </div>
+    </div>
+  </div>
+  <div class="tp-hint">A-Z tabbed directory. Clicking a company loads its details from a hidden API — no separate page needed.</div>`,
+
+  'static-listing': `<div class="tp-wireframe">
+    ${wireframeBrowserBar()}
+    <div class="tp-body">
+      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div><div class="tp-line accent" style="height:3px"></div></div></div>
+      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div><div class="tp-line accent" style="height:3px"></div></div></div>
+      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div><div class="tp-line accent" style="height:3px"></div></div></div>
+      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div><div class="tp-line accent" style="height:3px"></div></div></div>
+      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div><div class="tp-line accent" style="height:3px"></div></div></div>
+    </div>
+  </div>
+  <div class="tp-hint">Simple single-page list — all company data is right on the page. No tabs, no JavaScript, no detail pages.</div>`
+};
+
+function updatePreview(tmplId){
+  const content = document.getElementById('templatePreviewContent');
+  const titleEl = document.querySelector('#templatePreview .tp-title');
+  if(!tmplId){
+    titleEl.textContent = 'Website Example';
+  } else {
+    const tmpl = templates.find(t=>t.id===tmplId);
+    titleEl.textContent = tmpl ? tmpl.name : 'Website Example';
+  }
+  content.innerHTML = TEMPLATE_PREVIEWS[tmplId] || TEMPLATE_PREVIEWS[''];
+}
+
+async function loadTemplates() {
+  try {
+    templates = await apiGet('/templates');
+    const grid = document.getElementById('templateGrid');
+    templates.forEach(t => {
+      const div = document.createElement('div');
+      div.className = 'template-card';
+      div.dataset.templateId = t.id;
+      div.innerHTML = `<div class="t-name">${esc(t.name)}</div>
+        <div class="t-desc">${esc(t.description)}</div>`;
+      grid.appendChild(div);
+    });
+    setupTemplateClicks();
+  } catch(e) {
+    console.warn('Failed to load templates', e);
+  }
+}
+
+function setupTemplateClicks(){
+  document.querySelectorAll('#templateGrid .template-card, #templateGrid .template-none').forEach(card => {
+    card.addEventListener('click', () => {
+      // Deselect all, select this one
+      document.querySelectorAll('#templateGrid .template-card, #templateGrid .template-none').forEach(c=>c.classList.remove('selected'));
+      card.classList.add('selected');
+
+      const tmplId = card.dataset.templateId;
+      selectedTemplate = tmplId || '';
+
+      // Update the preview wireframe
+      updatePreview(tmplId);
+
+      if(!tmplId){
+        // Custom URL — clear fields, set generic prompt
+        document.getElementById('crawlUrls').value = '';
+        document.getElementById('crawlPrompt').value = TEMPLATE_PROMPTS[''];
+        setFieldChips('name, email, phone, website, country, city');
+        highlightSteps();
+        return;
+      }
+
+      const tmpl = templates.find(t=>t.id===tmplId);
+      if(!tmpl) return;
+
+      // Set template-specific prompt (do NOT auto-fill URL — user pastes their own)
+      document.getElementById('crawlPrompt').value = TEMPLATE_PROMPTS[tmplId] || tmpl.default_prompt;
+      if(tmpl.default_fields_wanted) setFieldChips(tmpl.default_fields_wanted);
+      highlightSteps();
+    });
+  });
+}
+
+/* ── Main Submit ─────────────────────────────────────────────────── */
 document.getElementById('crawlBtn').addEventListener('click', async () => {
   const urls = document.getElementById('crawlUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean);
   const prompt = document.getElementById('crawlPrompt').value.trim();
-  const fields = document.getElementById('crawlFields').value.trim();
+  const fields = getSelectedFields();
   const detailUrl = document.getElementById('crawlDetailUrl').value.trim();
+  const itemDesc = document.getElementById('crawlItemDesc').value.trim();
+  const siteNotes = document.getElementById('crawlSiteNotes').value.trim();
   const maxPages = document.getElementById('crawlMaxPages').value.trim();
   const maxItems = document.getElementById('crawlMaxItems').value.trim();
   const testSingle = document.getElementById('crawlTestSingle').checked;
   const resultEl = document.getElementById('crawlResult');
 
-  if(!urls.length) { showToolError(resultEl, 'Please enter at least one URL.'); return; }
+  if(!urls.length) { showToolError(resultEl, 'Please paste at least one URL to scrape.'); return; }
   if(!prompt) { showToolError(resultEl, 'Please describe what data you want to extract.'); return; }
 
   const btn = document.getElementById('crawlBtn');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Starting...';
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Starting...';
   showToolLoading(resultEl);
 
   try {
     const body = { urls, prompt };
     if(fields) body.fields_wanted = fields;
     if(detailUrl) body.detail_page_url = detailUrl;
+    if(itemDesc) body.item_description = itemDesc;
+    if(siteNotes) body.site_notes = siteNotes;
     if(maxItems && !isNaN(+maxItems)) body.max_items = +maxItems;
-    const templateId = document.getElementById('templateSelect').value;
-    if(templateId) body.template_id = templateId;
+    if(testSingle) body.test_single = true;
+    if(selectedTemplate) body.template_id = selectedTemplate;
 
     const data = await apiPost('/smart-crawl', body);
 
-    let html = `<div class="strategy-badge"><strong>Strategy:</strong> ${esc(data.strategy_used.replace(/_/g,' '))}</div>`;
-    html += `<div style="font-size:.82rem;color:var(--text2);margin-bottom:14px">${esc(data.strategy_explanation)}</div>`;
+    let html = '';
 
     if (data.job_id) {
-      html += `<div style="padding:14px;background:rgba(108,92,231,.08);border-radius:8px;border:1px solid rgba(108,92,231,.15)">
-        <strong style="color:var(--accent2)">Full pipeline started!</strong>
-        <div style="color:var(--text2);font-size:.85rem;margin-top:4px">Job <code>${esc(data.job_id)}</code> — see Crawl Jobs below for progress.</div>
+      html += `<div style="padding:16px;background:rgba(0,184,148,.08);border-radius:10px;border:1px solid rgba(0,184,148,.2);margin-top:4px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          <strong style="color:var(--green);font-size:.92rem">Scraping started!</strong>
+        </div>
+        <div style="color:var(--text2);font-size:.85rem">Check the progress below in "Your Scraping Jobs". We'll extract a sample first for you to review.</div>
       </div>`;
       if(!jobs[data.job_id]) jobs[data.job_id] = {id:data.job_id, status:'pending', request:{url:urls[0], test_single:testSingle, max_items: maxItems?+maxItems:null}, created_at:new Date().toISOString()};
       expandedJobId = data.job_id;
       render();
       startPolling(data.job_id);
-    } else if (data.script) {
-      html += formatScriptResult(data);
     } else if (data.data) {
-      html += `<pre>${esc(JSON.stringify(data.data, null, 2))}</pre>`;
+      html += `<pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px;font-size:.8rem;color:var(--text);overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:500px;overflow-y:auto">${esc(JSON.stringify(data.data, null, 2))}</pre>`;
     } else {
-      html += `<div style="color:var(--text2)">No data returned.</div>`;
+      html += `<div style="color:var(--text2);padding:12px">No data returned. Try a different URL or prompt.</div>`;
     }
     showToolResult(resultEl, html);
   } catch(e) { showToolError(resultEl, e.message); }
-  finally { btn.disabled = false; btn.textContent = 'Scrape'; }
+  finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg> Start Scraping';
+  }
 });
 
 /* ── Confirm / Feedback ──────────────────────────────────────────── */
@@ -552,7 +732,7 @@ async function confirmPreview(jobId, approved, feedback, extractionMethod){
     jobs[j.id] = j;
     render();
     if(approved) startPolling(jobId);
-  }catch(err){ alert('Failed to confirm: '+err.message); }
+  }catch(err){ alert('Failed: '+err.message); }
 }
 
 /* ── Polling ──────────────────────────────────────────────────────── */
@@ -567,7 +747,7 @@ function startPolling(id){
         clearInterval(pollingTimers[id]);
         delete pollingTimers[id];
       }
-    }catch(e){/* ignore transient errors */}
+    }catch(e){/* ignore */}
   }
   tick();
   pollingTimers[id] = setInterval(tick, 2000);
@@ -592,7 +772,7 @@ function render(){
   if(!sorted.length){
     container.innerHTML = `<div class="empty-state">
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-      <p>No crawl jobs yet. Submit a URL above to get started.</p>
+      <p>No scraping jobs yet. Submit a URL above to get started.</p>
     </div>`;
     return;
   }
@@ -622,13 +802,10 @@ function render(){
   container.querySelectorAll('.method-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const id = btn.dataset.jobId;
-      const method = btn.dataset.method;
-      // Toggle selected class among siblings
       btn.closest('.method-select').querySelectorAll('.method-btn').forEach(b=>b.classList.remove('selected'));
       btn.classList.add('selected');
-      // Update hidden input
       const hidden = document.getElementById('method-'+id);
-      if(hidden) hidden.value = method;
+      if(hidden) hidden.value = btn.dataset.method;
     });
   });
 
@@ -644,8 +821,8 @@ function render(){
       const extractionMethod = isDual && methodEl ? methodEl.value : null;
       btn.disabled = true;
       btn.innerHTML = isTest
-        ? '<span class="spinner"></span> Finishing test...'
-        : '<span class="spinner"></span> Starting full crawl...';
+        ? '<span class="spinner"></span> Saving...'
+        : '<span class="spinner"></span> Running full scrape...';
       confirmPreview(id, true, feedback, extractionMethod);
     });
   });
@@ -653,7 +830,7 @@ function render(){
   container.querySelectorAll('.preview-abort-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const id = btn.dataset.jobId;
-      if(confirm('Abort this crawl?')){
+      if(confirm('Cancel this scraping job?')){
         btn.disabled = true;
         confirmPreview(id, false, null, null);
       }
@@ -671,6 +848,9 @@ function renderJobCard(j){
       ${isTest ? '<span class="job-mode">Test</span>' : ''}
       ${j.request.template_id ? '<span class="job-mode" style="background:rgba(0,184,148,.12);color:var(--green)">Template</span>' : ''}
       ${maxItems ? '<span class="job-mode" style="background:rgba(253,203,110,.12);color:var(--yellow)">Max '+maxItems+'</span>' : ''}
+      ${j.platform_info && j.platform_info.cms ? '<span class="platform-badge">'+esc(j.platform_info.cms)+'</span>' : ''}
+      ${j.platform_info && j.platform_info.ecommerce ? '<span class="platform-badge" style="background:rgba(0,184,148,.1);color:var(--green)">'+esc(j.platform_info.ecommerce)+'</span>' : ''}
+      ${j.platform_info && j.platform_info.js_framework ? '<span class="platform-badge" style="background:rgba(108,92,231,.1);color:var(--accent2)">'+esc(j.platform_info.js_framework)+'</span>' : ''}
       <span class="job-url" title="${esc(j.request.url)}">${esc(j.request.url)}</span>
       <span class="job-time" title="${j.created_at}">${timeAgo(j.created_at)}</span>
     </div>
@@ -696,18 +876,8 @@ function renderJobDetail(j){
 
   let body = '';
 
-  /* show hints if provided */
-  const hints = [];
-  if(j.request.detail_page_url) hints.push('Detail page: '+j.request.detail_page_url);
-  if(j.request.fields_wanted) hints.push('Fields: '+j.request.fields_wanted);
-  if(j.request.max_items) hints.push('Max items: '+j.request.max_items);
-  if(isTest) hints.push('Mode: Test single item');
-  if(hints.length){
-    body += `<div style="font-size:.76rem;color:var(--text2);margin-bottom:10px;padding:8px 12px;background:var(--surface2);border-radius:6px;border:1px solid var(--border)">${hints.map(h=>'<div>'+esc(h)+'</div>').join('')}</div>`;
-  }
-
   if(isFailed && j.error){
-    body += `<div class="error-box"><strong>Error:</strong> ${esc(j.error)}</div>`;
+    body += `<div class="error-box"><strong>Something went wrong:</strong> ${esc(j.error)}</div>`;
   }
 
   if(isPreview && (j.preview_record_css || j.preview_record_smart)){
@@ -718,9 +888,9 @@ function renderJobDetail(j){
     body += `<div class="preview-box" style="border-color:var(--red)">
       <h3 style="color:var(--red)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-        Preview Failed
+        Could not find data
       </h3>
-      <p style="color:var(--text2);font-size:.85rem;margin:8px 0 14px">${j.error ? esc(j.error) : 'No data could be extracted from the page. The scraper could not identify any items.'}</p>
+      <p style="color:var(--text2);font-size:.85rem;margin:8px 0 14px">${j.error ? esc(j.error) : 'We could not find any company or exhibitor data on this page. Try a different URL or check that the page has a list of exhibitors.'}</p>
       <div class="preview-actions">
         <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Dismiss</button>
       </div>
@@ -732,31 +902,31 @@ function renderJobDetail(j){
   const isComplete = j.status==='completed';
 
   if(hasPlan || hasRecords){
+    const hasQuality = j.quality_report && j.quality_report.total_records > 0;
     body += `<div class="tabs">`;
-    if(hasRecords) body += `<button class="tab active" data-panel="tab-data-${j.id}">Data</button>`;
-    if(hasPlan) body += `<button class="tab ${hasRecords?'':'active'}" data-panel="tab-plan-${j.id}">Plan</button>`;
-    if(hasRecords) body += `<button class="tab" data-panel="tab-json-${j.id}">Raw JSON</button>`;
+    if(hasRecords) body += `<button class="tab active" data-panel="tab-data-${j.id}">Results</button>`;
+    if(hasQuality) body += `<button class="tab" data-panel="tab-quality-${j.id}">Quality</button>`;
+    if(hasRecords) body += `<button class="tab" data-panel="tab-json-${j.id}">Raw Data</button>`;
+    if(hasPlan) body += `<button class="tab ${hasRecords?'':'active'}" data-panel="tab-plan-${j.id}">Details</button>`;
     body += `</div>`;
 
     if(hasRecords){
       const recs = j.result.records;
       body += `<div class="tab-panel active" id="tab-data-${j.id}">`;
       body += `<div class="results-bar">
-        <span class="record-count">${recs.length} record${recs.length!==1?'s':''}</span>
+        <span class="record-count">${recs.length} compan${recs.length!==1?'ies':'y'} found</span>
+        ${hasQuality ? renderQualityBadge(j.quality_report) : ''}
         ${isComplete?`<div class="dl-btns">
-          <a href="${API}/crawl/${j.id}/json" class="btn btn-sm btn-outline" download>JSON</a>
-          <a href="${API}/crawl/${j.id}/csv" class="btn btn-sm btn-green" download>CSV</a>
+          <a href="${API}/crawl/${j.id}/json" class="btn btn-sm btn-outline" download>Download JSON</a>
+          <a href="${API}/crawl/${j.id}/csv" class="btn btn-sm btn-green" download>Download CSV</a>
         </div>`:''}
       </div>`;
       body += renderTable(recs);
       body += `</div>`;
     }
 
-    if(hasPlan){
-      body += `<div class="tab-panel ${hasRecords?'':'active'}" id="tab-plan-${j.id}">
-        ${renderPlanSummary(j.plan)}
-        <div class="plan-box" style="margin-top:8px"><pre>${esc(JSON.stringify(j.plan,null,2))}</pre></div>
-      </div>`;
+    if(hasQuality){
+      body += `<div class="tab-panel" id="tab-quality-${j.id}">${renderQualityCard(j.quality_report)}</div>`;
     }
 
     if(hasRecords){
@@ -764,8 +934,14 @@ function renderJobDetail(j){
         <div class="plan-box"><pre>${esc(JSON.stringify(j.result.records.slice(0,20),null,2))}${j.result.records.length>20?'\n... ('+(j.result.records.length-20)+' more)':''}</pre></div>
       </div>`;
     }
+
+    if(hasPlan){
+      body += `<div class="tab-panel ${hasRecords?'':'active'}" id="tab-plan-${j.id}">
+        <div class="plan-box"><pre>${esc(JSON.stringify(j.plan,null,2))}</pre></div>
+      </div>`;
+    }
   } else if(!isFailed && !isPreview && j.status!=='completed'){
-    body += `<div style="text-align:center;padding:20px;color:var(--text2);font-size:.86rem"><span class="spinner" style="margin-right:8px"></span>Processing...</div>`;
+    body += `<div style="text-align:center;padding:24px;color:var(--text2);font-size:.88rem"><span class="spinner" style="margin-right:8px"></span>Working on it...</div>`;
   }
 
   return `<div class="job-detail">
@@ -780,11 +956,11 @@ function renderPreviewCard(j){
   let html = `<div class="preview-box">
     <h3>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-      Preview — Sample Record
+      Sample Result — Does this look right?
     </h3>
     <p class="preview-subtitle">${isTest
-      ? 'Test run with a single item. Review and confirm to save, or abort.'
-      : 'Review this sample before the full crawl. Describe missing data below if needed.'}</p>
+      ? 'Here\'s a test result. Review it and click "Looks good" to save, or cancel.'
+      : 'Here\'s one sample from the page. If it looks good, we\'ll scrape all the data.'}</p>
     <div class="preview-fields">`;
 
   PREVIEW_FIELDS.forEach(f=>{
@@ -794,15 +970,15 @@ function renderPreviewCard(j){
     const hasVal = v && v.trim && v.trim().length>0;
     html += `<div class="preview-field">
       <div class="preview-field-label">${esc(prettyLabel(f))}</div>
-      <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'Not captured'}</div>
+      <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'—'}</div>
     </div>`;
   });
 
   html += `</div>
     <div class="preview-actions">
-      <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}">${isTest?'Looks good — Save':'Looks good — Start full crawl'}</button>
-      ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Optional: describe missing data">'}
-      <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Abort</button>
+      <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}">${isTest?'Looks good — Save':'Looks good — Scrape all'}</button>
+      ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Something missing? Describe it here...">'}
+      <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Cancel</button>
     </div>
   </div>`;
   return html;
@@ -818,31 +994,24 @@ function renderDualPreviewCard(j){
   let html = `<div class="preview-box">
     <h3>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-      Preview — Compare Extraction Methods
+      Sample Results — Pick the better one
     </h3>
     <p class="preview-subtitle">${isTest
-      ? 'Test run — compare both extraction methods below.'
-      : 'Review both extraction results. Choose the method you prefer for the full crawl.'}</p>`;
+      ? 'We extracted data two different ways. Pick the one that looks more complete.'
+      : 'We tried two extraction methods. Choose which result looks better, then we\'ll scrape all the data.'}</p>`;
 
-  // LLM recommendation
   if(j.preview_recommendation){
     html += `<div class="recommendation-box">
-      <strong>AI Recommendation:</strong> ${esc(j.preview_recommendation)}
+      <strong>Our suggestion:</strong> ${esc(j.preview_recommendation)}
     </div>`;
   }
 
-  // Side-by-side columns
   html += `<div class="dual-preview">`;
 
-  // CSS column
   if(cssRec){
     const isCssRec = recMethod==='css';
     html += `<div class="preview-col ${isCssRec?'recommended':''}">
-      <h4>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg>
-        CSS Selectors
-        ${isCssRec?'<span class="rec-badge">Recommended</span>':''}
-      </h4>
+      <h4>Method A ${isCssRec?'<span class="rec-badge">Suggested</span>':''}</h4>
       <div class="preview-fields">`;
     PREVIEW_FIELDS.forEach(f=>{
       let v = cssRec[f];
@@ -851,29 +1020,21 @@ function renderDualPreviewCard(j){
       const hasVal = v && v.trim && v.trim().length>0;
       html += `<div class="preview-field">
         <div class="preview-field-label">${esc(prettyLabel(f))}</div>
-        <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'Not captured'}</div>
+        <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'—'}</div>
       </div>`;
     });
     html += `</div></div>`;
   } else {
     html += `<div class="preview-col" style="opacity:.5">
-      <h4>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg>
-        CSS Selectors
-      </h4>
-      <p style="color:var(--text2);font-size:.84rem">No data extracted</p>
+      <h4>Method A</h4>
+      <p style="color:var(--text2);font-size:.84rem">No data found</p>
     </div>`;
   }
 
-  // SmartScraperGraph column
   if(smartRec){
     const isSmartRec = recMethod==='smart_scraper';
     html += `<div class="preview-col ${isSmartRec?'recommended':''}">
-      <h4>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/></svg>
-        AI Extraction
-        ${isSmartRec?'<span class="rec-badge">Recommended</span>':''}
-      </h4>
+      <h4>Method B ${isSmartRec?'<span class="rec-badge">Suggested</span>':''}</h4>
       <div class="preview-fields">`;
     PREVIEW_FIELDS.forEach(f=>{
       let v = smartRec[f];
@@ -882,44 +1043,85 @@ function renderDualPreviewCard(j){
       const hasVal = v && v.trim && v.trim().length>0;
       html += `<div class="preview-field">
         <div class="preview-field-label">${esc(prettyLabel(f))}</div>
-        <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'Not captured'}</div>
+        <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'—'}</div>
       </div>`;
     });
     html += `</div></div>`;
   } else {
     html += `<div class="preview-col" style="opacity:.5">
-      <h4>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/></svg>
-        AI Extraction
-      </h4>
-      <p style="color:var(--text2);font-size:.84rem">No data extracted</p>
+      <h4>Method B</h4>
+      <p style="color:var(--text2);font-size:.84rem">No data found</p>
     </div>`;
   }
 
-  html += `</div>`; // close dual-preview
+  html += `</div>`;
 
-  // Method selection buttons
   const defaultMethod = recMethod || (cssRec ? 'css' : 'smart_scraper');
   html += `<div class="method-select">
     <span style="font-size:.82rem;color:var(--text2);align-self:center;margin-right:4px">Use:</span>`;
   if(cssRec){
-    html += `<button class="method-btn ${defaultMethod==='css'?'selected':''}" data-method="css" data-job-id="${j.id}">CSS Selectors</button>`;
+    html += `<button class="method-btn ${defaultMethod==='css'?'selected':''}" data-method="css" data-job-id="${j.id}">Method A</button>`;
   }
   if(smartRec){
-    html += `<button class="method-btn ${defaultMethod==='smart_scraper'?'selected':''}" data-method="smart_scraper" data-job-id="${j.id}">AI Extraction</button>`;
+    html += `<button class="method-btn ${defaultMethod==='smart_scraper'?'selected':''}" data-method="smart_scraper" data-job-id="${j.id}">Method B</button>`;
   }
   html += `</div>`;
 
-  // Hidden input to store selected method
   html += `<input type="hidden" id="method-${j.id}" value="${defaultMethod}">`;
 
-  // Actions
   html += `<div class="preview-actions">
-    <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}" data-dual="true">${isTest?'Looks good — Save':'Looks good — Start full crawl'}</button>
-    ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Optional: describe missing data">'}
-    <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Abort</button>
+    <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}" data-dual="true">${isTest?'Looks good — Save':'Looks good — Scrape all'}</button>
+    ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Something missing? Describe it here...">'}
+    <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Cancel</button>
   </div>
   </div>`;
+  return html;
+}
+
+function renderQualityBadge(qr){
+  const pct = Math.round(qr.overall_score*100);
+  const cls = pct>=70?'good':pct>=40?'moderate':'low';
+  return `<span class="quality-score ${cls}" title="Data quality score">${pct}%</span>`;
+}
+
+function renderQualityCard(qr){
+  const pct = Math.round(qr.overall_score*100);
+  const cls = pct>=70?'good':pct>=40?'moderate':'low';
+  const barColor = pct>=70?'var(--green)':pct>=40?'var(--yellow)':'var(--red)';
+
+  let html = `<div class="quality-card">
+    <div class="quality-header">
+      <span class="quality-score ${cls}">${pct}%</span>
+      <span class="quality-label">Data Quality Score (${qr.total_records} records)</span>
+    </div>
+    <div class="quality-bar"><div class="quality-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>`;
+
+  // Field coverage chips
+  if(qr.field_coverage){
+    html += `<div class="quality-fields">`;
+    Object.entries(qr.field_coverage).forEach(([f,v])=>{
+      const fpct = Math.round(v*100);
+      const fc = fpct>=70?'var(--green)':fpct>=40?'var(--yellow)':'var(--red)';
+      html += `<span class="quality-field" style="background:${fc}22;color:${fc}"><span class="qf-dot" style="background:${fc}"></span>${prettyLabel(f)} ${fpct}%</span>`;
+    });
+    html += `</div>`;
+  }
+
+  // Warnings
+  if(qr.warnings && qr.warnings.length){
+    html += `<div class="quality-warnings"><strong style="color:var(--yellow)">⚠ Warnings:</strong><ul>`;
+    qr.warnings.forEach(w=> html += `<li>${esc(w)}</li>`);
+    html += `</ul></div>`;
+  }
+
+  // Recommendations
+  if(qr.recommendations && qr.recommendations.length){
+    html += `<div class="quality-warnings" style="margin-top:8px"><strong style="color:var(--blue)">💡 Tips:</strong><ul>`;
+    qr.recommendations.forEach(r=> html += `<li>${esc(r)}</li>`);
+    html += `</ul></div>`;
+  }
+
+  html += `</div>`;
   return html;
 }
 
@@ -927,7 +1129,7 @@ function renderTable(records){
   const activeCols = TABLE_COLS.filter(c=>records.some(r=>{
     const v = r[c]; return v && (Array.isArray(v) ? v.length>0 : true);
   }));
-  if(!activeCols.length) return '<p style="color:var(--text2);font-size:.85rem">No structured data to display.</p>';
+  if(!activeCols.length) return '<p style="color:var(--text2);font-size:.85rem">No data to display.</p>';
 
   let html = '<div class="table-wrap"><table><thead><tr>';
   html += '<th>#</th>';
@@ -952,199 +1154,11 @@ function renderTable(records){
   return html;
 }
 
-function renderPlanSummary(plan){
-  if(!plan) return '';
-  const target = plan.target || {};
-  const listingFields = Object.keys(target.field_selectors || {});
-  const detailPagePlan = plan.detail_page_plan;
-  const detailApiPlan = plan.detail_api_plan;
-
-  let detailFieldNames = [];
-  if(detailApiPlan && detailApiPlan.sample_response){
-    const skip = new Set(['type','id','write','lastModified','createdAt','updatedAt','media','pdfs','synonyms','tags','xtags']);
-    detailFieldNames = Object.keys(detailApiPlan.sample_response).filter(k => !skip.has(k));
-  } else if(detailPagePlan && Object.keys(detailPagePlan.field_selectors||{}).length){
-    detailFieldNames = Object.keys(detailPagePlan.field_selectors);
-  } else {
-    detailFieldNames = Object.keys(plan.detail_page_fields || {});
-  }
-
-  let detailApproach, detailBadgeColor;
-  if(detailApiPlan && detailApiPlan.api_url_template){
-    detailApproach = `<strong style="color:var(--green)">API Interception</strong>`;
-    detailBadgeColor = 'var(--green)';
-  } else if(detailPagePlan && Object.keys(detailPagePlan.field_selectors||{}).length){
-    detailApproach = `<strong style="color:var(--accent2)">Detail Page</strong>`;
-    detailBadgeColor = 'var(--accent2)';
-  } else if(target.detail_link_selector){
-    detailApproach = `<strong style="color:var(--accent2)">Detail Page</strong> — <code style="font-size:.75rem">${esc(target.detail_link_selector)}</code>`;
-    detailBadgeColor = 'var(--accent2)';
-  } else {
-    detailApproach = `<span style="color:var(--text2)">None — listing data only</span>`;
-    detailBadgeColor = 'var(--border)';
-  }
-
-  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:4px">
-    <div class="preview-field">
-      <div class="preview-field-label">Pagination</div>
-      <div class="preview-field-value">${esc(plan.pagination||'none')}</div>
-    </div>
-    <div class="preview-field">
-      <div class="preview-field-label">JavaScript</div>
-      <div class="preview-field-value" style="color:${plan.requires_javascript?'var(--yellow)':'var(--green)'}">${plan.requires_javascript?'Yes':'No'}</div>
-    </div>
-    <div class="preview-field">
-      <div class="preview-field-label">Listing Fields</div>
-      <div class="preview-field-value" style="font-size:.78rem">${listingFields.length ? esc(listingFields.join(', ')) : '<span style="color:var(--text2)">none</span>'}</div>
-    </div>
-    <div class="preview-field">
-      <div class="preview-field-label">Detail Enrichment</div>
-      <div class="preview-field-value">${detailApproach}</div>
-    </div>
-    ${detailFieldNames.length ? `<div class="preview-field" style="grid-column:1/-1">
-      <div class="preview-field-label">Detail Fields</div>
-      <div class="preview-field-value" style="font-size:.78rem">${esc(detailFieldNames.join(', '))}</div>
-    </div>` : ''}
-  </div>`;
-}
-
-/* ── Execution / Script result formatters ─────────────────────────── */
-function formatExecution(exec) {
-  if (!exec) return '';
-  if (exec.safety_warnings && exec.safety_warnings.length) {
-    return `<div class="exec-section"><div class="exec-header open">
-      <span class="exec-badge exec-badge-blocked">BLOCKED</span> Script blocked by safety scan
-    </div><div class="exec-body open">
-      <div class="exec-stderr">${exec.safety_warnings.map(w => esc(w)).join('\n')}</div>
-    </div></div>`;
-  }
-  let badge;
-  if (exec.timed_out) badge = '<span class="exec-badge exec-badge-timeout">TIMEOUT</span>';
-  else if (exec.returncode === 0) badge = '<span class="exec-badge exec-badge-success">SUCCESS</span>';
-  else badge = '<span class="exec-badge exec-badge-error">EXIT ' + exec.returncode + '</span>';
-
-  let body = '';
-  if (exec.stdout) {
-    let display = exec.stdout;
-    try { const parsed = JSON.parse(exec.stdout); display = JSON.stringify(parsed, null, 2); } catch(e) {}
-    body += `<div class="exec-stdout">${esc(display)}</div>`;
-  }
-  if (exec.stderr) body += `<div class="exec-stderr">${esc(exec.stderr)}</div>`;
-  if (!exec.stdout && !exec.stderr) body += `<div style="color:var(--text2);font-size:.82rem">No output.</div>`;
-  return `<div style="margin-top:12px">${badge}<div style="margin-top:8px">${body}</div></div>`;
-}
-
-function formatScriptResult(data) {
-  let html = '';
-  html += `<div class="exec-section">
-    <div class="exec-header" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-      Generated Script (click to expand)
-    </div>
-    <div class="exec-body"><pre>${esc(data.script)}</pre></div>
-  </div>`;
-  if (data.execution) {
-    html += `<h4 style="font-size:.86rem;color:var(--text);margin-top:14px;margin-bottom:6px">Execution Results</h4>`;
-    html += formatExecution(data.execution);
-  }
-  return html;
-}
-
-/* ── Advanced Tool Tabs ──────────────────────────────────────────── */
-document.querySelectorAll('.tool-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    const parent = tab.closest('.toggle-panel');
-    parent.querySelectorAll('.tool-tab').forEach(t => t.classList.remove('active'));
-    parent.querySelectorAll('.tool-panel').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('tool-' + tab.dataset.tool).classList.add('active');
-  });
-});
-
-/* ── Multi-Scrape ────────────────────────────────────────────────── */
-document.getElementById('multiScrapeBtn').addEventListener('click', async () => {
-  const urls = document.getElementById('multiScrapeUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean);
-  const prompt = document.getElementById('multiScrapePrompt').value.trim();
-  const resultEl = document.getElementById('multiScrapeResult');
-  if(!urls.length || !prompt) { showToolError(resultEl,'Enter URLs and a prompt.'); return; }
-  showToolLoading(resultEl);
-  try {
-    const data = await apiPost('/smart-scrape-multi', {urls, prompt});
-    showToolResult(resultEl, `<pre>${esc(JSON.stringify(data.result, null, 2))}</pre>`);
-  } catch(e) { showToolError(resultEl, e.message); }
-});
-
-/* ── Script Generator ────────────────────────────────────────────── */
-document.getElementById('scriptGenBtn').addEventListener('click', async () => {
-  const url = document.getElementById('scriptGenUrl').value.trim();
-  const prompt = document.getElementById('scriptGenPrompt').value.trim();
-  const library = document.getElementById('scriptGenLibrary').value;
-  const autoExec = document.getElementById('scriptGenAutoExec').checked;
-  const resultEl = document.getElementById('scriptGenResult');
-  if(!url || !prompt) { showToolError(resultEl,'Enter a URL and a prompt.'); return; }
-  showToolLoading(resultEl);
-  try {
-    const data = await apiPost('/generate-script', {url, prompt, library, auto_execute: autoExec});
-    showToolResult(resultEl, formatScriptResult(data));
-  } catch(e) { showToolError(resultEl, e.message); }
-});
-
-/* ── Multi-Script Generator ──────────────────────────────────────── */
-document.getElementById('scriptGenMultiBtn').addEventListener('click', async () => {
-  const urls = document.getElementById('scriptGenMultiUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean);
-  const prompt = document.getElementById('scriptGenMultiPrompt').value.trim();
-  const library = document.getElementById('scriptGenMultiLibrary').value;
-  const autoExec = document.getElementById('scriptGenMultiAutoExec').checked;
-  const resultEl = document.getElementById('scriptGenMultiResult');
-  if(!urls.length || !prompt) { showToolError(resultEl,'Enter URLs and a prompt.'); return; }
-  showToolLoading(resultEl);
-  try {
-    const data = await apiPost('/generate-script-multi', {urls, prompt, library, auto_execute: autoExec});
-    showToolResult(resultEl, formatScriptResult(data));
-  } catch(e) { showToolError(resultEl, e.message); }
-});
-
-/* ── Templates ───────────────────────────────────────────────────── */
-let templates = [];
-
-async function loadTemplates() {
-  try {
-    templates = await apiGet('/templates');
-    const sel = document.getElementById('templateSelect');
-    templates.forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t.id;
-      opt.textContent = t.name + (t.expected_record_count ? ` (~${t.expected_record_count} records)` : '');
-      sel.appendChild(opt);
-    });
-  } catch(e) {
-    console.warn('Failed to load templates', e);
-  }
-}
-
-document.getElementById('templateSelect').addEventListener('change', function() {
-  const tmpl = templates.find(t => t.id === this.value);
-  const hintEl = document.getElementById('templateHint');
-
-  if (!tmpl) {
-    hintEl.style.display = 'none';
-    return;
-  }
-
-  // Auto-fill form fields
-  document.getElementById('crawlUrls').value = tmpl.default_url;
-  document.getElementById('crawlPrompt').value = tmpl.default_prompt;
-  document.getElementById('crawlFields').value = tmpl.default_fields_wanted;
-
-  // Show description as hint
-  hintEl.textContent = tmpl.description;
-  hintEl.style.display = 'block';
-});
-
 /* ── Refresh & Init ──────────────────────────────────────────────── */
 document.getElementById('refreshBtn').addEventListener('click', loadJobs);
 loadTemplates();
 loadJobs();
+highlightSteps();
 </script>
 </body>
 </html>

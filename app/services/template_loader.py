@@ -1,4 +1,10 @@
-"""Template loader — reads scraping templates from app/templates/*.json."""
+"""Template loader — reads scraping templates from app/templates/*.json.
+
+Templates describe **website patterns** (e.g. "JS directory with A-Z tabs and
+detail pages") — not site-specific CSS selectors.  When a user selects a
+template, the structural hints are passed to the planner agent which analyses
+the *actual* target page to generate CSS selectors at runtime.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +12,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from app.models.schemas import ScrapingPlan, ScrapingTemplate
+from app.models.schemas import ScrapingTemplate, TemplateHints
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -24,19 +30,15 @@ def get_template(template_id: str) -> ScrapingTemplate | None:
     return _load_all().get(template_id)
 
 
-def get_plan_from_template(template_id: str, url: str) -> ScrapingPlan:
-    """Load a template and return its ScrapingPlan with the URL replaced.
+def get_hints_from_template(template_id: str) -> TemplateHints:
+    """Load a template and return its TemplateHints.
 
     Raises ValueError if the template is not found.
     """
     tmpl = get_template(template_id)
     if not tmpl:
         raise ValueError(f"Template not found: {template_id}")
-
-    # Deep copy the plan via Pydantic serialization
-    plan_data = tmpl.plan.model_dump(mode="json")
-    plan_data["url"] = url
-    return ScrapingPlan.model_validate(plan_data)
+    return tmpl.hints
 
 
 @lru_cache(maxsize=1)
@@ -51,9 +53,9 @@ def _load_all() -> dict[str, ScrapingTemplate]:
     for path in sorted(_TEMPLATES_DIR.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            plan_data = data.get("plan", {})
-            plan = ScrapingPlan.model_validate(plan_data)
-            data["plan"] = plan
+            hints_data = data.get("hints", {})
+            hints = TemplateHints.model_validate(hints_data)
+            data["hints"] = hints
             tmpl = ScrapingTemplate.model_validate(data)
             templates[tmpl.id] = tmpl
             log.info("Loaded template: %s (%s)", tmpl.id, tmpl.name)

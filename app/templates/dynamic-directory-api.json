@@ -1,0 +1,15 @@
+{
+  "id": "dynamic-directory-api",
+  "name": "Dynamic Directory (API Detail)",
+  "description": "For JavaScript-heavy directory sites with tab/filter navigation where detail data is loaded through a hidden API call (XHR) when clicking a detail button — not by navigating to a new page.",
+  "platform": "dynamic-directory-api",
+  "default_prompt": "Extract all exhibitor/seller details including company name, contact information, location, product categories, and brands.",
+  "default_fields_wanted": "name, booth, country, city, address, postal_code, website, email, phone, description, product_categories, brands",
+  "hints": {
+    "requires_javascript": true,
+    "pagination": "alphabet_tabs",
+    "has_detail_pages": false,
+    "has_detail_api": true,
+    "notes": "This pattern is common for modern JS-rendered directories (Angular/React/Vue). The listing page uses alphabet or category tabs. Clicking a 'Details' button does NOT navigate to a new page — instead it triggers an XHR/fetch API call that returns JSON data. The planner should look for detail buttons (not links with href) and attempt API interception. Items may have data attributes containing IDs used in the API URL."
+  }
+}

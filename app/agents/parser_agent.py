@@ -25,15 +25,15 @@ log = get_logger(__name__)
 _MAX_BATCH_CHARS = 60_000
 
 # Fields from detail API responses that carry no schema value (metadata, flags,
-# internal IDs, binary-like data, etc.).  Stripped before sending to the LLM.
-# Generic patterns: internal IDs, edit flags, timestamps, binary/media refs.
+# timestamps, etc.).  Stripped before sending to the LLM to save tokens.
+# Only include keys that are universally noise — never domain-specific content.
 _API_SKIP_KEYS = frozenset({
-    "type", "id", "write", "lastModified", "createdAt", "updatedAt",
-    "media", "pdfs", "synonyms", "tags", "xtags",
+    "lastModified", "createdAt", "updatedAt", "modifiedAt",
+    "write", "_links", "_embedded", "__typename",
 })
 
 # Max characters kept for description / free-text fields in the API response
-_MAX_TEXT_CHARS = 800
+_MAX_TEXT_CHARS = 1500
 
 
 def _compact_api_response(data: dict) -> dict:
@@ -46,20 +46,14 @@ def _compact_api_response(data: dict) -> dict:
     compact = {k: v for k, v in data.items() if k not in _API_SKIP_KEYS}
 
     # Truncate long free-text / HTML description
-    for key in ("text", "description"):
+    for key in ("text", "description", "about", "bio", "summary"):
         if key in compact and isinstance(compact[key], str):
             compact[key] = compact[key][:_MAX_TEXT_CHARS]
 
-    # Trim product lists inside categories — keep labels only, max 10 products
-    if "categories" in compact and isinstance(compact["categories"], list):
-        compact["categories"] = [
-            {
-                "label": c.get("label"),
-                "products": [p.get("label") for p in c.get("productList", [])[:10]],
-            }
-            for c in compact["categories"]
-            if isinstance(c, dict)
-        ]
+    # Generically truncate large nested lists to save tokens
+    for key, val in list(compact.items()):
+        if isinstance(val, list) and len(val) > 20:
+            compact[key] = val[:20]
 
     return compact
 
@@ -77,11 +71,18 @@ class ParserAgent:
         detail_htmls: dict[str, str] = {}
         detail_sub_pages: dict[str, dict[str, str]] = {}
         detail_api_responses: dict[str, dict] = {}
+        merged_structured_data: dict = {}
         for pd in page_data_list:
             all_items.extend(pd.items)
             detail_htmls.update(pd.detail_pages)
             detail_sub_pages.update(pd.detail_sub_pages)
             detail_api_responses.update(pd.detail_api_responses)
+            # Merge structured data from all pages (first non-empty wins per key)
+            if pd.structured_data:
+                for key in ("json_ld", "open_graph", "microdata"):
+                    val = pd.structured_data.get(key)
+                    if val and key not in merged_structured_data:
+                        merged_structured_data[key] = val
 
         log.info("Parsing %d raw items", len(all_items))
 
@@ -103,7 +104,9 @@ class ParserAgent:
                 detail_texts[url] = fields_text
 
         # Build enriched items and split into size-aware batches
-        enriched_items = self._build_enriched_items(all_items, detail_texts, detail_api_responses)
+        enriched_items = self._build_enriched_items(
+            all_items, detail_texts, detail_api_responses, merged_structured_data,
+        )
         batches = self._split_into_batches(enriched_items)
         log.info("Split %d items into %d batch(es) for parsing", len(all_items), len(batches))
 
@@ -120,8 +123,13 @@ class ParserAgent:
         items: list[dict],
         detail_texts: dict[str, str],
         detail_api_responses: dict[str, dict],
+        structured_data: dict | None = None,
     ) -> list[dict]:
-        """Attach detail data (HTML text or compact API JSON) to each item."""
+        """Attach detail data (HTML text or compact API JSON) to each item.
+
+        Also attaches page-level structured data (JSON-LD, Open Graph, Microdata)
+        to every item so the parser LLM can use it for enrichment.
+        """
         enriched = []
         matched_detail = 0
         matched_api = 0
@@ -136,6 +144,12 @@ class ParserAgent:
                 compact = _compact_api_response(detail_api_responses[item_id])
                 entry["_detail_api_data"] = json.dumps(compact, ensure_ascii=False)
                 matched_api += 1
+            # Attach page-level structured data (compact form) so LLM has extra signals
+            if structured_data:
+                sd_compact = json.dumps(structured_data, ensure_ascii=False)
+                # Only attach if it's reasonably sized (< 3 000 chars) to not blow up tokens
+                if len(sd_compact) < 3_000:
+                    entry["_structured_data"] = sd_compact
             enriched.append(entry)
         log.info(
             "Enrichment matching: %d/%d items got detail page data, %d/%d got API data "
@@ -211,27 +225,51 @@ class ParserAgent:
 
     @staticmethod
     def _extract_detail_fields_css(html: str, plan: ScrapingPlan) -> str:
-        """Extract fields from a detail page HTML using the plan's CSS selectors."""
+        """Extract fields from a detail page HTML using the plan's CSS selectors.
+
+        Uses detail_page_plan.field_selectors (preferred) or falls back to the
+        legacy plan.detail_page_fields for backward compatibility.
+        """
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "lxml")
         parts: list[str] = []
-        for field, selector in plan.detail_page_fields.items():
-            el = soup.select_one(selector)
-            if el:
-                attr = plan.detail_page_field_attributes.get(field)
-                val = el.get(attr) if attr else el.get_text(separator=" ", strip=True)
-                parts.append(f"{field}: {val}")
+
+        # Prefer detail_page_plan (new-style), fall back to legacy fields
+        field_selectors = {}
+        field_attributes = {}
+        if plan.detail_page_plan and plan.detail_page_plan.field_selectors:
+            field_selectors = plan.detail_page_plan.field_selectors
+            field_attributes = plan.detail_page_plan.field_attributes
+        elif plan.detail_page_fields:
+            field_selectors = plan.detail_page_fields
+            field_attributes = plan.detail_page_field_attributes
+
+        for field, selector in field_selectors.items():
+            if not selector or not selector.strip():
+                continue
+            try:
+                el = soup.select_one(selector)
+                if el:
+                    attr = field_attributes.get(field)
+                    val = el.get(attr) if attr else el.get_text(separator=" ", strip=True)
+                    parts.append(f"{field}: {val}")
+            except Exception:
+                pass  # skip invalid selectors
         return "\n".join(parts)
 
     @staticmethod
     async def _extract_detail_fields_smart(html: str, plan: ScrapingPlan) -> str:
-        """Extract fields from a detail page using SmartScraperGraph."""
+        """Extract fields from a detail page using LLM-based extraction."""
         from app.utils.smart_scraper import smart_extract_detail
 
+        # Use plan fields if available, otherwise use a broad generic set
         fields = list(plan.detail_page_fields.keys()) if plan.detail_page_fields else [
-            "name", "country", "city", "address", "email", "phone",
-            "website", "description", "product_categories",
+            "name", "country", "city", "address", "postal_code",
+            "email", "phone", "website", "description",
+            "product_categories", "brands", "logo_url",
+            "store_url", "social_media",
+            "industry",
         ]
         detail = await smart_extract_detail(html, fields)
         if detail:

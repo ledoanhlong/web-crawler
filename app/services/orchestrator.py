@@ -19,14 +19,18 @@ Each stage updates the CrawlJob status so progress can be tracked via the API.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.agents.output_agent import OutputAgent
 from app.agents.parser_agent import ParserAgent
 from app.agents.planner_agent import PlannerAgent
 from app.agents.scraper_agent import ScraperAgent
 from app.models.schemas import CrawlJob, CrawlStatus, ExtractionMethod
+from app.services.plan_cache import plan_cache
+from app.utils.fingerprint import fingerprint as fingerprint_page
+from app.utils.http import fetch_page_full
 from app.utils.logging import get_logger
+from app.utils.quality import evaluate_quality
 
 log = get_logger(__name__)
 
@@ -48,24 +52,54 @@ class Orchestrator:
         try:
             req = job.request
 
-            # ---- Stage 1: Planning (skip if template plan already set) ----
-            if job.plan:
-                log.info("[%s] Stage 1: Using pre-set plan (template) — skipping planner", job.id)
-                plan = job.plan
-            else:
+            # ---- Stage 1: Planning ----
+            # Templates provide structural hints (JS, pagination type, detail
+            # strategy) but the planner still runs to generate CSS selectors
+            # for the actual target page.
+            template_hints = getattr(job, "_template_hints", None)
+
+            # Check plan cache first (only when no template hints override)
+            cached = None
+            if not template_hints:
+                cached_data = plan_cache.get(req.url)
+                if cached_data:
+                    from app.models.schemas import ScrapingPlan
+                    try:
+                        plan = ScrapingPlan.model_validate(cached_data)
+                        job.plan = plan
+                        log.info("[%s] Stage 1: Using cached plan", job.id)
+                        cached = True
+                    except Exception:
+                        pass
+
+            if not cached:
                 job.status = CrawlStatus.PLANNING
-                job.updated_at = datetime.utcnow()
-                log.info("[%s] Stage 1: Planning", job.id)
+                job.updated_at = datetime.now(timezone.utc)
+                if template_hints:
+                    log.info("[%s] Stage 1: Planning with template hints (%s)", job.id, req.template_id)
+                else:
+                    log.info("[%s] Stage 1: Planning", job.id)
                 plan = await self.planner.plan(
                     req.url,
                     detail_page_url=req.detail_page_url,
                     fields_wanted=req.fields_wanted,
+                    item_description=req.item_description,
+                    site_notes=req.site_notes,
+                    template_hints=template_hints,
                 )
                 job.plan = plan
 
+            # ---- Platform fingerprinting ----
+            try:
+                result = await fetch_page_full(req.url)
+                pinfo = fingerprint_page(result.text, result.headers)
+                job.platform_info = pinfo.to_dict()
+            except Exception as exc:
+                log.debug("[%s] Fingerprinting skipped: %s", job.id, exc)
+
             # ---- Stage 1b: Dual preview scrape ----
             job.status = CrawlStatus.SCRAPING
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.now(timezone.utc)
             log.info("[%s] Dual preview scrape", job.id)
             css_pages, smart_pages = await self.scraper.scrape_preview_dual(plan)
 
@@ -101,17 +135,21 @@ class Orchestrator:
                 job.preview_recommended_method = ExtractionMethod.SMART_SCRAPER
             else:
                 log.warning("[%s] Neither extraction method produced results", job.id)
-                job.error = "Could not extract any items from the page. The page may require different scraping settings or the content structure may not be recognized."
+                job.error = (
+                    "Could not extract any items from the page. "
+                    "The page may require different scraping settings or "
+                    "the content structure may not be recognized."
+                )
 
             # ---- Pause for user validation ----
             job.status = CrawlStatus.PREVIEW
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.now(timezone.utc)
             log.info("[%s] Preview ready — waiting for user confirmation", job.id)
 
         except Exception as exc:
             job.status = CrawlStatus.FAILED
             job.error = str(exc)
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.now(timezone.utc)
             log.error("[%s] Failed during preview: %s", job.id, exc, exc_info=True)
 
         return job
@@ -120,18 +158,8 @@ class Orchestrator:
         self, css_record, smart_record
     ) -> tuple[str, ExtractionMethod]:
         """Use LLM to compare two extraction results and recommend the better one."""
-        from app.config import settings
-
         try:
-            from langchain_openai import AzureChatOpenAI
-
-            llm = AzureChatOpenAI(
-                azure_endpoint=settings.azure_openai_endpoint,
-                api_key=settings.azure_openai_api_key,
-                api_version=settings.azure_openai_api_version,
-                azure_deployment=settings.azure_openai_deployment,
-                temperature=0,
-            )
+            from app.utils.llm import chat_completion
 
             css_data = css_record.model_dump(exclude_none=True)
             smart_data = smart_record.model_dump(exclude_none=True)
@@ -150,8 +178,11 @@ class Orchestrator:
                 "RECOMMENDATION: smart_scraper"
             )
 
-            response = await llm.ainvoke(prompt)
-            text = response.content.strip()
+            text = await chat_completion(
+                [{"role": "user", "content": prompt}],
+                temperature=0,
+            )
+            text = text.strip()
 
             if "RECOMMENDATION: smart_scraper" in text:
                 method = ExtractionMethod.SMART_SCRAPER
@@ -180,29 +211,26 @@ class Orchestrator:
             if job.request.test_single:
                 log.info("[%s] Test-single mode — outputting preview record only", job.id)
                 job.status = CrawlStatus.OUTPUT
-                job.updated_at = datetime.utcnow()
+                job.updated_at = datetime.now(timezone.utc)
                 records = [job.preview_record] if job.preview_record else []
                 result = await self.output.build_output(records, job.id)
                 job.result = result
                 job.status = CrawlStatus.COMPLETED
-                job.updated_at = datetime.utcnow()
+                job.updated_at = datetime.now(timezone.utc)
                 log.info("[%s] Test-single completed — %d record(s)", job.id, len(records))
                 return job
 
             # If the user gave feedback, re-plan with that context
-            # (skip replanning for template-based jobs — template plans are authoritative)
-            if job.user_feedback and not job.request.template_id:
+            if job.user_feedback:
                 job.status = CrawlStatus.PLANNING
-                job.updated_at = datetime.utcnow()
+                job.updated_at = datetime.now(timezone.utc)
                 log.info("[%s] Re-planning with user feedback: %s", job.id, job.user_feedback)
                 plan = await self.planner.replan(plan, job.user_feedback)
                 job.plan = plan
-            elif job.user_feedback:
-                log.info("[%s] Template mode — skipping replan (feedback: %s)", job.id, job.user_feedback)
 
             # ---- Stage 2: Full Scraping ----
             job.status = CrawlStatus.SCRAPING
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.now(timezone.utc)
             log.info("[%s] Stage 2: Full scraping (method=%s)", job.id, job.extraction_method)
             page_data_list = await self.scraper.scrape(
                 plan, max_items=job.request.max_items,
@@ -213,20 +241,37 @@ class Orchestrator:
 
             # ---- Stage 3: Parsing ----
             job.status = CrawlStatus.PARSING
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.now(timezone.utc)
             log.info("[%s] Stage 3: Parsing", job.id)
             records = await self.parser.parse(page_data_list, plan)
 
             # ---- Stage 4: Output ----
             job.status = CrawlStatus.OUTPUT
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.now(timezone.utc)
             log.info("[%s] Stage 4: Building output", job.id)
             result = await self.output.build_output(records, job.id)
             job.result = result
 
+            # ---- Quality report ----
+            try:
+                qr = evaluate_quality(
+                    [r.model_dump() for r in records],
+                    fields_wanted=job.request.fields_wanted,
+                )
+                job.quality_report = qr.to_dict()
+            except Exception as exc:
+                log.debug("[%s] Quality report skipped: %s", job.id, exc)
+
+            # ---- Cache successful plan ----
+            if records and plan:
+                try:
+                    plan_cache.put(plan.url, plan.model_dump())
+                except Exception as exc:
+                    log.debug("[%s] Plan caching skipped: %s", job.id, exc)
+
             # ---- Done ----
             job.status = CrawlStatus.COMPLETED
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.now(timezone.utc)
             log.info(
                 "[%s] Completed — %d records, JSON=%s, CSV=%s",
                 job.id,
@@ -238,7 +283,7 @@ class Orchestrator:
         except Exception as exc:
             job.status = CrawlStatus.FAILED
             job.error = str(exc)
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.now(timezone.utc)
             log.error("[%s] Failed: %s", job.id, exc, exc_info=True)
 
         return job

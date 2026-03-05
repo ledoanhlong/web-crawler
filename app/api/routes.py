@@ -23,7 +23,8 @@ from app.models.schemas import (
     SmartScrapeResult,
 )
 from app.services.orchestrator import Orchestrator
-from app.services.template_loader import get_plan_from_template, list_templates
+from app.services.plan_cache import plan_cache
+from app.services.template_loader import get_hints_from_template, list_templates
 
 router = APIRouter(prefix="/api/v1", tags=["crawl"])
 
@@ -126,8 +127,6 @@ async def get_templates() -> list[dict]:
             "name": t.name,
             "description": t.description,
             "platform": t.platform,
-            "expected_record_count": t.expected_record_count,
-            "default_url": t.default_url,
             "default_prompt": t.default_prompt,
             "default_fields_wanted": t.default_fields_wanted,
         }
@@ -206,28 +205,32 @@ async def smart_crawl(
     - SmartScraperMultiGraph for multi-URL extraction
     - ScriptCreatorGraph + auto-execute for script generation
     """
-    # --- Template shortcut: skip router, use pre-built plan ---
+    # --- Template shortcut: pass hints to planner instead of skipping it ---
     if body.template_id:
         try:
-            plan = get_plan_from_template(body.template_id, body.urls[0])
+            hints = get_hints_from_template(body.template_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
 
         crawl_req = CrawlRequest(
             url=body.urls[0],
             fields_wanted=body.fields_wanted,
+            item_description=body.item_description,
+            site_notes=body.site_notes,
             detail_page_url=body.detail_page_url,
             max_items=body.max_items,
+            test_single=body.test_single,
             template_id=body.template_id,
         )
         job = CrawlJob(request=crawl_req)
-        job.plan = plan  # Pre-set plan → orchestrator skips planner
+        # Attach hints for the orchestrator to pass to the planner
+        job._template_hints = hints  # type: ignore[attr-defined]
         _jobs[job.id] = job
         background_tasks.add_task(_run_preview, job)
 
         return SmartCrawlResult(
             strategy_used="full_pipeline",
-            strategy_explanation=f"Using template: {body.template_id}",
+            strategy_explanation=f"Using template pattern: {body.template_id}",
             job_id=job.id,
         )
 
@@ -252,8 +255,11 @@ async def smart_crawl(
         crawl_req = CrawlRequest(
             url=body.urls[0],
             fields_wanted=body.fields_wanted,
+            item_description=body.item_description,
+            site_notes=body.site_notes,
             detail_page_url=body.detail_page_url,
             max_items=body.max_items,
+            test_single=body.test_single,
         )
         job = CrawlJob(request=crawl_req)
         _jobs[job.id] = job
@@ -307,3 +313,26 @@ async def _run_preview(job: CrawlJob) -> None:
 async def _run_full(job: CrawlJob) -> None:
     """Background task: run the full crawl after user confirms preview."""
     await _orchestrator.run_full(job)
+
+
+# ---------------------------------------------------------------------------
+# Plan cache endpoints
+# ---------------------------------------------------------------------------
+@router.get("/plan-cache", tags=["plan-cache"])
+async def list_plan_cache() -> list[dict]:
+    """List all cached scraping plans."""
+    return plan_cache.list_entries()
+
+
+@router.delete("/plan-cache", tags=["plan-cache"])
+async def clear_plan_cache() -> dict:
+    """Clear all cached plans."""
+    count = plan_cache.clear()
+    return {"cleared": count}
+
+
+@router.delete("/plan-cache/{url:path}", tags=["plan-cache"])
+async def invalidate_plan_cache(url: str) -> dict:
+    """Invalidate the cached plan for a specific URL."""
+    found = plan_cache.invalidate(f"https://{url}" if not url.startswith("http") else url)
+    return {"invalidated": found}

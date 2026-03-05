@@ -59,13 +59,19 @@ def simplify_html(raw_html: str, *, max_chars: int = 80_000, aggressive: bool = 
                 tag["href"] = "#"
 
         # Remove ad/tracking/social containers
+        # NOTE: Use precise selectors to avoid destroying legitimate content.
+        # E.g. [class*='ad-'] would match "address", "add-to-cart", "adaptive".
         for selector in [
-            "[class*='ad-']", "[class*='tracking']", "[class*='analytics']",
-            "[id*='ad-']", "[id*='tracking']",
+            "[class^='ad-']", "[class*='-ad-']", "[class$='-ad']",
+            "[class*='tracking']", "[class*='analytics']",
+            "[id^='ad-']", "[id*='-ad-']", "[id$='-ad']", "[id*='tracking']",
             ".social-share", ".social-media", ".share-buttons",
             ".shareholder", ".socialMediaContainer",
-            "[class*='cookie']", "[id*='cookie']",
-            "[class*='modal']", "[id*='modal']",
+            "[class*='cookie-banner']", "[class*='cookie-consent']", "[class*='cookie-notice']",
+            "[id*='cookie-banner']", "[id*='cookie-consent']", "[id*='cookie-notice']",
+            "[id*='cookie-popup']", "[class*='cookie-popup']",
+            "[class*='modal-overlay']", "[class*='modal-backdrop']",
+            "[id*='modal-overlay']", "[id*='modal-backdrop']",
             "[class*='leaderboard']", "[id*='leaderboard']",
         ]:
             for el in soup.select(selector):

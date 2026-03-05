@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
 from typing import AsyncIterator
 
 from playwright.async_api import Browser, Page, async_playwright
@@ -12,6 +14,40 @@ from app.config import settings
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+
+_STEALTH_JS = """
+() => {
+    // Hide webdriver flag
+    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+    // Spoof plugins
+    Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+    });
+    // Spoof languages
+    Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en'],
+    });
+    // Chrome runtime stub
+    window.chrome = {runtime: {}};
+    // Permissions query override
+    const origQuery = window.navigator.permissions.query;
+    window.navigator.permissions.query = (parameters) =>
+        parameters.name === 'notifications'
+            ? Promise.resolve({state: Notification.permission})
+            : origQuery(parameters);
+}
+"""
+
+
+async def _apply_stealth(page: Page) -> None:
+    """Inject anti-detection scripts into the page if stealth mode is enabled."""
+    if not settings.stealth_enabled:
+        return
+    try:
+        await page.add_init_script(_STEALTH_JS)
+    except Exception as exc:
+        log.debug("Stealth injection failed (non-fatal): %s", exc)
 
 
 @asynccontextmanager
@@ -100,6 +136,7 @@ async def fetch_page_js(
     """Navigate to a URL in a new page, wait for content, and return the HTML."""
     page: Page = await browser.new_page()
     try:
+        await _apply_stealth(page)
         log.info("Playwright GET %s", url)
         await page.goto(url, wait_until="commit", timeout=120_000)
         # After commit, wait for the page to finish loading its resources
@@ -107,9 +144,20 @@ async def fetch_page_js(
             await page.wait_for_load_state("domcontentloaded", timeout=30_000)
         except Exception:
             pass  # best-effort — continue with whatever loaded
+
+        # Dismiss cookie/consent overlays before waiting for content
+        await _dismiss_consent_overlays(page)
+
         if wait_selector:
             log.debug("Waiting for selector: %s", wait_selector)
-            await page.wait_for_selector(wait_selector, timeout=wait_timeout_ms)
+            try:
+                await page.wait_for_selector(wait_selector, timeout=wait_timeout_ms)
+            except Exception:
+                log.warning(
+                    "wait_for_selector timed out after %dms for '%s' — "
+                    "returning page HTML as-is",
+                    wait_timeout_ms, wait_selector,
+                )
         else:
             # Give JS-rendered content a moment to settle
             await asyncio.sleep(3)
@@ -235,9 +283,17 @@ async def intercept_detail_api(
 
     try:
         page.on("response", _on_response)
+        await _apply_stealth(page)
         await page.goto(url, wait_until="commit", timeout=120_000)
+
+        # Dismiss cookie/consent overlays early
+        await _dismiss_consent_overlays(page)
+
         if wait_selector:
-            await page.wait_for_selector(wait_selector, timeout=15_000)
+            try:
+                await page.wait_for_selector(wait_selector, timeout=15_000)
+            except Exception:
+                log.warning("wait_for_selector timed out for '%s' in intercept_detail_api — continuing", wait_selector)
         else:
             await asyncio.sleep(3)
 
@@ -331,11 +387,15 @@ async def click_all_tabs(
     page = await browser.new_page()
     htmls: list[str] = []
     try:
+        await _apply_stealth(page)
         await page.goto(url, wait_until="commit", timeout=120_000)
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=30_000)
         except Exception:
             pass
+
+        # Dismiss cookie/consent overlays before interacting with tabs
+        await _dismiss_consent_overlays(page)
 
         # --- Strategy 1: Pre-computed pagination URLs from the planner ---
         if pagination_urls:
@@ -416,23 +476,17 @@ async def _navigate_page_urls(
     """Navigate through a list of page URLs and collect HTML from each."""
     htmls: list[str] = []
 
-    # First page may already be loaded — capture it, then navigate the rest
-    if wait_selector:
-        try:
-            await page.wait_for_selector(wait_selector, timeout=10_000)
-        except Exception:
-            pass
-    htmls.append(await page.content())
-
-    for pg_url in urls[1:]:
+    for pg_url in urls:
         if max_items is not None and len(htmls) * items_per_page >= max_items:
             break
         try:
-            await page.goto(pg_url, wait_until="commit", timeout=120_000)
-            try:
-                await page.wait_for_load_state("domcontentloaded", timeout=30_000)
-            except Exception:
-                pass
+            # Check if the page is already at this URL (avoid redundant navigation)
+            if page.url != pg_url:
+                await page.goto(pg_url, wait_until="commit", timeout=120_000)
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                except Exception:
+                    pass
             if wait_selector:
                 try:
                     await page.wait_for_selector(wait_selector, timeout=10_000)
@@ -586,3 +640,101 @@ def _extrapolate_page_urls(
 
     log.info("Extrapolated %d page URLs from pattern (param=%s, step=%d)", len(all_urls), changing_param, step)
     return all_urls
+
+
+# ------------------------------------------------------------------
+# Screenshot capture
+# ------------------------------------------------------------------
+async def take_screenshot(
+    browser: Browser,
+    url: str,
+    output_path: str | Path,
+    *,
+    wait_selector: str | None = None,
+    full_page: bool = False,
+) -> str:
+    """Navigate to *url* and save a screenshot to *output_path*.
+
+    Returns the absolute file path of the saved screenshot.
+    """
+    from pathlib import Path as P
+
+    page: Page = await browser.new_page()
+    try:
+        await _apply_stealth(page)
+        await page.goto(url, wait_until="commit", timeout=60_000)
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=15_000)
+        except Exception:
+            pass
+        if wait_selector:
+            try:
+                await page.wait_for_selector(wait_selector, timeout=10_000)
+            except Exception:
+                pass
+        else:
+            await asyncio.sleep(2)
+
+        await _dismiss_consent_overlays(page)
+
+        out = P(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        await page.screenshot(path=str(out), full_page=full_page)
+        log.info("Screenshot saved: %s", out)
+        return str(out.resolve())
+    finally:
+        await page.close()
+
+
+# ------------------------------------------------------------------
+# Console log monitoring
+# ------------------------------------------------------------------
+@dataclass
+class ConsoleEntry:
+    """A captured browser console message."""
+
+    level: str  # "log", "warning", "error", "info"
+    text: str
+    url: str = ""
+
+
+async def fetch_page_js_with_console(
+    browser: Browser,
+    url: str,
+    *,
+    wait_selector: str | None = None,
+    wait_timeout_ms: int = 15_000,
+) -> tuple[str, list[ConsoleEntry]]:
+    """Like :func:`fetch_page_js` but also captures console messages.
+
+    Returns ``(html, console_entries)``.
+    """
+    entries: list[ConsoleEntry] = []
+    page: Page = await browser.new_page()
+    try:
+        await _apply_stealth(page)
+
+        def _on_console(msg):
+            entries.append(ConsoleEntry(
+                level=msg.type,
+                text=msg.text,
+                url=url,
+            ))
+
+        page.on("console", _on_console)
+
+        await page.goto(url, wait_until="commit", timeout=120_000)
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=30_000)
+        except Exception:
+            pass
+        if wait_selector:
+            await page.wait_for_selector(wait_selector, timeout=wait_timeout_ms)
+        else:
+            await asyncio.sleep(3)
+
+        html = await page.content()
+        log.debug("Captured %d console entries from %s", len(entries), url)
+        return html, entries
+    finally:
+        await page.close()

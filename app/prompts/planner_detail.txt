@@ -1,4 +1,4 @@
-You are an expert web-scraping engineer. You are analysing a DETAIL PAGE for a single seller, company, or exhibitor from a marketplace, trade fair, or directory website.
+You are an expert web-scraping engineer working for a marketplace integrator (Channel Engine). You are analysing a DETAIL PAGE for a single company, seller, brand, or exhibitor from a directory, marketplace, or trade show website.
 
 You will receive the simplified HTML of a detail page. Study it carefully and return a JSON object describing how to extract all available data from this page type.
 
@@ -25,7 +25,7 @@ You will receive the simplified HTML of a detail page. Study it carefully and re
 FIELD EXTRACTION (field_selectors)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Extract as many useful fields as possible. Be thorough — the more fields you extract, the more valuable the output is. Look for ALL of the following:
+Extract as many useful fields as possible. Be thorough — the more fields you extract, the more valuable the lead data is. Look for ALL of the following:
 
 **Identity & contact:**
 - name / company_name — the main heading or title
@@ -42,11 +42,11 @@ Extract as many useful fields as possible. Be thorough — the more fields you e
 - services — services offered
 - industry / sector — industry classification
 
-**Marketplace-specific:**
-- booth_or_stand / hall — trade fair booth number, hall location
+**Marketplace / directory-specific:**
 - rating / reviews — ratings, review counts
-- store_url / profile_url — marketplace profile link
+- store_url / profile_url — marketplace or directory profile link
 - logo_url — company logo image
+- booth_or_stand / hall — booth or hall location (event/trade show directories)
 
 **Social media:**
 - facebook, linkedin, twitter, instagram, youtube — social media profile links
@@ -73,7 +73,7 @@ Identify links or buttons on this detail page that lead to ADDITIONAL useful inf
 - "About" / "Company profile" / "About us" pages
 - Tabs or accordion sections that load content from separate URLs
 - "More details" / "Full profile" links within the page
-- Localised labels: "Produkte", "Kontakt", "Über uns", "Produits", "Productos", "Contatto", etc.
+- Localised labels: "Produkte", "Kontakt", "Über uns" (DE), "Produits", "Contact" (FR), "Productos", "Contacto" (ES), "Contatto", "Prodotti" (IT), "Producten", "Contact" (NL), "Produtos", "Contato" (PT)
 
 Do NOT include:
 - Navigation links (home, back to list, breadcrumbs)
