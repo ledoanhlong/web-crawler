@@ -92,6 +92,32 @@ class ScraperAgent:
                 total += len(pd.items)
             log.info("max_items=%d: kept %d items total", max_items, total)
 
+        # Cross-page deduplication
+        seen_keys: set[str] = set()
+        total_before = sum(len(pd.items) for pd in pages)
+        for pd in pages:
+            unique_items: list[dict[str, str | None]] = []
+            for item in pd.items:
+                dedup_key = item.get("detail_link") or ""
+                if not dedup_key:
+                    name = (item.get("name") or "").strip().lower()
+                    vals = "|".join(
+                        (v or "").strip().lower()
+                        for k, v in sorted(item.items())
+                        if k != "detail_link" and v
+                    )
+                    dedup_key = f"{name}||{vals}"
+                if dedup_key and dedup_key not in seen_keys:
+                    seen_keys.add(dedup_key)
+                    unique_items.append(item)
+            pd.items = unique_items
+        total_after = sum(len(pd.items) for pd in pages)
+        if total_before != total_after:
+            log.info(
+                "Deduplication: %d -> %d items (%d duplicates removed)",
+                total_before, total_after, total_before - total_after,
+            )
+
         return pages
 
     async def scrape_preview(self, plan: ScrapingPlan) -> list[PageData]:
@@ -254,7 +280,7 @@ class ScraperAgent:
         async with get_browser() as browser:
             match plan.pagination:
                 case PaginationStrategy.NONE:
-                    # Single page — scroll to bottom to reveal all items
+                    # Single page — wait briefly for JS content to settle
                     page = await browser.new_page()
                     try:
                         await page.goto(plan.url, wait_until="commit", timeout=120_000)
@@ -263,8 +289,8 @@ class ScraperAgent:
                                 await page.wait_for_selector(plan.wait_selector, timeout=15_000)
                             except Exception:
                                 log.warning("wait_for_selector timed out for '%s' — continuing", plan.wait_selector)
-                        log.info("Single page mode — scrolling to reveal all items")
-                        await scroll_to_bottom(page, max_scrolls=settings.max_pages_per_crawl)
+                        log.info("Single page mode — waiting for content to settle")
+                        await asyncio.sleep(3)
                         html = await page.content()
                         items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
                         if max_items is not None:
@@ -1240,7 +1266,10 @@ class ScraperAgent:
         """Extract items using the specified method.
 
         - CSS: only CSS selectors (fast, reliable)
-        - SMART_SCRAPER: SmartScraperGraph primary, CSS fallback on failure
+        - SMART_SCRAPER: SmartScraperGraph primary, CSS fallback on failure.
+          For large pages the HTML is reduced to just the item containers
+          (using the CSS selector from the plan) and split into chunks so the
+          LLM never has to deal with a truncated page.
         - None: CSS if it finds items, else SmartScraperGraph fallback
         """
         if extraction_method == ExtractionMethod.CSS:
@@ -1255,7 +1284,9 @@ class ScraperAgent:
                 fields = list(target.field_selectors.keys())
                 if target.detail_link_selector and "detail_link" not in fields:
                     fields.append("detail_link")
-                smart_items = await smart_extract_items(html, fields)
+                smart_items = await self._smart_extract_chunked(
+                    html, fields, target.item_container_selector,
+                )
                 if smart_items:
                     if target.detail_link_selector:
                         self._backfill_detail_links(html, smart_items, target)
@@ -1277,14 +1308,10 @@ class ScraperAgent:
             fields = list(target.field_selectors.keys())
             if target.detail_link_selector and "detail_link" not in fields:
                 fields.append("detail_link")
-            smart_items = await smart_extract_items(html, fields)
+            smart_items = await self._smart_extract_chunked(
+                html, fields, target.item_container_selector,
+            )
             if smart_items:
-                if len(css_items) > len(smart_items):
-                    log.warning(
-                        "SmartScraperGraph extracted %d items but CSS selectors found %d — using CSS results",
-                        len(smart_items), len(css_items),
-                    )
-                    return css_items
                 log.info("SmartScraperGraph extracted %d items (fallback, CSS had %d)", len(smart_items), len(css_items))
                 if target.detail_link_selector:
                     self._backfill_detail_links(html, smart_items, target)
@@ -1295,24 +1322,133 @@ class ScraperAgent:
 
         return css_items
 
+    async def _smart_extract_chunked(
+        self,
+        html: str,
+        fields: list[str],
+        item_container_selector: str,
+    ) -> list[dict[str, str | None]]:
+        """Run smart_extract_items, chunking large pages by CSS containers.
+
+        When the full HTML exceeds 100K chars and we have a working CSS
+        selector, we strip the page down to just the item containers and
+        split them into LLM-sized chunks.  This avoids the blind truncation
+        that loses most items on large pages.
+        """
+        from app.utils.smart_scraper import smart_extract_items
+
+        _MAX = 90_000  # leave headroom vs the 100K hard limit in smart_scraper
+
+        # If the page is small enough, just send it directly.
+        if len(html) <= _MAX:
+            return await smart_extract_items(html, fields)
+
+        # --- Large page: try to reduce using CSS containers ---
+        selector = (item_container_selector or "").strip()
+        if not selector:
+            # No selector — fall through to raw (will be truncated by smart_extract_items)
+            log.warning("Large HTML (%d chars) but no container selector — LLM will see truncated page", len(html))
+            return await smart_extract_items(html, fields)
+
+        try:
+            soup = BeautifulSoup(html, "lxml")
+            containers = soup.select(selector)
+        except Exception:
+            containers = []
+
+        if not containers:
+            log.warning("Container selector '%s' matched 0 elements on large page — LLM will see truncated page", selector)
+            return await smart_extract_items(html, fields)
+
+        # Build minimal HTML per container (just outer HTML)
+        container_htmls = [str(c) for c in containers]
+        log.info(
+            "Chunking %d containers for LLM extraction (total HTML %d chars)",
+            len(container_htmls), len(html),
+        )
+
+        # Group containers into chunks that fit within _MAX chars
+        chunks: list[str] = []
+        current_parts: list[str] = []
+        current_size = 0
+        for ch in container_htmls:
+            if current_size + len(ch) > _MAX and current_parts:
+                chunks.append("\n".join(current_parts))
+                current_parts = []
+                current_size = 0
+            current_parts.append(ch)
+            current_size += len(ch)
+        if current_parts:
+            chunks.append("\n".join(current_parts))
+
+        log.info("Split into %d chunk(s) for LLM extraction", len(chunks))
+
+        all_items: list[dict[str, str | None]] = []
+        for i, chunk in enumerate(chunks):
+            items = await smart_extract_items(chunk, fields)
+            log.debug("Chunk %d/%d: extracted %d items", i + 1, len(chunks), len(items))
+            all_items.extend(items)
+
+        log.info("Chunked LLM extraction total: %d items from %d containers", len(all_items), len(containers))
+        return all_items
+
     def _backfill_detail_links(
         self,
         html: str,
         items: list[dict[str, str | None]],
         target: ScrapingTarget,
     ) -> None:
-        """Ensure every item has a detail_link by falling back to CSS selectors."""
-        # Check if any items are missing detail_link
+        """Ensure every item has a detail_link by matching to CSS containers via name.
+
+        Uses fuzzy text matching instead of positional indexing because the LLM
+        may extract items in a different order or skip items compared to the
+        CSS containers in the DOM.
+        """
         missing = [i for i, item in enumerate(items) if not item.get("detail_link")]
         if not missing:
             return
 
         soup = BeautifulSoup(html, "lxml")
         containers = soup.select(target.item_container_selector)
+        if not containers:
+            return
+
+        # Pre-compute text and detail link for each container
+        container_texts: list[str] = []
+        container_links: list[str | None] = []
+        for c in containers:
+            container_texts.append(
+                " ".join(c.get_text(separator=" ", strip=True).lower().split())
+            )
+            try:
+                link_el = c.select_one(target.detail_link_selector) if target.detail_link_selector else None
+            except Exception:
+                link_el = None
+            container_links.append(link_el.get("href") if link_el else None)
+
+        used_containers: set[int] = set()
 
         for idx in missing:
-            if idx < len(containers):
-                link_el = containers[idx].select_one(target.detail_link_selector)
-                if link_el:
-                    items[idx]["detail_link"] = link_el.get("href")
-                    log.debug("Backfilled detail_link for item %d from CSS", idx)
+            item_name = (items[idx].get("name") or "").strip().lower()
+            if not item_name:
+                continue
+
+            best_match: int | None = None
+            best_score: float = 0.0
+
+            for ci, ct in enumerate(container_texts):
+                if ci in used_containers or container_links[ci] is None:
+                    continue
+                if item_name in ct:
+                    score = len(item_name) / max(len(ct), 1)
+                    if score > best_score:
+                        best_score = score
+                        best_match = ci
+
+            if best_match is not None:
+                items[idx]["detail_link"] = container_links[best_match]
+                used_containers.add(best_match)
+                log.debug(
+                    "Backfilled detail_link for item %d ('%s') from container %d",
+                    idx, items[idx].get("name", "?"), best_match,
+                )

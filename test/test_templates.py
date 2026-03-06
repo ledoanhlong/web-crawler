@@ -76,14 +76,14 @@ class TestGetHintsFromTemplate:
         assert hints.requires_javascript is True
         assert hints.has_detail_pages is True
         assert hints.has_detail_api is False
-        assert hints.pagination == "alphabet_tabs"
+        assert hints.pagination == "none"
 
     def test_api_hints(self):
         hints = get_hints_from_template("dynamic-directory-api")
         assert hints.requires_javascript is True
         assert hints.has_detail_pages is False
         assert hints.has_detail_api is True
-        assert hints.pagination == "alphabet_tabs"
+        assert hints.pagination == "none"
 
     def test_static_listing_hints(self):
         hints = get_hints_from_template("static-listing")

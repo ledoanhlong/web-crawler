@@ -22,9 +22,9 @@ from app.models.schemas import (
     SmartScrapeMultiRequest,
     SmartScrapeResult,
 )
+from app.models.schemas import TemplateHints
 from app.services.orchestrator import Orchestrator
 from app.services.plan_cache import plan_cache
-from app.services.template_loader import get_hints_from_template, list_templates
 
 router = APIRouter(prefix="/api/v1", tags=["crawl"])
 
@@ -118,22 +118,6 @@ async def list_jobs() -> list[CrawlJob]:
     return sorted(_jobs.values(), key=lambda j: j.created_at, reverse=True)
 
 
-@router.get("/templates", tags=["templates"])
-async def get_templates() -> list[dict]:
-    """List available scraping templates (without full plan details)."""
-    return [
-        {
-            "id": t.id,
-            "name": t.name,
-            "description": t.description,
-            "platform": t.platform,
-            "default_prompt": t.default_prompt,
-            "default_fields_wanted": t.default_fields_wanted,
-        }
-        for t in list_templates()
-    ]
-
-
 # ---------------------------------------------------------------------------
 # ScrapeGraphAI tool endpoints
 # ---------------------------------------------------------------------------
@@ -205,36 +189,6 @@ async def smart_crawl(
     - SmartScraperMultiGraph for multi-URL extraction
     - ScriptCreatorGraph + auto-execute for script generation
     """
-    # --- Template shortcut: pass hints to planner instead of skipping it ---
-    if body.template_id:
-        try:
-            hints = get_hints_from_template(body.template_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
-
-        crawl_req = CrawlRequest(
-            url=body.urls[0],
-            fields_wanted=body.fields_wanted,
-            item_description=body.item_description,
-            site_notes=body.site_notes,
-            detail_page_url=body.detail_page_url,
-            pagination_type=body.pagination_type,
-            max_items=body.max_items,
-            test_single=body.test_single,
-            template_id=body.template_id,
-        )
-        job = CrawlJob(request=crawl_req)
-        # Attach hints for the orchestrator to pass to the planner
-        job._template_hints = hints  # type: ignore[attr-defined]
-        _jobs[job.id] = job
-        background_tasks.add_task(_run_preview, job)
-
-        return SmartCrawlResult(
-            strategy_used="full_pipeline",
-            strategy_explanation=f"Using template pattern: {body.template_id}",
-            job_id=job.id,
-        )
-
     from app.agents.router_agent import RouterAgent
     from app.utils.smart_scraper import generate_scraper_script, smart_scrape_multi
 
@@ -262,8 +216,17 @@ async def smart_crawl(
             pagination_type=body.pagination_type,
             max_items=body.max_items,
             test_single=body.test_single,
+            page_type=body.page_type,
+            rendering_type=body.rendering_type,
+            detail_page_type=body.detail_page_type,
         )
         job = CrawlJob(request=crawl_req)
+
+        # Infer template hints from user's multi-choice answers
+        hints = _infer_hints(body.rendering_type, body.detail_page_type)
+        if hints:
+            job.template_hints = hints
+
         _jobs[job.id] = job
         background_tasks.add_task(_run_preview, job)
         result.job_id = job.id
@@ -299,6 +262,21 @@ async def smart_crawl(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _infer_hints(
+    rendering_type: str | None,
+    detail_page_type: str | None,
+) -> TemplateHints | None:
+    """Build TemplateHints from the user's multi-choice answers."""
+    if not rendering_type and not detail_page_type:
+        return None  # All auto-detect — let the planner figure it out
+
+    return TemplateHints(
+        requires_javascript=(rendering_type == "dynamic") if rendering_type else True,
+        has_detail_pages=(detail_page_type == "separate_page"),
+        has_detail_api=(detail_page_type == "popup_overlay"),
+    )
+
+
 async def _execute_script_safe(script: str) -> ScriptExecutionResult:
     """Execute a script and return a ScriptExecutionResult model."""
     from app.utils.script_executor import execute_script

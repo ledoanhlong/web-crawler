@@ -80,6 +80,21 @@ def _sanitize_plan_data(plan_data: dict) -> dict:
                     flat[k] = str(v) if v is not None else ""
             target[key] = flat
 
+    # Sanitise detail_link_selector — the LLM sometimes returns a
+    # comma-separated group where one part is broken (e.g. ", > a[...]").
+    target = plan_data.get("target")
+    if isinstance(target, dict):
+        dls = target.get("detail_link_selector")
+        if isinstance(dls, str) and "," in dls:
+            parts = [p.strip() for p in dls.split(",") if p.strip()]
+            valid: list[str] = []
+            for p in parts:
+                # A selector starting with a combinator (>, +, ~) is invalid
+                if p[0] in (">", "+", "~"):
+                    continue
+                valid.append(p)
+            target["detail_link_selector"] = ", ".join(valid) if valid else None
+
     return plan_data
 
 
@@ -125,7 +140,37 @@ async def _fetch_html(url: str) -> tuple[str, bool]:
                         needs_js = True
                         log.info("Weak SPA marker + sparse body text for %s", url)
 
-            # Heuristic 3: Large HTML shell with almost no visible text
+            # Heuristic 3: Custom HTML elements (web components) that are
+            # major content containers.  Per the spec, custom element tag names
+            # always contain a hyphen.  We only flag when a custom element sits
+            # near the top of the body and is large (likely a data container
+            # rendered by JS), to avoid false-positives from tiny UI widgets.
+            if not needs_js:
+                body_tag = BeautifulSoup(html_raw, "lxml").find("body")
+                if body_tag:
+                    for tag in body_tag.find_all(True, recursive=False):
+                        if "-" in tag.name and len(str(tag)) > 500:
+                            needs_js = True
+                            log.info(
+                                "Large custom element <%s> detected — likely JS-rendered for %s",
+                                tag.name, url,
+                            )
+                            break
+                    if not needs_js:
+                        # Check one level deeper (common pattern: <div><my-app>)
+                        for wrapper in body_tag.find_all(True, recursive=False):
+                            for tag in wrapper.find_all(True, recursive=False):
+                                if "-" in tag.name and len(str(tag)) > 500:
+                                    needs_js = True
+                                    log.info(
+                                        "Large custom element <%s> detected — likely JS-rendered for %s",
+                                        tag.name, url,
+                                    )
+                                    break
+                            if needs_js:
+                                break
+
+            # Heuristic 4: Large HTML shell with almost no visible text
             if not needs_js and len(html_raw) >= 2_000:
                 body = BeautifulSoup(html_raw, "lxml").find("body")
                 if body and len(body.get_text(strip=True)) < 200:
@@ -258,6 +303,12 @@ class PlannerAgent:
                     continue
                 raise
 
+        if not plan_data:
+            raise ValueError(
+                "Planning failed: LLM returned no data after all attempts. "
+                "The page content may have triggered a content filter."
+            )
+
         log.info("Received scraping plan from LLM")
 
         # --- 4. Parse into ScrapingPlan ---
@@ -291,6 +342,90 @@ class PlannerAgent:
 
         # --- 4b. Validate CSS selectors against the actual HTML ---
         plan = await self._validate_selectors(plan, html_raw, fields_wanted)
+
+        # --- 4c. If the plan says JS is required but we fetched with httpx,
+        #         the CSS selectors were derived from the wrong DOM.
+        #         Re-fetch with Playwright and re-plan against the rendered HTML. ---
+        if plan.requires_javascript and not heuristic_needs_js:
+            log.info(
+                "Plan says requires_javascript=True but page was fetched with httpx "
+                "— re-fetching with Playwright to get the rendered DOM",
+            )
+            from app.utils.browser import fetch_page_js, get_browser
+
+            async with get_browser() as browser:
+                html_js = await fetch_page_js(browser, url)
+            if html_js and len(html_js) > len(html_raw):
+                html_raw = html_js
+                heuristic_needs_js = True
+
+                # Re-run the LLM planner with the JS-rendered HTML
+                html_simple = simplify_html(html_raw, aggressive=False)
+                log.debug("Re-planning with JS-rendered HTML: %d chars", len(html_simple))
+
+                user_content = (
+                    f"Analyse the following HTML of the listing page at:\n{url}\n\n"
+                    f"```html\n{html_simple}\n```"
+                )
+                if item_description:
+                    user_content += (
+                        f"\n\n━━ ITEM DESCRIPTION (from user) ━━\n"
+                        f"The user describes each item on this page as: {item_description}\n"
+                        f"Use this to identify the correct repeating container and fields."
+                    )
+                if site_notes:
+                    user_content += (
+                        f"\n\n━━ SITE NOTES (from user) ━━\n"
+                        f"The user provided these observations about the site: {site_notes}\n"
+                        f"Take these into account when building the scraping plan."
+                    )
+                if fields_wanted:
+                    user_content += (
+                        f"\n\nThe user specifically wants these fields extracted: {fields_wanted}\n"
+                        f"Make sure the plan captures all of these fields — from the listing page "
+                        f"if available, otherwise from the detail page."
+                    )
+                if template_hints:
+                    user_content += (
+                        "\n\n━━ TEMPLATE HINTS (structural guidance) ━━\n"
+                        f"- requires_javascript: {template_hints.requires_javascript}\n"
+                        f"- has_detail_pages: {template_hints.has_detail_pages}\n"
+                        f"- has_detail_api: {template_hints.has_detail_api}\n"
+                    )
+                    if not pagination_type and template_hints.pagination:
+                        user_content += f"- expected pagination (hint only): {template_hints.pagination}\n"
+                    if template_hints.notes:
+                        user_content += f"- pattern notes: {template_hints.notes}\n"
+                if pagination_type:
+                    user_content += (
+                        f"\n\n━━ PAGINATION (user-specified — MUST USE) ━━\n"
+                        f"The user has explicitly specified the pagination strategy: {pagination_type}\n"
+                        f"You MUST set pagination to \"{pagination_type}\" in your plan.\n"
+                    )
+
+                messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ]
+                try:
+                    plan_data_js = await chat_completion_json(messages, max_tokens=16_000)
+                except Exception:
+                    plan_data_js = None
+                if plan_data_js:
+                    plan_data_js["url"] = url
+                    plan_data_js["requires_javascript"] = True
+                    plan_data_js = _sanitize_plan_data(plan_data_js)
+                    if pagination_type:
+                        plan_data_js["pagination"] = pagination_type
+                        if pagination_type in ("none", "infinite_scroll", "load_more_button"):
+                            plan_data_js["pagination_urls"] = []
+                    plan = ScrapingPlan.model_validate(plan_data_js)
+                    plan = await self._validate_selectors(plan, html_raw, fields_wanted)
+                    plan_data = plan_data_js
+                    log.info(
+                        "Re-planned with JS-rendered HTML: selector '%s'",
+                        plan.target.item_container_selector,
+                    )
 
         log.info(
             "Plan: js=%s, pagination=%s, fields=%s, detail_link=%s",
@@ -378,6 +513,13 @@ class PlannerAgent:
                     )
                     continue
                 raise
+
+        if not plan_data:
+            raise ValueError(
+                "Re-planning failed: LLM returned no data after all attempts. "
+                "The page content may have triggered a content filter."
+            )
+
         plan_data["url"] = current_plan.url
         plan_data = _sanitize_plan_data(plan_data)
         plan = ScrapingPlan.model_validate(plan_data)
@@ -457,6 +599,11 @@ class PlannerAgent:
                     )
                     continue
                 raise
+
+        if not result:
+            raise ValueError(
+                "Detail page analysis failed: LLM returned no data after all attempts."
+            )
 
         detail_plan = DetailPagePlan.model_validate(result)
         log.info(
@@ -649,7 +796,11 @@ class PlannerAgent:
             return None
 
         first = containers[0]
-        link_el = first.select_one(plan.target.detail_link_selector)
+        try:
+            link_el = first.select_one(plan.target.detail_link_selector)
+        except Exception as exc:
+            log.warning("Invalid detail_link_selector '%s': %s", plan.target.detail_link_selector, exc)
+            return None
         if not link_el:
             return None
 

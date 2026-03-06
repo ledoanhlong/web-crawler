@@ -377,9 +377,23 @@ class CrawlRequest(BaseModel):
         default=None,
         description="Maximum number of items to scrape (for testing). None means no limit.",
     )
-    template_id: str | None = Field(
+    page_type: str | None = Field(
         default=None,
-        description="Template ID to use instead of LLM planning.",
+        description=(
+            "What kind of page: 'directory', 'product_listing', 'event', or None for auto."
+        ),
+    )
+    rendering_type: str | None = Field(
+        default=None,
+        description=(
+            "How the page is built: 'static', 'dynamic', or None for auto-detect."
+        ),
+    )
+    detail_page_type: str | None = Field(
+        default=None,
+        description=(
+            "Detail page behavior: 'separate_page', 'none', 'popup_overlay', or None for auto-detect."
+        ),
     )
 
     @field_validator("url")
@@ -463,6 +477,11 @@ class CrawlJob(BaseModel):
     progress: dict | None = Field(
         default=None,
         description="Real-time progress information (items scraped, pages processed, etc.).",
+    )
+    template_hints: TemplateHints | None = Field(
+        default=None,
+        exclude=True,
+        description="Structural hints from a template, used internally by the planner.",
     )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -576,9 +595,23 @@ class SmartCrawlRequest(BaseModel):
         default=False,
         description="If true, only scrape and output a single item for testing.",
     )
-    template_id: str | None = Field(
+    page_type: str | None = Field(
         default=None,
-        description="Template ID to use instead of LLM planning.",
+        description=(
+            "What kind of page: 'directory', 'product_listing', 'event', or None for auto."
+        ),
+    )
+    rendering_type: str | None = Field(
+        default=None,
+        description=(
+            "How the page is built: 'static', 'dynamic', or None for auto-detect."
+        ),
+    )
+    detail_page_type: str | None = Field(
+        default=None,
+        description=(
+            "Detail page behavior: 'separate_page', 'none', 'popup_overlay', or None for auto-detect."
+        ),
     )
 
 

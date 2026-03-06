@@ -17,6 +17,26 @@ from app.utils.rate_limiter import rate_limiter
 log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
+# Shared httpx client (lazy init, connection pooling)
+# ---------------------------------------------------------------------------
+_shared_client: httpx.AsyncClient | None = None
+
+
+def _get_shared_client() -> httpx.AsyncClient:
+    """Return a shared AsyncClient, creating it on first use."""
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            timeout=settings.request_timeout_s,
+            follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+            ),
+        )
+    return _shared_client
+
+# ---------------------------------------------------------------------------
 # User-Agent pool (rotated per-request for stealth)
 # ---------------------------------------------------------------------------
 _USER_AGENTS: list[str] = [
@@ -144,43 +164,39 @@ async def fetch_page_full(
         await rate_limiter.acquire(url)
         t0 = time.monotonic()
         try:
-            async with httpx.AsyncClient(
-                headers=headers,
-                timeout=settings.request_timeout_s,
-                follow_redirects=follow_redirects,
-            ) as client:
-                resp = await client.get(url)
-                elapsed = (time.monotonic() - t0) * 1000
+            client = _get_shared_client()
+            resp = await client.get(url, headers=headers)
+            elapsed = (time.monotonic() - t0) * 1000
 
-                result = FetchResult(
-                    text=resp.text,
-                    status_code=resp.status_code,
-                    headers={k.lower(): v for k, v in resp.headers.items()},
-                    response_time_ms=elapsed,
+            result = FetchResult(
+                text=resp.text,
+                status_code=resp.status_code,
+                headers={k.lower(): v for k, v in resp.headers.items()},
+                response_time_ms=elapsed,
+            )
+
+            # Success
+            if resp.status_code < 400:
+                rate_limiter.report_success(url)
+                if attempt > 0:
+                    log.info("HTTP GET %s succeeded on attempt %d", url, attempt + 1)
+                else:
+                    log.info("HTTP GET %s → %d (%.0f ms)", url, resp.status_code, elapsed)
+                return result
+
+            # Retryable status code?
+            if resp.status_code in settings.http_retry_status_codes and attempt < max_attempts - 1:
+                rate_limiter.report_throttle(url, result.retry_after)
+                delay = _compute_backoff(attempt, result.retry_after)
+                log.warning(
+                    "HTTP GET %s → %d — retrying in %.1fs (attempt %d/%d)",
+                    url, resp.status_code, delay, attempt + 1, max_attempts,
                 )
+                await asyncio.sleep(delay)
+                continue
 
-                # Success
-                if resp.status_code < 400:
-                    rate_limiter.report_success(url)
-                    if attempt > 0:
-                        log.info("HTTP GET %s succeeded on attempt %d", url, attempt + 1)
-                    else:
-                        log.info("HTTP GET %s → %d (%.0f ms)", url, resp.status_code, elapsed)
-                    return result
-
-                # Retryable status code?
-                if resp.status_code in settings.http_retry_status_codes and attempt < max_attempts - 1:
-                    rate_limiter.report_throttle(url, result.retry_after)
-                    delay = _compute_backoff(attempt, result.retry_after)
-                    log.warning(
-                        "HTTP GET %s → %d — retrying in %.1fs (attempt %d/%d)",
-                        url, resp.status_code, delay, attempt + 1, max_attempts,
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-
-                # Non-retryable error or last attempt
-                resp.raise_for_status()
+            # Non-retryable error or last attempt
+            resp.raise_for_status()
 
         except (httpx.TimeoutException, httpx.ConnectError, httpx.ConnectTimeout) as exc:
             elapsed = (time.monotonic() - t0) * 1000

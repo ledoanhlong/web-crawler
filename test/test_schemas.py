@@ -67,7 +67,9 @@ class TestCrawlRequest:
         assert req.fields_wanted is None
         assert req.test_single is False
         assert req.max_items is None
-        assert req.template_id is None
+        assert req.page_type is None
+        assert req.rendering_type is None
+        assert req.detail_page_type is None
 
 
 class TestScrapingPlan:
@@ -265,7 +267,9 @@ class TestSmartCrawlRequest:
         )
         assert len(req.urls) == 1
         assert req.test_single is False
-        assert req.template_id is None
+        assert req.page_type is None
+        assert req.rendering_type is None
+        assert req.detail_page_type is None
 
     def test_request_with_test_single(self):
         req = SmartCrawlRequest(
@@ -275,13 +279,17 @@ class TestSmartCrawlRequest:
         )
         assert req.test_single is True
 
-    def test_request_with_template(self):
+    def test_request_with_page_options(self):
         req = SmartCrawlRequest(
             urls=["https://example.com"],
             prompt="Extract names",
-            template_id="dynamic-directory-detail-pages",
+            page_type="directory",
+            rendering_type="dynamic",
+            detail_page_type="separate_page",
         )
-        assert req.template_id == "dynamic-directory-detail-pages"
+        assert req.page_type == "directory"
+        assert req.rendering_type == "dynamic"
+        assert req.detail_page_type == "separate_page"
 
 
 class TestExtractionMethod:

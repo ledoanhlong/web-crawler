@@ -7,7 +7,6 @@ fixes, and enrichment of records that look incomplete.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pandas as pd
@@ -109,6 +108,16 @@ class OutputAgent:
                     except Exception:
                         pass
 
+        if len(cleaned) < len(records):
+            input_names = {r.name for r in records}
+            output_names = {r.name for r in cleaned}
+            dropped_names = input_names - output_names
+            if dropped_names:
+                log.warning(
+                    "Quality pass dropped %d record(s): %s",
+                    len(records) - len(cleaned),
+                    list(dropped_names)[:20],
+                )
         log.info("Quality pass: %d → %d records", len(records), len(cleaned))
         return cleaned if cleaned else records  # fallback to originals if all chunks fail
 

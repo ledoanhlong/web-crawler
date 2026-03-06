@@ -67,53 +67,6 @@ header p{font-size:.88rem;color:var(--text2);margin-top:4px;max-width:440px;marg
 .btn-red{background:var(--red);color:#fff}
 .btn-red:hover{background:#d35845}
 
-/* ── Template Section (two-column) ────────────────────────────────── */
-.template-section{display:flex;gap:20px;align-items:flex-start}
-.template-left{flex:1;min-width:0}
-.template-right{width:320px;flex-shrink:0}
-
-/* ── Template Cards ───────────────────────────────────────────────── */
-.template-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:0}
-.template-card{padding:14px;background:var(--surface2);border:2px solid var(--border);border-radius:10px;cursor:pointer;transition:all .15s;text-align:center}
-.template-card:hover{border-color:var(--accent)}
-.template-card.selected{border-color:var(--accent);background:rgba(108,92,231,.1)}
-.template-card .t-name{font-size:.84rem;font-weight:600;color:var(--text);margin-bottom:4px}
-.template-card .t-desc{font-size:.7rem;color:var(--text2);line-height:1.3}
-.template-card .t-count{font-size:.68rem;color:var(--accent2);margin-top:4px;font-weight:500}
-.template-none{padding:14px;background:var(--surface2);border:2px solid var(--border);border-radius:10px;cursor:pointer;transition:all .15s;text-align:center}
-.template-none:hover{border-color:var(--accent)}
-.template-none.selected{border-color:var(--accent);background:rgba(108,92,231,.1)}
-.template-none .t-name{font-size:.84rem;font-weight:600;color:var(--text)}
-.template-none .t-desc{font-size:.7rem;color:var(--text2);margin-top:2px}
-
-/* ── Template Preview (wireframe) ─────────────────────────────────── */
-.template-preview{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;min-height:240px;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.template-preview .tp-title{font-size:.78rem;font-weight:600;color:var(--accent2);margin-bottom:12px;text-align:center;letter-spacing:.02em}
-.tp-wireframe{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--bg);overflow:hidden;font-size:0}
-.tp-browser-bar{display:flex;align-items:center;gap:5px;padding:6px 10px;background:var(--surface);border-bottom:1px solid var(--border)}
-.tp-dot{width:6px;height:6px;border-radius:50%;background:var(--border)}
-.tp-url-bar{flex:1;height:12px;background:var(--bg);border-radius:3px;margin-left:6px}
-.tp-body{padding:12px;min-height:160px}
-.tp-tabs{display:flex;gap:3px;margin-bottom:10px}
-.tp-tab{width:18px;height:14px;border-radius:3px;background:var(--surface);border:1px solid var(--border);font-size:.5rem;display:flex;align-items:center;justify-content:center;color:var(--text2);font-weight:700}
-.tp-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
-.tp-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:5px;background:var(--surface)}
-.tp-avatar{width:18px;height:18px;border-radius:3px;background:var(--border);flex-shrink:0}
-.tp-lines{flex:1}
-.tp-line{height:4px;border-radius:2px;background:var(--border);margin-bottom:3px}
-.tp-line:last-child{margin-bottom:0}
-.tp-line.short{width:60%}
-.tp-line.med{width:80%}
-.tp-line.accent{background:var(--accent);opacity:.4;width:40%}
-.tp-arrow{color:var(--text2);font-size:.6rem;flex-shrink:0}
-.tp-popup{border:1px solid var(--accent);border-radius:6px;padding:8px;margin-top:8px;background:rgba(108,92,231,.06)}
-.tp-popup-title{font-size:.58rem;color:var(--accent2);font-weight:600;margin-bottom:5px}
-.tp-detail-page{display:flex;gap:8px;margin-top:8px}
-.tp-detail-left{flex:1}
-.tp-detail-right{flex:1;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--surface)}
-.tp-detail-label{font-size:.48rem;color:var(--text2);text-transform:uppercase;margin-bottom:2px;font-weight:600;letter-spacing:.03em}
-.tp-hint{font-size:.72rem;color:var(--text2);margin-top:10px;text-align:center;line-height:1.35;font-style:italic}
-
 /* ── Toggle (advanced) ────────────────────────────────────────────── */
 .adv-toggle{display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:var(--text2);font-size:.78rem;font-weight:500;user-select:none;transition:color .15s;margin-top:4px}
 .adv-toggle:hover{color:var(--accent2)}
@@ -252,13 +205,8 @@ tr:hover td{background:rgba(108,92,231,.04)}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── Responsive ───────────────────────────────────────────────────── */
-@media(max-width:780px){
-  .template-section{flex-direction:column}
-  .template-right{width:100%}
-}
 @media(max-width:640px){
   .app{padding:16px 12px 40px}
-  .template-grid{grid-template-columns:1fr 1fr}
   .adv-row{flex-direction:column}
   .pipeline{gap:0}
   .pipe-step{padding:5px 8px;font-size:.7rem}
@@ -292,40 +240,45 @@ tr:hover td{background:rgba(108,92,231,.04)}
     </div>
 
     <!-- ── Step 1: Source ──────────────────────────────────────── -->
-    <div class="field" style="margin-bottom:20px">
-      <label>Start from a template or paste your own URL</label>
-      <div class="hint" style="margin-bottom:10px">Templates are grouped by website type — choose the one that best matches your target site.</div>
-      <div class="template-section">
-        <div class="template-left">
-          <div class="template-grid" id="templateGrid">
-            <div class="template-none selected" data-template-id="">
-              <div class="t-name">Custom URL</div>
-              <div class="t-desc">Paste any website URL</div>
-            </div>
-            <!-- templates populated by JS -->
-          </div>
-        </div>
-        <div class="template-right">
-          <div class="template-preview" id="templatePreview">
-            <div class="tp-title">Website Example</div>
-            <div id="templatePreviewContent">
-              <div style="text-align:center;color:var(--text2);font-size:.8rem;padding:20px 10px">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:6px;opacity:.4"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-                <p>Select a template to see what that type of website looks like.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="field">
       <label for="crawlUrls">Website URL</label>
       <textarea id="crawlUrls" rows="2" placeholder="Paste the URL of the page with the list of companies, sellers, or exhibitors&#10;e.g. https://www.example-tradeshow.com/exhibitors"></textarea>
       <div class="hint">Paste the page that shows the list of companies, exhibitors, or sellers you want to extract.</div>
     </div>
 
-    <!-- ── Step 2: Prompt ──────────────────────────────────────── -->
+    <!-- ── Step 2: Describe page ────────────────────────────────── -->
+    <div class="field">
+      <label for="crawlPageType">What kind of page is this?</label>
+      <select id="crawlPageType">
+        <option value="">Not sure (auto-detect)</option>
+        <option value="directory">Company / Seller directory</option>
+        <option value="product_listing">Product listing</option>
+        <option value="event">Event / Exhibitor page</option>
+      </select>
+      <div class="hint">Helps the scraper understand what type of data to look for.</div>
+    </div>
+
+    <div class="field">
+      <label for="crawlRendering">How is the page built?</label>
+      <select id="crawlRendering">
+        <option value="">Not sure (auto-detect)</option>
+        <option value="static">Simple static page (content visible in page source)</option>
+        <option value="dynamic">Dynamic / JavaScript-heavy (content loads after page opens)</option>
+      </select>
+      <div class="hint">If the page looks blank when you "View Source" in your browser, it's probably dynamic.</div>
+    </div>
+
+    <div class="field">
+      <label for="crawlDetailType">Do items link to a separate detail page?</label>
+      <select id="crawlDetailType">
+        <option value="">Not sure (auto-detect)</option>
+        <option value="separate_page">Yes — each item links to its own page with more info</option>
+        <option value="none">No — all data is on the listing page</option>
+        <option value="popup_overlay">Details load in a popup or overlay (no page navigation)</option>
+      </select>
+      <div class="hint">If clicking an item opens a new page with contact details, choose "Yes".</div>
+    </div>
+
     <div class="field">
       <label for="crawlPrompt">What data do you need?</label>
       <input type="text" id="crawlPrompt" value="Extract all exhibitor/seller details including company name, contact information, location, product categories, and brands.">
@@ -462,7 +415,6 @@ const PREVIEW_FIELDS = ['name','country','city','address','postal_code','website
 let jobs = {};
 let expandedJobId = null;
 let pollingTimers = {};
-let selectedTemplate = '';
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 function esc(s){ if(!s) return ''; const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
@@ -511,19 +463,6 @@ function getSelectedFields(){
   return all.join(', ');
 }
 
-/* Set chips from a comma-separated string (when template auto-fills) */
-function setFieldChips(fieldsStr){
-  const fields = fieldsStr.split(',').map(s=>s.trim()).filter(Boolean);
-  const knownChips = document.querySelectorAll('#fieldChips .chip');
-  knownChips.forEach(c => {
-    c.classList.toggle('selected', fields.includes(c.dataset.field));
-  });
-  // Put unmatched fields in the text input
-  const knownFields = new Set([...knownChips].map(c=>c.dataset.field));
-  const custom = fields.filter(f => !knownFields.has(f));
-  document.getElementById('crawlFields').value = custom.join(', ');
-}
-
 /* ── Advanced toggle ─────────────────────────────────────────────── */
 document.getElementById('advToggle').addEventListener('click', function(){
   this.classList.toggle('open');
@@ -535,146 +474,6 @@ function showToolResult(el, html) { el.innerHTML = html; el.classList.add('visib
 function showToolLoading(el) { showToolResult(el, '<div class="tool-loading"><div class="spinner"></div>Working on it... this may take a minute or two</div>'); }
 function showToolError(el, msg) { showToolResult(el, `<div class="tool-error">${esc(msg)}</div>`); }
 
-/* ── Templates ───────────────────────────────────────────────────── */
-let templates = [];
-
-/* Per-template prompt suggestions */
-const TEMPLATE_PROMPTS = {
-  '': 'Extract all exhibitor details including company name, contact information, location, product categories, and brands.',
-  'dynamic-directory-detail-pages': 'Extract all company details including name, address, phone, email, website, product categories, brands, and social media links.',
-  'dynamic-directory-api': 'Extract all company details including name, booth/stand number, location, contact details, and product categories.',
-  'static-listing': 'Extract all company details including name, description, email, and website.'
-};
-
-/* Wireframe HTML for each template type */
-function wireframeBrowserBar(){
-  return `<div class="tp-browser-bar"><span class="tp-dot"></span><span class="tp-dot"></span><span class="tp-dot"></span><div class="tp-url-bar"></div></div>`;
-}
-
-const TEMPLATE_PREVIEWS = {
-  '': `<div style="text-align:center;color:var(--text2);font-size:.8rem;padding:20px 10px">
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:6px;opacity:.4"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-    <p>Select a template to see what that type of website looks like.</p>
-  </div>`,
-
-  'dynamic-directory-detail-pages': `<div class="tp-wireframe">
-    ${wireframeBrowserBar()}
-    <div class="tp-body">
-      <div class="tp-tabs">
-        <div class="tp-tab active">A</div><div class="tp-tab">B</div><div class="tp-tab">C</div><div class="tp-tab">…</div><div class="tp-tab">Z</div>
-      </div>
-      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div></div><span class="tp-arrow" style="color:var(--accent2)">→</span></div>
-      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div></div><span class="tp-arrow" style="color:var(--accent2)">→</span></div>
-      <div class="tp-detail-page">
-        <div class="tp-detail-left">
-          <div style="font-size:.5rem;color:var(--accent2);margin-bottom:4px;font-weight:600">↗ Opens detail page</div>
-          <div class="tp-detail-right">
-            <div class="tp-detail-label">Name</div><div class="tp-line med" style="height:3px;margin-bottom:4px"></div>
-            <div class="tp-detail-label">Address</div><div class="tp-line short" style="height:3px;margin-bottom:4px"></div>
-            <div class="tp-detail-label">Email</div><div class="tp-line accent" style="height:3px;margin-bottom:4px"></div>
-            <div class="tp-detail-label">Brands</div><div class="tp-line short" style="height:3px"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="tp-hint">A-Z tabbed directory where each company links to a separate detail page with full contact info.</div>`,
-
-  'dynamic-directory-api': `<div class="tp-wireframe">
-    ${wireframeBrowserBar()}
-    <div class="tp-body">
-      <div class="tp-tabs">
-        <div class="tp-tab active">A</div><div class="tp-tab">B</div><div class="tp-tab">C</div><div class="tp-tab">D</div><div class="tp-tab">…</div><div class="tp-tab">Z</div>
-      </div>
-      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div></div><span class="tp-arrow">▶</span></div>
-      <div class="tp-row" style="border-color:var(--accent)"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div></div><span class="tp-arrow">▶</span></div>
-      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div></div><span class="tp-arrow">▶</span></div>
-      <div class="tp-popup">
-        <div class="tp-popup-title">⟵ Detail loaded via API</div>
-        <div class="tp-line med" style="height:3px;margin-bottom:3px"></div>
-        <div class="tp-line short" style="height:3px;margin-bottom:3px"></div>
-        <div class="tp-line accent" style="height:3px"></div>
-      </div>
-    </div>
-  </div>
-  <div class="tp-hint">A-Z tabbed directory. Clicking a company loads its details from a hidden API — no separate page needed.</div>`,
-
-  'static-listing': `<div class="tp-wireframe">
-    ${wireframeBrowserBar()}
-    <div class="tp-body">
-      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div><div class="tp-line accent" style="height:3px"></div></div></div>
-      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div><div class="tp-line accent" style="height:3px"></div></div></div>
-      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div><div class="tp-line accent" style="height:3px"></div></div></div>
-      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div><div class="tp-line accent" style="height:3px"></div></div></div>
-      <div class="tp-row"><div class="tp-avatar"></div><div class="tp-lines"><div class="tp-line med"></div><div class="tp-line short"></div><div class="tp-line accent" style="height:3px"></div></div></div>
-    </div>
-  </div>
-  <div class="tp-hint">Simple single-page list — all company data is right on the page. No tabs, no JavaScript, no detail pages.</div>`
-};
-
-function updatePreview(tmplId){
-  const content = document.getElementById('templatePreviewContent');
-  const titleEl = document.querySelector('#templatePreview .tp-title');
-  if(!tmplId){
-    titleEl.textContent = 'Website Example';
-  } else {
-    const tmpl = templates.find(t=>t.id===tmplId);
-    titleEl.textContent = tmpl ? tmpl.name : 'Website Example';
-  }
-  content.innerHTML = TEMPLATE_PREVIEWS[tmplId] || TEMPLATE_PREVIEWS[''];
-}
-
-async function loadTemplates() {
-  try {
-    templates = await apiGet('/templates');
-    const grid = document.getElementById('templateGrid');
-    templates.forEach(t => {
-      const div = document.createElement('div');
-      div.className = 'template-card';
-      div.dataset.templateId = t.id;
-      div.innerHTML = `<div class="t-name">${esc(t.name)}</div>
-        <div class="t-desc">${esc(t.description)}</div>`;
-      grid.appendChild(div);
-    });
-    setupTemplateClicks();
-  } catch(e) {
-    console.warn('Failed to load templates', e);
-  }
-}
-
-function setupTemplateClicks(){
-  document.querySelectorAll('#templateGrid .template-card, #templateGrid .template-none').forEach(card => {
-    card.addEventListener('click', () => {
-      // Deselect all, select this one
-      document.querySelectorAll('#templateGrid .template-card, #templateGrid .template-none').forEach(c=>c.classList.remove('selected'));
-      card.classList.add('selected');
-
-      const tmplId = card.dataset.templateId;
-      selectedTemplate = tmplId || '';
-
-      // Update the preview wireframe
-      updatePreview(tmplId);
-
-      if(!tmplId){
-        // Custom URL — clear fields, set generic prompt
-        document.getElementById('crawlUrls').value = '';
-        document.getElementById('crawlPrompt').value = TEMPLATE_PROMPTS[''];
-        setFieldChips('name, email, phone, website, country, city');
-        highlightSteps();
-        return;
-      }
-
-      const tmpl = templates.find(t=>t.id===tmplId);
-      if(!tmpl) return;
-
-      // Set template-specific prompt (do NOT auto-fill URL — user pastes their own)
-      document.getElementById('crawlPrompt').value = TEMPLATE_PROMPTS[tmplId] || tmpl.default_prompt;
-      if(tmpl.default_fields_wanted) setFieldChips(tmpl.default_fields_wanted);
-      highlightSteps();
-    });
-  });
-}
-
 /* ── Main Submit ─────────────────────────────────────────────────── */
 document.getElementById('crawlBtn').addEventListener('click', async () => {
   const urls = document.getElementById('crawlUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean);
@@ -684,6 +483,9 @@ document.getElementById('crawlBtn').addEventListener('click', async () => {
   const itemDesc = document.getElementById('crawlItemDesc').value.trim();
   const siteNotes = document.getElementById('crawlSiteNotes').value.trim();
   const paginationType = document.getElementById('crawlPagination').value;
+  const pageType = document.getElementById('crawlPageType').value;
+  const rendering = document.getElementById('crawlRendering').value;
+  const detailType = document.getElementById('crawlDetailType').value;
   const maxPages = document.getElementById('crawlMaxPages').value.trim();
   const maxItems = document.getElementById('crawlMaxItems').value.trim();
   const testSingle = document.getElementById('crawlTestSingle').checked;
@@ -706,7 +508,9 @@ document.getElementById('crawlBtn').addEventListener('click', async () => {
     if(paginationType) body.pagination_type = paginationType;
     if(maxItems && !isNaN(+maxItems)) body.max_items = +maxItems;
     if(testSingle) body.test_single = true;
-    if(selectedTemplate) body.template_id = selectedTemplate;
+    if(pageType) body.page_type = pageType;
+    if(rendering) body.rendering_type = rendering;
+    if(detailType) body.detail_page_type = detailType;
 
     const data = await apiPost('/smart-crawl', body);
 
@@ -862,7 +666,6 @@ function renderJobCard(j){
     <div class="job-top">
       <span class="badge badge-${j.status}"><span class="dot"></span>${STAGE_LABELS[j.status]}</span>
       ${isTest ? '<span class="job-mode">Test</span>' : ''}
-      ${j.request.template_id ? '<span class="job-mode" style="background:rgba(0,184,148,.12);color:var(--green)">Template</span>' : ''}
       ${maxItems ? '<span class="job-mode" style="background:rgba(253,203,110,.12);color:var(--yellow)">Max '+maxItems+'</span>' : ''}
       ${j.platform_info && j.platform_info.cms ? '<span class="platform-badge">'+esc(j.platform_info.cms)+'</span>' : ''}
       ${j.platform_info && j.platform_info.ecommerce ? '<span class="platform-badge" style="background:rgba(0,184,148,.1);color:var(--green)">'+esc(j.platform_info.ecommerce)+'</span>' : ''}
@@ -1186,7 +989,6 @@ function renderTable(records){
 
 /* ── Refresh & Init ──────────────────────────────────────────────── */
 document.getElementById('refreshBtn').addEventListener('click', loadJobs);
-loadTemplates();
 loadJobs();
 highlightSteps();
 </script>

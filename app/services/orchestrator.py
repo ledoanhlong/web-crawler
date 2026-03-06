@@ -57,7 +57,7 @@ class Orchestrator:
                 "[%s] New crawl request — URL: %s | fields_wanted: %s | "
                 "item_description: %s | site_notes/prompt: %s | "
                 "pagination_type: %s | detail_page_url: %s | max_items: %s | "
-                "test_single: %s | template: %s",
+                "test_single: %s",
                 job.id,
                 req.url,
                 req.fields_wanted or '(auto)',
@@ -67,14 +67,13 @@ class Orchestrator:
                 req.detail_page_url or '(auto)',
                 req.max_items or '(all)',
                 req.test_single,
-                req.template_id or '(none)',
             )
 
             # ---- Stage 1: Planning ----
             # Templates provide structural hints (JS, pagination type, detail
             # strategy) but the planner still runs to generate CSS selectors
             # for the actual target page.
-            template_hints = getattr(job, "_template_hints", None)
+            template_hints = job.template_hints
 
             # Check plan cache first (only when no template hints override)
             cached = None
@@ -94,7 +93,7 @@ class Orchestrator:
                 job.status = CrawlStatus.PLANNING
                 job.updated_at = datetime.now(timezone.utc)
                 if template_hints:
-                    log.info("[%s] Stage 1: Planning with template hints (%s)", job.id, req.template_id)
+                    log.info("[%s] Stage 1: Planning with structural hints", job.id)
                 else:
                     log.info("[%s] Stage 1: Planning", job.id)
                 plan = await self.planner.plan(
