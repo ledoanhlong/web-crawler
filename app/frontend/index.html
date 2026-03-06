@@ -344,6 +344,20 @@ tr:hover td{background:rgba(108,92,231,.04)}
       <div class="hint">Any observations about how the site works — pagination, loading behavior, login walls, etc.</div>
     </div>
 
+    <div class="field">
+      <label for="crawlPagination">How does the page load more items?</label>
+      <select id="crawlPagination">
+        <option value="">Auto-detect (let the AI decide)</option>
+        <option value="none">Single page — all items visible (may need scrolling)</option>
+        <option value="infinite_scroll">Infinite scroll — items load as you scroll down</option>
+        <option value="load_more_button">Load-more button — click a button to reveal more</option>
+        <option value="next_button">Next / Previous buttons — click to go to next page</option>
+        <option value="page_numbers">Page numbers — numbered pagination links (1, 2, 3...)</option>
+        <option value="alphabet_tabs">A-Z tabs — alphabet or category filter tabs</option>
+      </select>
+      <div class="hint">Tell us how the site paginates so we scrape all items correctly. When in doubt, pick "Single page" if all items are on one page.</div>
+    </div>
+
     <!-- ── Step 3: Fields ──────────────────────────────────────── -->
     <div class="field">
       <label>Which fields do you want?</label>
@@ -669,6 +683,7 @@ document.getElementById('crawlBtn').addEventListener('click', async () => {
   const detailUrl = document.getElementById('crawlDetailUrl').value.trim();
   const itemDesc = document.getElementById('crawlItemDesc').value.trim();
   const siteNotes = document.getElementById('crawlSiteNotes').value.trim();
+  const paginationType = document.getElementById('crawlPagination').value;
   const maxPages = document.getElementById('crawlMaxPages').value.trim();
   const maxItems = document.getElementById('crawlMaxItems').value.trim();
   const testSingle = document.getElementById('crawlTestSingle').checked;
@@ -688,6 +703,7 @@ document.getElementById('crawlBtn').addEventListener('click', async () => {
     if(detailUrl) body.detail_page_url = detailUrl;
     if(itemDesc) body.item_description = itemDesc;
     if(siteNotes) body.site_notes = siteNotes;
+    if(paginationType) body.pagination_type = paginationType;
     if(maxItems && !isNaN(+maxItems)) body.max_items = +maxItems;
     if(testSingle) body.test_single = true;
     if(selectedTemplate) body.template_id = selectedTemplate;
@@ -941,7 +957,21 @@ function renderJobDetail(j){
       </div>`;
     }
   } else if(!isFailed && !isPreview && j.status!=='completed'){
-    body += `<div style="text-align:center;padding:24px;color:var(--text2);font-size:.88rem"><span class="spinner" style="margin-right:8px"></span>Working on it...</div>`;
+    let progressHtml = '<span class="spinner" style="margin-right:8px"></span>Working on it...';
+    if(j.progress){
+      const p = j.progress;
+      if(p.stage === 'enriching_details' && p.detail_total){
+        const pct = Math.round((p.detail_current / p.detail_total) * 100);
+        progressHtml = `<span class="spinner" style="margin-right:8px"></span>
+          Fetching detail pages: <strong>${p.detail_current}/${p.detail_total}</strong> (${pct}%)
+          <div style="width:100%;max-width:300px;height:6px;background:var(--surface2);border-radius:3px;margin-top:8px;overflow:hidden">
+            <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:3px;transition:width .3s"></div>
+          </div>`;
+      } else if(p.stage){
+        progressHtml = `<span class="spinner" style="margin-right:8px"></span>${esc(p.stage)}...`;
+      }
+    }
+    body += `<div style="text-align:center;padding:24px;color:var(--text2);font-size:.88rem">${progressHtml}</div>`;
   }
 
   return `<div class="job-detail">

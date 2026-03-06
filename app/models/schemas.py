@@ -205,7 +205,7 @@ class TemplateHints(BaseModel):
     )
     pagination: str = Field(
         default="none",
-        description="Expected pagination strategy: none, alphabet_tabs, page_numbers, etc.",
+        description="Weak hint for expected pagination. Ignored when the user specifies pagination_type.",
     )
     has_detail_pages: bool = Field(
         default=False,
@@ -358,6 +358,15 @@ class CrawlRequest(BaseModel):
             "Any observations about the site that might help scraping. "
             "E.g. 'items load via AJAX after clicking a tab', 'site is behind Cloudflare', "
             "'pagination is at the bottom with page numbers 1-80'."
+        ),
+    )
+    pagination_type: str | None = Field(
+        default=None,
+        description=(
+            "User-specified pagination strategy. One of: "
+            "'none' (single page), 'infinite_scroll', 'load_more_button', "
+            "'next_button', 'page_numbers', 'alphabet_tabs'. "
+            "If omitted the planner will auto-detect."
         ),
     )
     test_single: bool = Field(
@@ -549,6 +558,15 @@ class SmartCrawlRequest(BaseModel):
     detail_page_url: str | None = Field(
         default=None,
         description="Example detail page URL for the planner.",
+    )
+    pagination_type: str | None = Field(
+        default=None,
+        description=(
+            "User-specified pagination strategy. One of: "
+            "'none', 'infinite_scroll', 'load_more_button', "
+            "'next_button', 'page_numbers', 'alphabet_tabs'. "
+            "If omitted the planner will auto-detect."
+        ),
     )
     max_items: int | None = Field(
         default=None,

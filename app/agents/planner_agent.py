@@ -156,6 +156,7 @@ class PlannerAgent:
         item_description: str | None = None,
         site_notes: str | None = None,
         template_hints: TemplateHints | None = None,
+        pagination_type: str | None = None,
     ) -> ScrapingPlan:
         log.info("Planning scrape for %s", url)
 
@@ -223,12 +224,23 @@ class PlannerAgent:
                     "to guide your analysis — but always derive actual CSS "
                     "selectors from the HTML above.\n"
                     f"- requires_javascript: {template_hints.requires_javascript}\n"
-                    f"- expected pagination: {template_hints.pagination}\n"
                     f"- has_detail_pages: {template_hints.has_detail_pages}\n"
                     f"- has_detail_api: {template_hints.has_detail_api}\n"
                 )
+                # Only mention template pagination as a weak hint when user didn't specify
+                if not pagination_type and template_hints.pagination:
+                    user_content += f"- expected pagination (hint only): {template_hints.pagination}\n"
                 if template_hints.notes:
                     user_content += f"- pattern notes: {template_hints.notes}\n"
+
+            # Inject user-specified pagination — this overrides everything
+            if pagination_type:
+                user_content += (
+                    f"\n\n━━ PAGINATION (user-specified — MUST USE) ━━\n"
+                    f"The user has explicitly specified the pagination strategy: {pagination_type}\n"
+                    f"You MUST set pagination to \"{pagination_type}\" in your plan.\n"
+                    f"Do NOT override this with your own analysis.\n"
+                )
 
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -259,6 +271,21 @@ class PlannerAgent:
         if template_hints and template_hints.requires_javascript and not plan_data.get("requires_javascript"):
             log.info("Overriding requires_javascript=True (template hint)")
             plan_data["requires_javascript"] = True
+
+        # Override pagination if the user explicitly specified it
+        if pagination_type:
+            llm_pagination = plan_data.get("pagination", "none")
+            if llm_pagination != pagination_type:
+                log.info(
+                    "Overriding pagination: LLM said '%s' but user specified '%s'",
+                    llm_pagination, pagination_type,
+                )
+            plan_data["pagination"] = pagination_type
+            # For 'none' (single page) and 'infinite_scroll', pre-resolved
+            # pagination_urls from the LLM are irrelevant — clear them to
+            # avoid scraping non-existent pages.
+            if pagination_type in ("none", "infinite_scroll", "load_more_button"):
+                plan_data["pagination_urls"] = []
 
         plan = ScrapingPlan.model_validate(plan_data)
 

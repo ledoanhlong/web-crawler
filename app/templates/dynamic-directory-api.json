@@ -7,9 +7,9 @@
   "default_fields_wanted": "name, booth, country, city, address, postal_code, website, email, phone, description, product_categories, brands",
   "hints": {
     "requires_javascript": true,
-    "pagination": "alphabet_tabs",
+    "pagination": "none",
     "has_detail_pages": false,
     "has_detail_api": true,
-    "notes": "This pattern is common for modern JS-rendered directories (Angular/React/Vue). The listing page uses alphabet or category tabs. Clicking a 'Details' button does NOT navigate to a new page — instead it triggers an XHR/fetch API call that returns JSON data. The planner should look for detail buttons (not links with href) and attempt API interception. Items may have data attributes containing IDs used in the API URL."
+    "notes": "This pattern is common for modern JS-rendered directories (Angular/React/Vue). Clicking a 'Details' button does NOT navigate to a new page — instead it triggers an XHR/fetch API call that returns JSON data. The planner should look for detail buttons (not links with href) and attempt API interception. Items may have data attributes containing IDs used in the API URL. The user should specify the pagination type."
   }
 }

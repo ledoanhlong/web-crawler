@@ -52,6 +52,24 @@ class Orchestrator:
         try:
             req = job.request
 
+            # ---- Log request details ----
+            log.info(
+                "[%s] New crawl request — URL: %s | fields_wanted: %s | "
+                "item_description: %s | site_notes/prompt: %s | "
+                "pagination_type: %s | detail_page_url: %s | max_items: %s | "
+                "test_single: %s | template: %s",
+                job.id,
+                req.url,
+                req.fields_wanted or '(auto)',
+                req.item_description or '(none)',
+                req.site_notes or '(none)',
+                req.pagination_type or '(auto-detect)',
+                req.detail_page_url or '(auto)',
+                req.max_items or '(all)',
+                req.test_single,
+                req.template_id or '(none)',
+            )
+
             # ---- Stage 1: Planning ----
             # Templates provide structural hints (JS, pagination type, detail
             # strategy) but the planner still runs to generate CSS selectors
@@ -86,6 +104,7 @@ class Orchestrator:
                     item_description=req.item_description,
                     site_notes=req.site_notes,
                     template_hints=template_hints,
+                    pagination_type=req.pagination_type,
                 )
                 job.plan = plan
 
@@ -232,9 +251,16 @@ class Orchestrator:
             job.status = CrawlStatus.SCRAPING
             job.updated_at = datetime.now(timezone.utc)
             log.info("[%s] Stage 2: Full scraping (method=%s)", job.id, job.extraction_method)
+
+            def _progress_cb(info: dict) -> None:
+                """Called by scraper to report real-time progress."""
+                job.progress = info
+                job.updated_at = datetime.now(timezone.utc)
+
             page_data_list = await self.scraper.scrape(
                 plan, max_items=job.request.max_items,
                 extraction_method=job.extraction_method,
+                progress_callback=_progress_cb,
             )
             total_items = sum(len(pd.items) for pd in page_data_list)
             log.info("[%s] Scraped %d items from %d pages", job.id, total_items, len(page_data_list))

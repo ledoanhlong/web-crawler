@@ -218,6 +218,7 @@ async def smart_crawl(
             item_description=body.item_description,
             site_notes=body.site_notes,
             detail_page_url=body.detail_page_url,
+            pagination_type=body.pagination_type,
             max_items=body.max_items,
             test_single=body.test_single,
             template_id=body.template_id,
@@ -258,6 +259,7 @@ async def smart_crawl(
             item_description=body.item_description,
             site_notes=body.site_notes,
             detail_page_url=body.detail_page_url,
+            pagination_type=body.pagination_type,
             max_items=body.max_items,
             test_single=body.test_single,
         )

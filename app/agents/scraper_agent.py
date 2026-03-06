@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -45,13 +46,14 @@ class ScraperAgent:
     async def scrape(
         self, plan: ScrapingPlan, *, max_items: int | None = None,
         extraction_method: ExtractionMethod | None = None,
+        progress_callback: Callable[[dict], None] | None = None,
     ) -> list[PageData]:
         log.info("Starting scrape for %s (js=%s, max_items=%s, method=%s)", plan.url, plan.requires_javascript, max_items, extraction_method)
 
         if plan.pagination == PaginationStrategy.API_ENDPOINT and plan.api_endpoint:
             pages = await self._scrape_api(plan, max_items=max_items)
         elif plan.requires_javascript:
-            pages = await self._scrape_js(plan, max_items=max_items, extraction_method=extraction_method)
+            pages = await self._scrape_js(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback)
         elif settings.use_scrapy and self._can_use_scrapy(plan):
             try:
                 pages = await self._scrape_scrapy(plan, max_items=max_items)
@@ -70,9 +72,13 @@ class ScraperAgent:
                 pages = await self._enrich_detail_api(pages, plan)
             except Exception as exc:
                 log.warning("Scrapy failed, falling back to httpx: %s", exc)
-                pages = await self._scrape_static(plan, max_items=max_items, extraction_method=extraction_method)
+                pages = await self._scrape_static(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback)
         else:
-            pages = await self._scrape_static(plan, max_items=max_items, extraction_method=extraction_method)
+            pages = await self._scrape_static(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback)
+
+        # Detail page enrichment (shared for all paths that haven't done it yet)
+        # Note: _scrape_js and _scrape_static already call _enrich_detail_pages internally,
+        # so this is only a fallback for API/scrapy paths.
 
         # Enforce max_items limit across all pages
         if max_items is not None:
@@ -207,6 +213,7 @@ class ScraperAgent:
     async def _scrape_static(
         self, plan: ScrapingPlan, *, max_items: int | None = None,
         extraction_method: ExtractionMethod | None = None,
+        progress_callback: Callable[[dict], None] | None = None,
     ) -> list[PageData]:
         urls = self._resolve_page_urls(plan)
         log.info("Static scrape: %d page URL(s)", len(urls))
@@ -226,7 +233,7 @@ class ScraperAgent:
             pages.append(PageData(url=url, items=items, structured_data=extract_all_structured_data(html)))
 
         # Detail page enrichment
-        pages = await self._enrich_detail_pages(pages, plan, max_details=max_items)
+        pages = await self._enrich_detail_pages(pages, plan, max_details=max_items, progress_callback=progress_callback)
         pages = await self._enrich_detail_api(pages, plan, max_details=max_items)
         return pages
 
@@ -236,6 +243,7 @@ class ScraperAgent:
     async def _scrape_js(
         self, plan: ScrapingPlan, *, max_items: int | None = None,
         extraction_method: ExtractionMethod | None = None,
+        progress_callback: Callable[[dict], None] | None = None,
     ) -> list[PageData]:
         pages: list[PageData] = []
         total_items = 0
@@ -245,6 +253,28 @@ class ScraperAgent:
 
         async with get_browser() as browser:
             match plan.pagination:
+                case PaginationStrategy.NONE:
+                    # Single page — scroll to bottom to reveal all items
+                    page = await browser.new_page()
+                    try:
+                        await page.goto(plan.url, wait_until="commit", timeout=120_000)
+                        if plan.wait_selector:
+                            try:
+                                await page.wait_for_selector(plan.wait_selector, timeout=15_000)
+                            except Exception:
+                                log.warning("wait_for_selector timed out for '%s' — continuing", plan.wait_selector)
+                        log.info("Single page mode — scrolling to reveal all items")
+                        await scroll_to_bottom(page, max_scrolls=settings.max_pages_per_crawl)
+                        html = await page.content()
+                        items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
+                        if max_items is not None:
+                            items = items[:max_items]
+                        total_items += len(items)
+                        log.info("Single page extracted %d items", len(items))
+                        pages.append(PageData(url=plan.url, items=items, structured_data=extract_all_structured_data(html)))
+                    finally:
+                        await page.close()
+
                 case PaginationStrategy.ALPHABET_TABS if plan.alphabet_tab_selector:
                     htmls = await click_all_tabs(
                         browser,
@@ -331,8 +361,78 @@ class ScraperAgent:
                     finally:
                         await page.close()
 
+                case PaginationStrategy.PAGE_NUMBERS if plan.pagination_selector:
+                    # Page-number pagination: use pre-resolved URLs first,
+                    # then fall back to clicking next-page button to discover
+                    # any pages the LLM missed.
+                    urls = self._resolve_page_urls(plan)
+                    page_obj = await browser.new_page()
+                    try:
+                        # Phase 1: visit each pre-resolved URL
+                        for idx, url in enumerate(urls[: settings.max_pages_per_crawl]):
+                            if _limit_reached():
+                                break
+                            log.info("Pagination page %d/%d: %s", idx + 1, len(urls), url)
+                            await page_obj.goto(url, wait_until="commit", timeout=120_000)
+                            if plan.wait_selector:
+                                try:
+                                    await page_obj.wait_for_selector(plan.wait_selector, timeout=15_000)
+                                except Exception:
+                                    log.warning("wait_for_selector timed out for '%s' — continuing", plan.wait_selector)
+                            html = await page_obj.content()
+                            items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
+                            if max_items is not None:
+                                items = items[: max_items - total_items]
+                            total_items += len(items)
+                            pages.append(PageData(url=url, items=items, structured_data=extract_all_structured_data(html)))
+                            await asyncio.sleep(settings.request_delay_ms / 1000)
+
+                        # Phase 2: if we probably have more pages (based on
+                        # total_items_hint), keep clicking the next/pagination
+                        # button to discover remaining pages.
+                        expected = plan.total_items_hint or 0
+                        items_per_page = (total_items // max(len(urls), 1)) if total_items else 100
+                        expected_pages = (expected // max(items_per_page, 1)) + 1 if expected else 0
+                        pages_visited = len(urls)
+
+                        if total_items < expected and pages_visited < expected_pages:
+                            log.info(
+                                "Pre-resolved URLs yielded %d items but total_items_hint=%d — "
+                                "clicking next-page button to discover remaining pages",
+                                total_items, expected,
+                            )
+                            for _ in range(settings.max_pages_per_crawl - pages_visited):
+                                if _limit_reached():
+                                    break
+                                btn = await page_obj.query_selector(plan.pagination_selector)
+                                if not btn or not await btn.is_visible():
+                                    log.info("No more next-page buttons found — pagination complete")
+                                    break
+                                await btn.click()
+                                await asyncio.sleep(1.5)
+                                if plan.wait_selector:
+                                    try:
+                                        await page_obj.wait_for_selector(plan.wait_selector, timeout=15_000)
+                                    except Exception:
+                                        pass
+                                html = await page_obj.content()
+                                current_url = page_obj.url
+                                items = await self._extract_items_with_fallback(html, plan.target, plan.detail_api_plan, extraction_method=extraction_method)
+                                if not items:
+                                    log.info("Empty page reached — stopping pagination")
+                                    break
+                                if max_items is not None:
+                                    items = items[: max_items - total_items]
+                                total_items += len(items)
+                                pages_visited += 1
+                                log.info("Discovered page %d: %s (%d items, %d total)", pages_visited, current_url, len(items), total_items)
+                                pages.append(PageData(url=current_url, items=items, structured_data=extract_all_structured_data(html)))
+                                await asyncio.sleep(settings.request_delay_ms / 1000)
+                    finally:
+                        await page_obj.close()
+
                 case _:
-                    # Single page or page-number pagination with pre-resolved URLs
+                    # Single page or unknown pagination with pre-resolved URLs
                     urls = self._resolve_page_urls(plan)
                     for url in urls[: settings.max_pages_per_crawl]:
                         if _limit_reached():
@@ -348,7 +448,7 @@ class ScraperAgent:
                         await asyncio.sleep(settings.request_delay_ms / 1000)
 
         # Detail page enrichment (JS path — use Playwright for detail pages too)
-        pages = await self._enrich_detail_pages(pages, plan, max_details=max_items)
+        pages = await self._enrich_detail_pages(pages, plan, max_details=max_items, progress_callback=progress_callback)
         pages = await self._enrich_detail_api(pages, plan, max_details=max_items)
         return pages
 
@@ -421,6 +521,7 @@ class ScraperAgent:
         plan: ScrapingPlan,
         *,
         max_details: int | None = None,
+        progress_callback: Callable[[dict], None] | None = None,
     ) -> list[PageData]:
         """Collect detail-page URLs from items and fetch them.
 
@@ -477,20 +578,49 @@ class ScraperAgent:
                 seen.add(u)
                 unique_urls.append(u)
 
-        log.info("Enriching %d detail page(s)", len(unique_urls))
+        total_detail = len(unique_urls)
+        log.info("Enriching %d detail page(s)", total_detail)
+
+        # Per-page timeout: 60 seconds per detail page to prevent hangs
+        DETAIL_PAGE_TIMEOUT_S = 60
 
         # Fetch detail pages
         detail_htmls: dict[str, str] = {}
         if plan.requires_javascript:
             async with get_browser() as browser:
-                for url in unique_urls:
+                for idx, url in enumerate(unique_urls, 1):
+                    log.info("Detail page %d/%d: %s", idx, total_detail, url)
+                    if progress_callback:
+                        progress_callback({
+                            "stage": "enriching_details",
+                            "detail_current": idx,
+                            "detail_total": total_detail,
+                            "detail_url": url,
+                        })
                     try:
-                        detail_htmls[url] = await fetch_page_js(browser, url)
+                        detail_htmls[url] = await asyncio.wait_for(
+                            fetch_page_js(browser, url),
+                            timeout=DETAIL_PAGE_TIMEOUT_S,
+                        )
+                    except asyncio.TimeoutError:
+                        log.warning(
+                            "Detail page %d/%d timed out after %ds: %s",
+                            idx, total_detail, DETAIL_PAGE_TIMEOUT_S, url,
+                        )
                     except Exception as exc:
-                        log.warning("Failed detail page %s: %s", url, exc)
+                        log.warning("Failed detail page %d/%d %s: %s", idx, total_detail, url, exc)
                     await asyncio.sleep(settings.request_delay_ms / 1000)
+            log.info("Detail enrichment complete: fetched %d/%d pages", len(detail_htmls), total_detail)
         else:
+            if progress_callback:
+                progress_callback({
+                    "stage": "enriching_details",
+                    "detail_current": 0,
+                    "detail_total": total_detail,
+                    "detail_url": "(batch fetch)",
+                })
             detail_htmls = await fetch_pages(unique_urls)
+            log.info("Detail enrichment complete: fetched %d/%d pages", len(detail_htmls), total_detail)
 
         for pd in pages:
             pd.detail_pages.update(detail_htmls)
@@ -874,9 +1004,60 @@ class ScraperAgent:
     # Helpers
     # ------------------------------------------------------------------
     def _resolve_page_urls(self, plan: ScrapingPlan) -> list[str]:
+        from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
         if plan.pagination_urls:
-            from urllib.parse import urljoin
             resolved = [urljoin(plan.url, u) for u in plan.pagination_urls]
+
+            # Auto-extrapolate if the LLM gave too few URLs compared to
+            # total_items_hint.  Detects a numeric page parameter that
+            # increments across the provided URLs and extends the list.
+            if (
+                plan.total_items_hint
+                and len(resolved) >= 2
+            ):
+                # Try to detect the varying page parameter
+                parsed_first = urlparse(resolved[0])
+                parsed_last = urlparse(resolved[-1])
+                qs_first = parse_qs(parsed_first.query, keep_blank_values=True)
+                qs_last = parse_qs(parsed_last.query, keep_blank_values=True)
+
+                page_param = None
+                last_page_num = None
+                for key in qs_first:
+                    if key in qs_last:
+                        try:
+                            v_first = int(qs_first[key][0])
+                            v_last = int(qs_last[key][0])
+                            if v_last > v_first:
+                                page_param = key
+                                last_page_num = v_last
+                                break
+                        except (ValueError, IndexError):
+                            continue
+
+                if page_param and last_page_num is not None:
+                    # Estimate items per page from hint - assume ~100 items per page
+                    items_per_page = max(plan.total_items_hint // max(len(resolved), 1), 50)
+                    estimated_pages = (plan.total_items_hint // items_per_page) + 1
+                    if estimated_pages > len(resolved):
+                        log.info(
+                            "Auto-extrapolating pagination: LLM gave %d URLs but "
+                            "total_items_hint=%d suggests ~%d pages — extending to page=%d",
+                            len(resolved), plan.total_items_hint,
+                            estimated_pages, estimated_pages,
+                        )
+                        base_parsed = urlparse(resolved[-1])
+                        base_qs = parse_qs(base_parsed.query, keep_blank_values=True)
+                        for page_num in range(last_page_num + 1, estimated_pages + 1):
+                            new_qs = {k: v[0] for k, v in base_qs.items()}
+                            new_qs[page_param] = str(page_num)
+                            new_url = urlunparse((
+                                base_parsed.scheme, base_parsed.netloc,
+                                base_parsed.path, base_parsed.params,
+                                urlencode(new_qs), base_parsed.fragment,
+                            ))
+                            resolved.append(new_url)
+
             return resolved[: settings.max_pages_per_crawl]
         return [plan.url]
 

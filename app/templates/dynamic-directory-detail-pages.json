@@ -7,9 +7,9 @@
   "default_fields_wanted": "name, country, city, address, postal_code, website, email, phone, description, product_categories, brands",
   "hints": {
     "requires_javascript": true,
-    "pagination": "alphabet_tabs",
+    "pagination": "none",
     "has_detail_pages": true,
     "has_detail_api": false,
-    "notes": "This pattern is common for trade show / exhibition exhibitor directories. The listing page is JS-rendered with A-Z alphabet tab navigation. Each item card links to a separate detail page containing full contact info, product categories, brands, and social media links. The planner should look for tab/letter navigation and item cards with detail links."
+    "notes": "This pattern is common for trade show / exhibition exhibitor directories. The listing page is JS-rendered. Each item card links to a separate detail page containing full contact info, product categories, brands, and social media links. The planner should look for item cards with detail links. The user should specify the pagination type (e.g. single page, infinite scroll, A-Z tabs, page numbers)."
   }
 }
