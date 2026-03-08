@@ -54,12 +54,33 @@ class Settings(BaseSettings):
     scrapy_autothrottle_target_concurrency: float = 2.0
     scrapy_subprocess_timeout_s: int = 600
 
+    # Job timeout (cooperative — signals graceful shutdown, does not kill the job)
+    max_job_duration_s: int = 7200  # 2 hours
+
     # Playwright
     playwright_headless: bool = True
     playwright_ws_endpoint: str | None = None
 
     # Output
     output_dir: str = "./output"
+
+    # FireCrawl Cloud API
+    firecrawl_api_key: str | None = None
+    firecrawl_api_url: str = "https://api.firecrawl.dev"
+    use_firecrawl: bool = False  # master feature flag
+    use_firecrawl_for_fetching: bool = True    # use /scrape for page fetching
+    use_firecrawl_for_discovery: bool = True   # use /map for URL discovery
+    use_firecrawl_for_extraction: bool = False  # use agent() for structured extraction
+
+    # Reliability controls
+    reliability_auto_switch_enabled: bool = True
+    reliability_auto_switch_min_pages: int = 3
+    reliability_auto_switch_zero_streak: int = 2
+    reliability_preview_margin_threshold: float = 1.5
+    reliability_selector_min_hit_ratio: float = 0.2
+    reliability_selector_sample_containers: int = 10
+    reliability_quality_min_score: float = 0.0
+    reliability_quality_enforce: bool = False
 
     # Logging
     log_level: str = "INFO"

@@ -34,6 +34,12 @@ app.add_middleware(
 app.include_router(router)
 
 
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    from app.utils.http import close_shared_client
+    await close_shared_client()
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}

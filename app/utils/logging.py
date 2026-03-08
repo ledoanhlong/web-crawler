@@ -2,6 +2,7 @@ import logging
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any
 
 from app.config import settings
 
@@ -42,3 +43,12 @@ def get_logger(name: str) -> logging.Logger:
 
     logger.setLevel(logging.DEBUG)
     return logger
+
+
+def log_kv(logger: logging.Logger, level: int, message: str, **fields: Any) -> None:
+    """Log a message with deterministic key-value fields for easier parsing."""
+    if fields:
+        pairs = " ".join(f"{key}={fields[key]!r}" for key in sorted(fields))
+        logger.log(level, "%s | %s", message, pairs)
+        return
+    logger.log(level, message)

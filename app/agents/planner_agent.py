@@ -16,11 +16,13 @@ Flow
 from __future__ import annotations
 
 import json
+import re
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
 from app.models.schemas import DetailApiPlan, DetailPagePlan, ScrapingPlan, TemplateHints
+from app.config import settings
 from app.prompts import load_prompt
 from app.utils.html import simplify_html
 from app.utils.http import fetch_page
@@ -95,6 +97,30 @@ def _sanitize_plan_data(plan_data: dict) -> dict:
                 valid.append(p)
             target["detail_link_selector"] = ", ".join(valid) if valid else None
 
+    # Strip non-standard CSS pseudo-classes the LLM sometimes emits
+    # (e.g. `:contains()` — a jQuery extension invalid in querySelectorAll).
+    # We drop the entire comma-separated part if it contains such a pseudo.
+    _NON_STANDARD_RE = re.compile(r":(?:contains|eq|gt|lt|even|odd)\b\(")
+    for sel_key in ("pagination_selector", "inner_pagination_selector",
+                     "alphabet_tab_selector", "wait_selector"):
+        raw = plan_data.get(sel_key)
+        if not isinstance(raw, str):
+            continue
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        valid_parts = [p for p in parts if not _NON_STANDARD_RE.search(p)]
+        plan_data[sel_key] = ", ".join(valid_parts) if valid_parts else None
+    # Also clean selectors inside target
+    target = plan_data.get("target")
+    if isinstance(target, dict):
+        for sel_key in ("item_container_selector", "detail_link_selector",
+                        "detail_button_selector"):
+            raw = target.get(sel_key)
+            if not isinstance(raw, str):
+                continue
+            parts = [p.strip() for p in raw.split(",") if p.strip()]
+            valid_parts = [p for p in parts if not _NON_STANDARD_RE.search(p)]
+            target[sel_key] = ", ".join(valid_parts) if valid_parts else None
+
     return plan_data
 
 
@@ -134,20 +160,21 @@ async def _fetch_html(url: str) -> tuple[str, bool]:
                 if any(m in lower for m in spa_markers_strong):
                     needs_js = True
                     log.info("SPA framework marker detected in HTML for %s", url)
-                elif any(m in lower for m in spa_markers_weak):
-                    body = BeautifulSoup(html_raw, "lxml").find("body")
-                    if body and len(body.get_text(strip=True)) < 500:
+
+            # Parse the HTML once for all remaining heuristics that need it
+            if not needs_js:
+                soup = BeautifulSoup(html_raw, "lxml")
+                body_tag = soup.find("body")
+
+                # Heuristic 2b: Weak SPA markers — only flag if body text is short
+                if not needs_js and any(m in lower for m in spa_markers_weak):
+                    if body_tag and len(body_tag.get_text(strip=True)) < 500:
                         needs_js = True
                         log.info("Weak SPA marker + sparse body text for %s", url)
 
-            # Heuristic 3: Custom HTML elements (web components) that are
-            # major content containers.  Per the spec, custom element tag names
-            # always contain a hyphen.  We only flag when a custom element sits
-            # near the top of the body and is large (likely a data container
-            # rendered by JS), to avoid false-positives from tiny UI widgets.
-            if not needs_js:
-                body_tag = BeautifulSoup(html_raw, "lxml").find("body")
-                if body_tag:
+                # Heuristic 3: Custom HTML elements (web components) that are
+                # major content containers.
+                if not needs_js and body_tag:
                     for tag in body_tag.find_all(True, recursive=False):
                         if "-" in tag.name and len(str(tag)) > 500:
                             needs_js = True
@@ -170,12 +197,11 @@ async def _fetch_html(url: str) -> tuple[str, bool]:
                             if needs_js:
                                 break
 
-            # Heuristic 4: Large HTML shell with almost no visible text
-            if not needs_js and len(html_raw) >= 2_000:
-                body = BeautifulSoup(html_raw, "lxml").find("body")
-                if body and len(body.get_text(strip=True)) < 200:
-                    needs_js = True
-                    log.info("HTML shell has <200 chars of text — likely JS-rendered for %s", url)
+                # Heuristic 4: Large HTML shell with almost no visible text
+                if not needs_js and len(html_raw) >= 2_000:
+                    if body_tag and len(body_tag.get_text(strip=True)) < 200:
+                        needs_js = True
+                        log.info("HTML shell has <200 chars of text — likely JS-rendered for %s", url)
         except Exception:
             needs_js = True
 
@@ -189,8 +215,112 @@ async def _fetch_html(url: str) -> tuple[str, bool]:
     return html_raw, needs_js
 
 
+def _build_planner_prompt(
+    url: str,
+    html_simple: str,
+    *,
+    item_description: str | None = None,
+    site_notes: str | None = None,
+    detail_html_simple: str | None = None,
+    detail_page_url: str | None = None,
+    fields_wanted: str | None = None,
+    template_hints: TemplateHints | None = None,
+    pagination_type: str | None = None,
+) -> str:
+    """Build the user prompt for the planner LLM call."""
+    user_content = (
+        f"Analyse the following HTML of the listing page at:\n{url}\n\n"
+        f"```html\n{html_simple}\n```"
+    )
+
+    if item_description:
+        user_content += (
+            f"\n\n━━ ITEM DESCRIPTION (from user) ━━\n"
+            f"The user describes each item on this page as: {item_description}\n"
+            f"Use this to identify the correct repeating container and fields."
+        )
+
+    if site_notes:
+        user_content += (
+            f"\n\n━━ SITE NOTES (from user) ━━\n"
+            f"The user provided these observations about the site: {site_notes}\n"
+            f"Take these into account when building the scraping plan."
+        )
+
+    if detail_html_simple:
+        user_content += (
+            f"\n\nThe user also provided an example DETAIL page at:\n{detail_page_url}\n\n"
+            f"Study this to identify the CSS selectors for ``detail_page_fields``.\n"
+            f"```html\n{detail_html_simple}\n```"
+        )
+
+    if fields_wanted:
+        user_content += (
+            f"\n\nThe user specifically wants these fields extracted: {fields_wanted}\n"
+            f"Make sure the plan captures all of these fields — from the listing page "
+            f"if available, otherwise from the detail page."
+        )
+
+    if template_hints:
+        user_content += (
+            "\n\n━━ TEMPLATE HINTS (structural guidance) ━━\n"
+            "The user selected a website pattern template. Use these hints "
+            "to guide your analysis — but always derive actual CSS "
+            "selectors from the HTML above.\n"
+            f"- requires_javascript: {template_hints.requires_javascript}\n"
+            f"- has_detail_pages: {template_hints.has_detail_pages}\n"
+            f"- has_detail_api: {template_hints.has_detail_api}\n"
+        )
+        if not pagination_type and template_hints.pagination:
+            user_content += f"- expected pagination (hint only): {template_hints.pagination}\n"
+        if template_hints.notes:
+            user_content += f"- pattern notes: {template_hints.notes}\n"
+
+    if pagination_type:
+        user_content += (
+            f"\n\n━━ PAGINATION (user-specified — MUST USE) ━━\n"
+            f"The user has explicitly specified the pagination strategy: {pagination_type}\n"
+            f"You MUST set pagination to \"{pagination_type}\" in your plan.\n"
+            f"Do NOT override this with your own analysis.\n"
+        )
+
+    return user_content
+
+
 class PlannerAgent:
     """Analyse a listing page and return a ScrapingPlan."""
+
+    @staticmethod
+    def _compute_selector_metrics(plan: ScrapingPlan, soup: BeautifulSoup) -> dict[str, float | int]:
+        """Compute container/field hit ratios for selector preflight quality checks."""
+        try:
+            containers = soup.select(plan.target.item_container_selector)
+        except Exception:
+            containers = []
+        container_count = len(containers)
+        sample_n = min(container_count, max(1, settings.reliability_selector_sample_containers))
+
+        field_hits = 0
+        total_checks = 0
+        if sample_n > 0 and plan.target.field_selectors:
+            for container in containers[:sample_n]:
+                for selector in plan.target.field_selectors.values():
+                    if not selector or not selector.strip():
+                        continue
+                    total_checks += 1
+                    try:
+                        if container.select_one(selector):
+                            field_hits += 1
+                    except Exception:
+                        continue
+        hit_ratio = (field_hits / total_checks) if total_checks else 0.0
+        return {
+            "container_count": container_count,
+            "sampled_containers": sample_n,
+            "field_checks": total_checks,
+            "field_hits": field_hits,
+            "field_hit_ratio": round(hit_ratio, 4),
+        }
 
     async def plan(
         self,
@@ -228,64 +358,16 @@ class PlannerAgent:
                 detail_html_simple = simplify_html(detail_raw, aggressive=aggressive)
                 log.debug("Simplified detail HTML: %d chars (aggressive=%s)", len(detail_html_simple), aggressive)
 
-            user_content = (
-                f"Analyse the following HTML of the listing page at:\n{url}\n\n"
-                f"```html\n{html_simple}\n```"
+            user_content = _build_planner_prompt(
+                url, html_simple,
+                item_description=item_description,
+                site_notes=site_notes,
+                detail_html_simple=detail_html_simple or None,
+                detail_page_url=detail_page_url,
+                fields_wanted=fields_wanted,
+                template_hints=template_hints,
+                pagination_type=pagination_type,
             )
-
-            if item_description:
-                user_content += (
-                    f"\n\n━━ ITEM DESCRIPTION (from user) ━━\n"
-                    f"The user describes each item on this page as: {item_description}\n"
-                    f"Use this to identify the correct repeating container and fields."
-                )
-
-            if site_notes:
-                user_content += (
-                    f"\n\n━━ SITE NOTES (from user) ━━\n"
-                    f"The user provided these observations about the site: {site_notes}\n"
-                    f"Take these into account when building the scraping plan."
-                )
-
-            if detail_html_simple:
-                user_content += (
-                    f"\n\nThe user also provided an example DETAIL page at:\n{detail_page_url}\n\n"
-                    f"Study this to identify the CSS selectors for ``detail_page_fields``.\n"
-                    f"```html\n{detail_html_simple}\n```"
-                )
-
-            if fields_wanted:
-                user_content += (
-                    f"\n\nThe user specifically wants these fields extracted: {fields_wanted}\n"
-                    f"Make sure the plan captures all of these fields — from the listing page "
-                    f"if available, otherwise from the detail page."
-                )
-
-            # Inject template hints so the LLM has structural guidance
-            if template_hints:
-                user_content += (
-                    "\n\n━━ TEMPLATE HINTS (structural guidance) ━━\n"
-                    "The user selected a website pattern template. Use these hints "
-                    "to guide your analysis — but always derive actual CSS "
-                    "selectors from the HTML above.\n"
-                    f"- requires_javascript: {template_hints.requires_javascript}\n"
-                    f"- has_detail_pages: {template_hints.has_detail_pages}\n"
-                    f"- has_detail_api: {template_hints.has_detail_api}\n"
-                )
-                # Only mention template pagination as a weak hint when user didn't specify
-                if not pagination_type and template_hints.pagination:
-                    user_content += f"- expected pagination (hint only): {template_hints.pagination}\n"
-                if template_hints.notes:
-                    user_content += f"- pattern notes: {template_hints.notes}\n"
-
-            # Inject user-specified pagination — this overrides everything
-            if pagination_type:
-                user_content += (
-                    f"\n\n━━ PAGINATION (user-specified — MUST USE) ━━\n"
-                    f"The user has explicitly specified the pagination strategy: {pagination_type}\n"
-                    f"You MUST set pagination to \"{pagination_type}\" in your plan.\n"
-                    f"Do NOT override this with your own analysis.\n"
-                )
 
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -363,45 +445,14 @@ class PlannerAgent:
                 html_simple = simplify_html(html_raw, aggressive=False)
                 log.debug("Re-planning with JS-rendered HTML: %d chars", len(html_simple))
 
-                user_content = (
-                    f"Analyse the following HTML of the listing page at:\n{url}\n\n"
-                    f"```html\n{html_simple}\n```"
+                user_content = _build_planner_prompt(
+                    url, html_simple,
+                    item_description=item_description,
+                    site_notes=site_notes,
+                    fields_wanted=fields_wanted,
+                    template_hints=template_hints,
+                    pagination_type=pagination_type,
                 )
-                if item_description:
-                    user_content += (
-                        f"\n\n━━ ITEM DESCRIPTION (from user) ━━\n"
-                        f"The user describes each item on this page as: {item_description}\n"
-                        f"Use this to identify the correct repeating container and fields."
-                    )
-                if site_notes:
-                    user_content += (
-                        f"\n\n━━ SITE NOTES (from user) ━━\n"
-                        f"The user provided these observations about the site: {site_notes}\n"
-                        f"Take these into account when building the scraping plan."
-                    )
-                if fields_wanted:
-                    user_content += (
-                        f"\n\nThe user specifically wants these fields extracted: {fields_wanted}\n"
-                        f"Make sure the plan captures all of these fields — from the listing page "
-                        f"if available, otherwise from the detail page."
-                    )
-                if template_hints:
-                    user_content += (
-                        "\n\n━━ TEMPLATE HINTS (structural guidance) ━━\n"
-                        f"- requires_javascript: {template_hints.requires_javascript}\n"
-                        f"- has_detail_pages: {template_hints.has_detail_pages}\n"
-                        f"- has_detail_api: {template_hints.has_detail_api}\n"
-                    )
-                    if not pagination_type and template_hints.pagination:
-                        user_content += f"- expected pagination (hint only): {template_hints.pagination}\n"
-                    if template_hints.notes:
-                        user_content += f"- pattern notes: {template_hints.notes}\n"
-                if pagination_type:
-                    user_content += (
-                        f"\n\n━━ PAGINATION (user-specified — MUST USE) ━━\n"
-                        f"The user has explicitly specified the pagination strategy: {pagination_type}\n"
-                        f"You MUST set pagination to \"{pagination_type}\" in your plan.\n"
-                    )
 
                 messages = [
                     {"role": "system", "content": SYSTEM_PROMPT},
@@ -435,7 +486,19 @@ class PlannerAgent:
             plan.target.detail_link_selector,
         )
 
-        # --- 5. Analyse a sample detail page (if detail link found) ---
+        # --- 5. FireCrawl /map URL discovery (supplement pagination_urls) ---
+        if settings.use_firecrawl and settings.use_firecrawl_for_discovery:
+            try:
+                discovered = await self._discover_urls_firecrawl(url, plan)
+                if discovered:
+                    log.info(
+                        "FireCrawl /map added %d URL(s) to pagination_urls (was %d)",
+                        len(discovered), len(plan.pagination_urls),
+                    )
+            except Exception as exc:
+                log.warning("FireCrawl URL discovery failed (non-fatal): %s", exc)
+
+        # --- 6. Analyse a sample detail page (if detail link found) ---
         if plan.target.detail_link_selector:
             sample_detail_url = self._extract_first_detail_link(html_raw, plan)
             if sample_detail_url:
@@ -451,7 +514,7 @@ class PlannerAgent:
                 except Exception as exc:
                     log.warning("Detail page analysis failed: %s", exc)
 
-        # --- 6. Try API interception for JS-only detail buttons ---
+        # --- 7. Try API interception for JS-only detail buttons ---
         if not plan.detail_page_plan and plan.target.detail_button_selector:
             try:
                 detail_api = await self._discover_detail_api(html_raw, plan)
@@ -558,6 +621,74 @@ class PlannerAgent:
         return plan
 
     # ------------------------------------------------------------------
+    # FireCrawl URL discovery
+    # ------------------------------------------------------------------
+    async def _discover_urls_firecrawl(
+        self, url: str, plan: ScrapingPlan,
+    ) -> list[str]:
+        """Use FireCrawl /map to discover URLs and supplement pagination_urls.
+
+        Filters discovered URLs to those that likely belong to the same
+        listing pagination pattern (same path prefix, similar structure).
+        Returns the list of newly added URLs.
+        """
+        from app.utils.firecrawl import firecrawl_map
+
+        parsed_base = urlparse(url)
+        base_path = parsed_base.path.rstrip("/")
+
+        # Use /map to discover all URLs on the site
+        discovered = await firecrawl_map(
+            url, limit=500, include_subdomains=False,
+        )
+        if not discovered:
+            return []
+
+        # Filter to URLs that likely belong to the same listing section
+        existing_urls = set(plan.pagination_urls)
+        existing_urls.add(url)
+        new_urls: list[str] = []
+
+        for entry in discovered:
+            disc_url = entry.get("url", "")
+            if not disc_url or disc_url in existing_urls:
+                continue
+
+            parsed_disc = urlparse(disc_url)
+            # Must be same domain
+            if parsed_disc.netloc != parsed_base.netloc:
+                continue
+
+            disc_path = parsed_disc.path.rstrip("/")
+
+            # Heuristic: URL path shares a common prefix with the base URL
+            # (e.g., /exhibitors?page=2 matches /exhibitors)
+            if not disc_path.startswith(base_path):
+                continue
+
+            # Heuristic: pagination URLs often differ only in query params
+            # or have a trailing /page/N segment
+            path_suffix = disc_path[len(base_path):]
+            is_pagination_like = (
+                not path_suffix  # same path, different query params
+                or path_suffix.startswith("/page")
+                or path_suffix.startswith("/p/")
+                or path_suffix.lstrip("/").isdigit()
+            )
+            if is_pagination_like or parsed_disc.query:
+                new_urls.append(disc_url)
+                existing_urls.add(disc_url)
+
+        if new_urls:
+            plan.pagination_urls.extend(new_urls)
+            log.info(
+                "FireCrawl /map: discovered %d pagination-like URLs (total now %d)",
+                len(new_urls), len(plan.pagination_urls),
+            )
+
+        return new_urls
+
+    # ------------------------------------------------------------------
     # Detail page analysis
     # ------------------------------------------------------------------
     async def _analyze_detail_page(
@@ -571,6 +702,7 @@ class PlannerAgent:
         html_raw = await self._fetch_page(detail_url, prefer_js=requires_js)
 
         # Try normal simplification first, then aggressive if content filter triggers
+        result: dict | None = None
         for attempt, aggressive in enumerate([False, True]):
             html_simple = simplify_html(html_raw, aggressive=aggressive)
             log.debug(
@@ -714,11 +846,35 @@ class PlannerAgent:
                 matches = []
 
             if matches:
+                metrics = self._compute_selector_metrics(plan, soup)
+                plan.selector_metrics = metrics
+                hit_ratio = float(metrics.get("field_hit_ratio", 0.0))
                 log.info(
                     "Selector validation: '%s' matched %d elements",
                     plan.target.item_container_selector, len(matches),
                 )
-                return plan
+                # If selectors are structurally weak, ask LLM for a revision.
+                if (
+                    hit_ratio < settings.reliability_selector_min_hit_ratio
+                    and attempt < max_retries - 1
+                    and metrics.get("field_checks", 0) > 0
+                ):
+                    log.warning(
+                        "Selector hit ratio %.3f below threshold %.3f (attempt %d/%d) — revising",
+                        hit_ratio,
+                        settings.reliability_selector_min_hit_ratio,
+                        attempt + 1,
+                        max_retries,
+                    )
+                else:
+                    if plan.notes:
+                        plan.notes += "\n"
+                    plan.notes += (
+                        "Selector preflight metrics: "
+                        f"containers={metrics.get('container_count')}, "
+                        f"field_hit_ratio={metrics.get('field_hit_ratio')}"
+                    )
+                    return plan
 
             # Selector matched nothing — build a hint of the page's actual structure
             log.warning(
@@ -748,6 +904,19 @@ class PlannerAgent:
                 f"```html\n{html_simple}\n```\n\n"
                 f"Return the complete revised plan as JSON."
             )
+
+            if matches:
+                metrics = self._compute_selector_metrics(plan, soup)
+                feedback_content = (
+                    "Your selectors matched containers but field extraction quality is low. "
+                    "Please improve item_container_selector and field_selectors for robust extraction.\n\n"
+                    f"Current preflight metrics: {json.dumps(metrics)}\n\n"
+                    f"Here is a snapshot of the page's top-level body structure:\n"
+                    f"```html\n{structure_hint}\n```\n\n"
+                    f"Here is the simplified HTML again:\n"
+                    f"```html\n{html_simple}\n```\n\n"
+                    "Return the complete revised plan as JSON."
+                )
 
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},

@@ -106,14 +106,18 @@ header p{font-size:.88rem;color:var(--text2);margin-top:4px;max-width:440px;marg
 .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 12px;border-radius:20px;font-size:.73rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 .badge-pending{background:rgba(156,160,171,.12);color:var(--text2)}
 .badge-planning,.badge-scraping,.badge-parsing,.badge-output{background:rgba(108,92,231,.12);color:var(--accent2)}
+.badge-plan_review{background:rgba(108,92,231,.18);color:var(--accent2)}
 .badge-preview{background:rgba(253,203,110,.15);color:var(--yellow)}
 .badge-completed{background:rgba(0,184,148,.12);color:var(--green)}
+.badge-partial{background:rgba(253,203,110,.15);color:var(--yellow)}
 .badge-failed{background:rgba(225,112,85,.12);color:var(--red)}
 .badge .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .badge-pending .dot{background:var(--text2)}
 .badge-planning .dot,.badge-scraping .dot,.badge-parsing .dot,.badge-output .dot{background:var(--accent2);animation:pulse 1.5s ease-in-out infinite}
+.badge-plan_review .dot{background:var(--accent2);animation:pulse 1.5s ease-in-out infinite}
 .badge-preview .dot{background:var(--yellow);animation:pulse 1.5s ease-in-out infinite}
 .badge-completed .dot{background:var(--green)}
+.badge-partial .dot{background:var(--yellow)}
 .badge-failed .dot{background:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
@@ -166,6 +170,13 @@ header p{font-size:.88rem;color:var(--text2);margin-top:4px;max-width:440px;marg
 .preview-actions .btn{flex-shrink:0}
 .feedback-input{flex:1;min-width:180px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:.85rem;outline:none;transition:border .2s}
 .feedback-input:focus{border-color:var(--yellow)}
+.plan-review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:16px}
+.plan-review-field{display:flex;flex-direction:column;gap:4px}
+.plan-review-field label{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);font-weight:600}
+.plan-review-field select,.plan-review-field input[type="text"]{padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.84rem;outline:none;transition:border .2s}
+.plan-review-field select:focus,.plan-review-field input[type="text"]:focus{border-color:var(--accent2)}
+.plan-review-field input[readonly]{opacity:.6;cursor:default}
+.plan-selectors-box{background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:14px;border:1px solid var(--border)}
 .feedback-input::placeholder{color:var(--text2)}
 
 /* ── Dual Preview ────────────────────────────────────────────────── */
@@ -396,16 +407,18 @@ tr:hover td{background:rgba(108,92,231,.04)}
    ═══════════════════════════════════════════════════════════════════ */
 const API = window.location.origin + '/api/v1';
 
-const STAGES = ['pending','planning','scraping','preview','parsing','output','completed'];
-const STAGE_LABELS = {pending:'Queued',planning:'Analyzing',scraping:'Collecting',preview:'Review',parsing:'Processing',output:'Saving',completed:'Done',failed:'Failed'};
+const STAGES = ['pending','planning','plan_review','scraping','preview','parsing','output','completed'];
+const STAGE_LABELS = {pending:'Queued',planning:'Analyzing',plan_review:'Plan Review',scraping:'Collecting',preview:'Review',parsing:'Processing',output:'Saving',completed:'Done',partial:'Partial',failed:'Failed'};
 const STAGE_ICONS = {
   pending:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
   planning:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>',
+  plan_review:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
   scraping:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>',
   preview:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
   parsing:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
   output:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
   completed:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+  partial:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M12 6v6l4 2"/></svg>',
   failed:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
 };
 
@@ -434,7 +447,7 @@ async function apiPost(path,body){
 }
 async function apiGet(path){
   const r=await fetch(API+path);
-  if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  if(!r.ok) { const e=await r.json().catch(()=>({})); throw new Error(e.detail||`${r.status} ${r.statusText}`); }
   return r.json();
 }
 
@@ -476,7 +489,7 @@ function showToolError(el, msg) { showToolResult(el, `<div class="tool-error">${
 
 /* ── Main Submit ─────────────────────────────────────────────────── */
 document.getElementById('crawlBtn').addEventListener('click', async () => {
-  const urls = document.getElementById('crawlUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean);
+  const urls = [...new Set(document.getElementById('crawlUrls').value.trim().split('\n').map(u=>u.trim()).filter(Boolean))];
   const prompt = document.getElementById('crawlPrompt').value.trim();
   const fields = getSelectedFields();
   const detailUrl = document.getElementById('crawlDetailUrl').value.trim();
@@ -507,6 +520,7 @@ document.getElementById('crawlBtn').addEventListener('click', async () => {
     if(siteNotes) body.site_notes = siteNotes;
     if(paginationType) body.pagination_type = paginationType;
     if(maxItems && !isNaN(+maxItems)) body.max_items = +maxItems;
+    if(maxPages && !isNaN(+maxPages)) body.max_pages = +maxPages;
     if(testSingle) body.test_single = true;
     if(pageType) body.page_type = pageType;
     if(rendering) body.rendering_type = rendering;
@@ -563,7 +577,7 @@ function startPolling(id){
       const j = await apiGet('/crawl/'+id);
       jobs[j.id] = j;
       render();
-      if(['completed','failed','preview'].includes(j.status)){
+      if(['completed','failed','preview','partial','plan_review'].includes(j.status)){
         clearInterval(pollingTimers[id]);
         delete pollingTimers[id];
       }
@@ -579,7 +593,7 @@ async function loadJobs(){
     const list = await apiGet('/jobs');
     list.forEach(j=>{ jobs[j.id]=j; });
     render();
-    list.filter(j=>!['completed','failed','preview'].includes(j.status)).forEach(j=>startPolling(j.id));
+    list.filter(j=>!['completed','failed','preview','plan_review'].includes(j.status)).forEach(j=>startPolling(j.id));
   }catch(e){ console.warn('Failed to load jobs',e); }
 }
 
@@ -656,6 +670,84 @@ function render(){
       }
     });
   });
+
+  /* attach plan review handlers */
+  container.querySelectorAll('.plan-approve-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = btn.dataset.jobId;
+      // Collect any edits from the form
+      const form = document.getElementById('plan-form-'+id);
+      if(form){
+        const updates = {};
+        const pagSel = form.querySelector('[data-field="pagination"]');
+        if(pagSel) updates.pagination = pagSel.value;
+        const jsSel = form.querySelector('[data-field="requires_javascript"]');
+        if(jsSel) updates.requires_javascript = jsSel.value === 'true';
+        const containerSel = form.querySelector('[data-field="item_container_selector"]');
+        if(containerSel && containerSel.value) updates.item_container_selector = containerSel.value;
+        const detailSel = form.querySelector('[data-field="detail_link_selector"]');
+        if(detailSel && detailSel.value) updates.detail_link_selector = detailSel.value;
+        // Send plan updates if any fields changed
+        if(Object.keys(updates).length){
+          try{ await apiPost('/crawl/'+id+'/update-plan', updates); }catch(e){ console.warn('Plan update failed:', e); }
+        }
+      }
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Starting preview...';
+      try{
+        const j = await apiPost('/crawl/'+id+'/approve-plan', {});
+        jobs[j.id] = j;
+        render();
+        startPolling(id);
+      }catch(err){ alert('Failed: '+err.message); btn.disabled=false; btn.textContent='Approve Plan & Preview'; }
+    });
+  });
+
+  container.querySelectorAll('.plan-reanalyze-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = btn.dataset.jobId;
+      const feedbackEl = document.getElementById('reanalyze-feedback-'+id);
+      const feedback = feedbackEl ? feedbackEl.value.trim() : '';
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Re-analyzing...';
+      try{
+        const j = await apiPost('/crawl/'+id+'/reanalyze', { feedback: feedback || null });
+        jobs[j.id] = j;
+        render();
+        startPolling(id);
+      }catch(err){ alert('Failed: '+err.message); btn.disabled=false; btn.textContent='Re-analyze'; }
+    });
+  });
+
+  container.querySelectorAll('.plan-abort-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = btn.dataset.jobId;
+      if(confirm('Cancel this scraping job?')){
+        btn.disabled = true;
+        try{
+          const j = await apiPost('/crawl/'+id+'/abort', {});
+          jobs[j.id] = j;
+          render();
+        }catch(err){ alert('Failed: '+err.message); btn.disabled=false; }
+      }
+    });
+  });
+
+  /* attach resume button handlers */
+  container.querySelectorAll('.resume-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = btn.dataset.jobId;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Resuming...';
+      try{
+        const newJob = await apiPost(`/crawl/${id}/resume`, {});
+        jobs[newJob.id] = newJob;
+        expandedJobId = newJob.id;
+        render();
+        startPolling(newJob.id);
+      }catch(err){ alert('Resume failed: '+err.message); btn.disabled=false; btn.textContent='Resume scraping'; }
+    });
+  });
 }
 
 function renderJobCard(j){
@@ -681,6 +773,7 @@ function renderJobDetail(j){
   const stageIdx = STAGES.indexOf(j.status);
   const isFailed = j.status==='failed';
   const isPreview = j.status==='preview';
+  const isPlanReview = j.status==='plan_review';
   const isTest = j.request.test_single;
 
   let pipeline = STAGES.filter(s=>s!=='pending').map((s,i)=>{
@@ -688,7 +781,7 @@ function renderJobDetail(j){
     const si = i+1;
     if(isFailed && si>=stageIdx) cls='error';
     else if(si<stageIdx||(j.status==='completed')) cls='done';
-    else if(si===stageIdx) cls = isPreview && s==='preview' ? 'preview-active' : 'active';
+    else if(si===stageIdx) cls = (isPreview && s==='preview') || (isPlanReview && s==='plan_review') ? 'preview-active' : 'active';
     const arrow = i<STAGES.length-2 ? '<span class="pipe-arrow">&#9654;</span>' : '';
     return `<div class="pipe-step ${cls}"><span class="pipe-icon">${STAGE_ICONS[s]}</span>${STAGE_LABELS[s]}</div>${arrow}`;
   }).join('');
@@ -699,7 +792,9 @@ function renderJobDetail(j){
     body += `<div class="error-box"><strong>Something went wrong:</strong> ${esc(j.error)}</div>`;
   }
 
-  if(isPreview && (j.preview_record_css || j.preview_record_smart)){
+  if(isPlanReview && j.plan){
+    body += renderPlanReviewCard(j);
+  } else if(isPreview && (j.preview_record_css || j.preview_record_smart || j.preview_record_firecrawl)){
     body += renderDualPreviewCard(j);
   } else if(isPreview && j.preview_record){
     body += renderPreviewCard(j);
@@ -719,12 +814,21 @@ function renderJobDetail(j){
   const hasPlan = !!j.plan;
   const hasRecords = j.result && j.result.records && j.result.records.length>0;
   const isComplete = j.status==='completed';
+  const isPartial = j.status==='partial';
+  const canDownload = isComplete || isPartial;
+  const pendingCount = j.pending_detail_urls ? j.pending_detail_urls.length : 0;
 
   if(hasPlan || hasRecords){
     const hasQuality = j.quality_report && j.quality_report.total_records > 0;
+    const hasDiagnostics = j.diagnostics && (
+      (j.diagnostics.failures && j.diagnostics.failures.length)
+      || (j.diagnostics.status_timeline && j.diagnostics.status_timeline.length)
+      || (j.diagnostics.counters)
+    );
     body += `<div class="tabs">`;
     if(hasRecords) body += `<button class="tab active" data-panel="tab-data-${j.id}">Results</button>`;
     if(hasQuality) body += `<button class="tab" data-panel="tab-quality-${j.id}">Quality</button>`;
+    if(hasDiagnostics) body += `<button class="tab" data-panel="tab-diagnostics-${j.id}">Diagnostics</button>`;
     if(hasRecords) body += `<button class="tab" data-panel="tab-json-${j.id}">Raw Data</button>`;
     if(hasPlan) body += `<button class="tab ${hasRecords?'':'active'}" data-panel="tab-plan-${j.id}">Details</button>`;
     body += `</div>`;
@@ -732,10 +836,17 @@ function renderJobDetail(j){
     if(hasRecords){
       const recs = j.result.records;
       body += `<div class="tab-panel active" id="tab-data-${j.id}">`;
+      if(isPartial){
+        body += `<div style="padding:12px 16px;background:rgba(253,203,110,.08);border:1px solid rgba(253,203,110,.2);border-radius:10px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="color:var(--yellow);font-size:.88rem;font-weight:600">Partial results</span>
+          <span style="color:var(--text2);font-size:.84rem">${pendingCount} detail page${pendingCount!==1?'s':''} still remaining</span>
+          <button class="btn btn-sm btn-outline resume-btn" data-job-id="${j.id}" style="margin-left:auto">Resume scraping</button>
+        </div>`;
+      }
       body += `<div class="results-bar">
         <span class="record-count">${recs.length} compan${recs.length!==1?'ies':'y'} found</span>
         ${hasQuality ? renderQualityBadge(j.quality_report) : ''}
-        ${isComplete?`<div class="dl-btns">
+        ${canDownload?`<div class="dl-btns">
           <a href="${API}/crawl/${j.id}/json" class="btn btn-sm btn-outline" download>Download JSON</a>
           <a href="${API}/crawl/${j.id}/csv" class="btn btn-sm btn-green" download>Download CSV</a>
         </div>`:''}
@@ -746,6 +857,10 @@ function renderJobDetail(j){
 
     if(hasQuality){
       body += `<div class="tab-panel" id="tab-quality-${j.id}">${renderQualityCard(j.quality_report)}</div>`;
+    }
+
+    if(hasDiagnostics){
+      body += `<div class="tab-panel" id="tab-diagnostics-${j.id}">${renderDiagnosticsCard(j.diagnostics)}</div>`;
     }
 
     if(hasRecords){
@@ -759,7 +874,7 @@ function renderJobDetail(j){
         <div class="plan-box"><pre>${esc(JSON.stringify(j.plan,null,2))}</pre></div>
       </div>`;
     }
-  } else if(!isFailed && !isPreview && j.status!=='completed'){
+  } else if(!isFailed && !isPreview && !isComplete && !isPartial){
     let progressHtml = '<span class="spinner" style="margin-right:8px"></span>Working on it...';
     if(j.progress){
       const p = j.progress;
@@ -770,6 +885,11 @@ function renderJobDetail(j){
           <div style="width:100%;max-width:300px;height:6px;background:var(--surface2);border-radius:3px;margin-top:8px;overflow:hidden">
             <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:3px;transition:width .3s"></div>
           </div>`;
+      } else if(p.stage === 'scraping_pages'){
+        const method = p.method ? ` (${esc(p.method)})` : '';
+        progressHtml = `<span class="spinner" style="margin-right:8px"></span>
+          Scraping pages${method}: <strong>${esc(String(p.pages_processed||0))}</strong> processed,
+          <strong>${esc(String(p.total_items||0))}</strong> items found`;
       } else if(p.stage){
         progressHtml = `<span class="spinner" style="margin-right:8px"></span>${esc(p.stage)}...`;
       }
@@ -781,6 +901,95 @@ function renderJobDetail(j){
     <div class="pipeline">${pipeline}</div>
     ${body}
   </div>`;
+}
+
+function renderPlanReviewCard(j){
+  const plan = j.plan;
+  const paginationOptions = ['none','next_button','page_numbers','infinite_scroll','load_more_button','alphabet_tabs','api_endpoint'];
+  const paginationLabels = {none:'None',next_button:'Next Button',page_numbers:'Page Numbers',infinite_scroll:'Infinite Scroll',load_more_button:'Load More Button',alphabet_tabs:'Alphabet Tabs',api_endpoint:'API Endpoint'};
+
+  let html = `<div class="preview-box" style="border-color:var(--accent2)">
+    <h3 style="color:var(--accent2)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      Scraping Plan — Review before we proceed
+    </h3>
+    <p class="preview-subtitle">Here's what we detected about this page. Edit any fields if needed, then approve to continue.</p>
+
+    <div class="plan-review-grid" id="plan-form-${j.id}">
+      <div class="plan-review-field">
+        <label>Pagination</label>
+        <select data-field="pagination">
+          ${paginationOptions.map(o=>`<option value="${o}" ${plan.pagination===o?'selected':''}>${esc(paginationLabels[o]||o)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="plan-review-field">
+        <label>JavaScript Rendering</label>
+        <select data-field="requires_javascript">
+          <option value="true" ${plan.requires_javascript?'selected':''}>Yes (Playwright)</option>
+          <option value="false" ${!plan.requires_javascript?'selected':''}>No (static HTML)</option>
+        </select>
+      </div>
+      <div class="plan-review-field">
+        <label>Item Container Selector</label>
+        <input type="text" data-field="item_container_selector" value="${esc(plan.target.item_container_selector||'')}" placeholder="e.g. .exhibitor-card">
+      </div>
+      <div class="plan-review-field">
+        <label>Detail Link Selector</label>
+        <input type="text" data-field="detail_link_selector" value="${esc(plan.target.detail_link_selector||'')}" placeholder="e.g. a.detail-link">
+      </div>
+      <div class="plan-review-field">
+        <label>Pagination Selector</label>
+        <input type="text" data-field="pagination_selector" value="${esc(plan.pagination_selector||'')}" placeholder="e.g. .pagination a" readonly>
+      </div>
+      <div class="plan-review-field">
+        <label>Total Items (estimate)</label>
+        <input type="text" data-field="total_items_hint" value="${plan.total_items_hint||'—'}" readonly>
+      </div>
+    </div>`;
+
+  // Show field selectors the planner found
+  if(plan.target && plan.target.field_selectors && Object.keys(plan.target.field_selectors).length){
+    html += `<div class="plan-selectors-box">
+      <h4 style="margin:0 0 8px;font-size:.82rem;color:var(--text2)">Detected Field Selectors</h4>
+      <div class="plan-review-grid">`;
+    Object.entries(plan.target.field_selectors).forEach(([field, selector])=>{
+      html += `<div class="plan-review-field">
+        <label>${esc(prettyLabel(field))}</label>
+        <code style="font-size:.78rem;color:var(--accent);background:var(--surface2);padding:4px 8px;border-radius:6px">${esc(selector)}</code>
+      </div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // Notes from planner
+  if(plan.notes){
+    html += `<div style="margin:12px 0;padding:10px 14px;background:rgba(108,92,231,.06);border-radius:8px;font-size:.82rem;color:var(--text2)">
+      <strong style="color:var(--accent2)">Planner Notes:</strong> ${esc(plan.notes)}
+    </div>`;
+  }
+
+  // Platform info
+  if(j.platform_info){
+    const pi = j.platform_info;
+    const chips = [];
+    if(pi.cms) chips.push(pi.cms);
+    if(pi.ecommerce) chips.push(pi.ecommerce);
+    if(pi.js_framework) chips.push(pi.js_framework);
+    if(chips.length){
+      html += `<div style="margin:8px 0;font-size:.82rem;color:var(--text2)">
+        <strong>Detected platform:</strong> ${chips.map(c=>'<span class="platform-badge">'+esc(c)+'</span>').join(' ')}
+      </div>`;
+    }
+  }
+
+  html += `<div class="preview-actions" style="flex-wrap:wrap;gap:8px">
+    <button class="btn btn-green plan-approve-btn" data-job-id="${j.id}">Approve Plan &amp; Preview</button>
+    <input type="text" class="feedback-input" id="reanalyze-feedback-${j.id}" placeholder="Tell the AI what to change (e.g. 'pagination is actually page numbers')..." style="flex:1;min-width:200px">
+    <button class="btn btn-outline plan-reanalyze-btn" data-job-id="${j.id}">Re-analyze</button>
+    <button class="btn btn-sm btn-red plan-abort-btn" data-job-id="${j.id}">Cancel</button>
+  </div>
+  </div>`;
+  return html;
 }
 
 function renderPreviewCard(j){
@@ -821,17 +1030,31 @@ function renderDualPreviewCard(j){
   const isTest = j.request.test_single;
   const cssRec = j.preview_record_css;
   const smartRec = j.preview_record_smart;
+  const fcRec = j.preview_record_firecrawl;
   const recMethod = j.preview_recommended_method;
-  const hasBoth = cssRec && smartRec;
+
+  // Build list of available methods
+  const methods = [];
+  if(cssRec) methods.push({key:'css', label:'CSS Selectors', rec:cssRec});
+  if(smartRec) methods.push({key:'smart_scraper', label:'AI (Smart)', rec:smartRec});
+  if(fcRec) methods.push({key:'firecrawl', label:'FireCrawl', rec:fcRec});
+  const methodLabels = methods.map((_,i)=>'Method '+ String.fromCharCode(65+i));
+
+  const methodCount = methods.length;
+  const subtitle = methodCount > 2
+    ? (isTest
+        ? `We extracted data ${methodCount} different ways. Pick the one that looks most complete.`
+        : `We tried ${methodCount} extraction methods. Choose which result looks better, then we'll scrape all the data.`)
+    : (isTest
+        ? 'We extracted data two different ways. Pick the one that looks more complete.'
+        : 'We tried two extraction methods. Choose which result looks better, then we\'ll scrape all the data.');
 
   let html = `<div class="preview-box">
     <h3>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       Sample Results — Pick the better one
     </h3>
-    <p class="preview-subtitle">${isTest
-      ? 'We extracted data two different ways. Pick the one that looks more complete.'
-      : 'We tried two extraction methods. Choose which result looks better, then we\'ll scrape all the data.'}</p>`;
+    <p class="preview-subtitle">${subtitle}</p>`;
 
   if(j.preview_recommendation){
     html += `<div class="recommendation-box">
@@ -841,13 +1064,14 @@ function renderDualPreviewCard(j){
 
   html += `<div class="dual-preview">`;
 
-  if(cssRec){
-    const isCssRec = recMethod==='css';
-    html += `<div class="preview-col ${isCssRec?'recommended':''}">
-      <h4>Method A ${isCssRec?'<span class="rec-badge">Suggested</span>':''}</h4>
+  methods.forEach((m, idx) => {
+    const isRec = recMethod === m.key;
+    const letter = String.fromCharCode(65 + idx);
+    html += `<div class="preview-col ${isRec?'recommended':''}">
+      <h4>Method ${letter} <span style="font-weight:400;font-size:.78rem;color:var(--text2)">(${esc(m.label)})</span> ${isRec?'<span class="rec-badge">Suggested</span>':''}</h4>
       <div class="preview-fields">`;
     PREVIEW_FIELDS.forEach(f=>{
-      let v = cssRec[f];
+      let v = m.rec[f];
       if(Array.isArray(v)) v = v.length ? v.join(', ') : null;
       if(typeof v==='object' && v!==null) v = Object.entries(v).map(([k,val])=>`${k}: ${val}`).join(', ') || null;
       const hasVal = v && v.trim && v.trim().length>0;
@@ -857,50 +1081,42 @@ function renderDualPreviewCard(j){
       </div>`;
     });
     html += `</div></div>`;
-  } else {
-    html += `<div class="preview-col" style="opacity:.5">
-      <h4>Method A</h4>
-      <p style="color:var(--text2);font-size:.84rem">No data found</p>
-    </div>`;
-  }
-
-  if(smartRec){
-    const isSmartRec = recMethod==='smart_scraper';
-    html += `<div class="preview-col ${isSmartRec?'recommended':''}">
-      <h4>Method B ${isSmartRec?'<span class="rec-badge">Suggested</span>':''}</h4>
-      <div class="preview-fields">`;
-    PREVIEW_FIELDS.forEach(f=>{
-      let v = smartRec[f];
-      if(Array.isArray(v)) v = v.length ? v.join(', ') : null;
-      if(typeof v==='object' && v!==null) v = Object.entries(v).map(([k,val])=>`${k}: ${val}`).join(', ') || null;
-      const hasVal = v && v.trim && v.trim().length>0;
-      html += `<div class="preview-field">
-        <div class="preview-field-label">${esc(prettyLabel(f))}</div>
-        <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(v):'—'}</div>
-      </div>`;
-    });
-    html += `</div></div>`;
-  } else {
-    html += `<div class="preview-col" style="opacity:.5">
-      <h4>Method B</h4>
-      <p style="color:var(--text2);font-size:.84rem">No data found</p>
-    </div>`;
-  }
+  });
 
   html += `</div>`;
 
-  const defaultMethod = recMethod || (cssRec ? 'css' : 'smart_scraper');
+  const defaultMethod = recMethod || (methods.length ? methods[0].key : 'css');
   html += `<div class="method-select">
     <span style="font-size:.82rem;color:var(--text2);align-self:center;margin-right:4px">Use:</span>`;
-  if(cssRec){
-    html += `<button class="method-btn ${defaultMethod==='css'?'selected':''}" data-method="css" data-job-id="${j.id}">Method A</button>`;
-  }
-  if(smartRec){
-    html += `<button class="method-btn ${defaultMethod==='smart_scraper'?'selected':''}" data-method="smart_scraper" data-job-id="${j.id}">Method B</button>`;
-  }
+  methods.forEach((m, idx) => {
+    const letter = String.fromCharCode(65 + idx);
+    html += `<button class="method-btn ${defaultMethod===m.key?'selected':''}" data-method="${m.key}" data-job-id="${j.id}">Method ${letter}</button>`;
+  });
   html += `</div>`;
 
   html += `<input type="hidden" id="method-${j.id}" value="${defaultMethod}">`;
+
+  // Multi-item preview table (from CSS extraction)
+  if(j.preview_items && j.preview_items.length > 1){
+    const items = j.preview_items;
+    const cols = ['name','city','country','website','email','phone'].filter(c=>items.some(it=>it[c]));
+    html += `<div style="margin:14px 0 16px">
+      <h4 style="font-size:.85rem;color:var(--text2);margin:0 0 8px">
+        Preview: ${items.length} sample items from first page
+      </h4>
+      <div style="overflow-x:auto;border-radius:8px;border:1px solid var(--border)">
+        <table class="data-table" style="margin:0;font-size:.8rem">
+          <thead><tr>${cols.map(c=>`<th>${esc(prettyLabel(c))}</th>`).join('')}</tr></thead>
+          <tbody>${items.map(it=>`<tr>${cols.map(c=>{
+            let v=it[c]||'';
+            if(Array.isArray(v)) v=v.join(', ');
+            if(typeof v==='object'&&v!==null) v=JSON.stringify(v);
+            return `<td>${v?esc(String(v)):'<span style="color:var(--text2)">—</span>'}</td>`;
+          }).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }
 
   html += `<div class="preview-actions">
     <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}" data-dual="true">${isTest?'Looks good — Save':'Looks good — Scrape all'}</button>
@@ -951,6 +1167,66 @@ function renderQualityCard(qr){
   if(qr.recommendations && qr.recommendations.length){
     html += `<div class="quality-warnings" style="margin-top:8px"><strong style="color:var(--blue)">💡 Tips:</strong><ul>`;
     qr.recommendations.forEach(r=> html += `<li>${esc(r)}</li>`);
+    html += `</ul></div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function renderDiagnosticsCard(diag){
+  const counters = diag.counters || {};
+  const parser = diag.parser_metrics || {};
+  const failures = diag.failures || [];
+  const timeline = diag.status_timeline || [];
+
+  const stat = (label, key) => `<div class="quality-field" style="background:var(--surface2);color:var(--text)">
+    <span class="qf-dot" style="background:var(--accent)"></span>${esc(label)}: <strong>${esc(String(counters[key] ?? 0))}</strong>
+  </div>`;
+
+  let html = `<div class="quality-card">
+    <div class="quality-header">
+      <span class="quality-label">Reliability Diagnostics</span>
+    </div>
+    <div class="quality-fields">
+      ${stat('Scrape attempts','scrape_attempts')}
+      ${stat('Method switches','method_switches')}
+      ${stat('Pages processed','pages_processed')}
+      ${stat('Empty pages','empty_pages')}
+      ${stat('Items extracted','items_extracted')}
+      ${stat('Detail pages fetched','detail_pages_fetched')}
+      ${stat('Detail pages remaining','detail_pages_remaining')}
+    </div>`;
+
+  const scalarRatio = Number(parser.scalar_ratio || 0);
+  const structuredRatio = Number(parser.structured_ratio || 0);
+  const nameRatio = Number(parser.name_ratio || 0);
+  const pct = (v) => `${(v * 100).toFixed(1)}%`;
+  html += `<div class="quality-warnings" style="margin-top:10px">
+    <strong style="color:var(--blue)">Parser Completeness</strong>
+    <ul>
+      <li><code>records=${esc(String(parser.record_count ?? 0))}</code> · <code>names=${esc(pct(nameRatio))}</code></li>
+      <li><code>scalar=${esc(pct(scalarRatio))}</code> (${esc(String(parser.non_empty_fields ?? 0))}/${esc(String(parser.total_fields ?? 0))})</li>
+      <li><code>structured=${esc(pct(structuredRatio))}</code> (${esc(String(parser.structured_non_empty ?? 0))}/${esc(String(parser.structured_total ?? 0))})</li>
+    </ul>
+  </div>`;
+
+  if(failures.length){
+    html += `<div class="quality-warnings" style="margin-top:10px"><strong style="color:var(--yellow)">Recent Events</strong><ul>`;
+    failures.slice(-8).reverse().forEach(f => {
+      const category = f.category || 'unknown';
+      const msg = f.message || 'event';
+      const stage = f.stage || '-';
+      html += `<li><code>${esc(stage)}</code> · <code>${esc(category)}</code> · ${esc(msg)}</li>`;
+    });
+    html += `</ul></div>`;
+  }
+
+  if(timeline.length){
+    html += `<div class="quality-warnings" style="margin-top:10px"><strong style="color:var(--blue)">Status Timeline</strong><ul>`;
+    timeline.slice(-8).reverse().forEach(line => {
+      html += `<li><code>${esc(line)}</code></li>`;
+    });
     html += `</ul></div>`;
   }
 

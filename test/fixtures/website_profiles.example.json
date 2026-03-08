@@ -1,0 +1,35 @@
+[
+  {
+    "name": "Static directory sample",
+    "enabled": false,
+    "url": "https://example.com/directory",
+    "fields_wanted": "name,email,phone,website,country",
+    "item_description": "company cards in a static directory listing",
+    "site_notes": "uses numbered pagination",
+    "pagination_type": "page_numbers",
+    "max_pages": 2,
+    "max_items": 20,
+    "auto_confirm": true,
+    "auto_resume_partial": true,
+    "expect_min_records": 1,
+    "expect_min_quality": 0.5,
+    "allow_partial": true
+  },
+  {
+    "name": "Dynamic listing sample",
+    "enabled": false,
+    "url": "https://example.com/exhibitors",
+    "fields_wanted": "name,city,country,website,description",
+    "item_description": "exhibitor cards loaded dynamically",
+    "site_notes": "items are loaded after interactions",
+    "pagination_type": "infinite_scroll",
+    "max_pages": 1,
+    "max_items": 10,
+    "auto_confirm": true,
+    "auto_resume_partial": false,
+    "extraction_method": "smart_scraper",
+    "expect_min_records": 1,
+    "expect_min_quality": 0.4,
+    "allow_partial": true
+  }
+]

@@ -1,11 +1,16 @@
 """Verify polling timeout works."""
+
 import asyncio
-import time
 import concurrent.futures
+import time
+
+import pytest
 
 pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
-async def test():
+
+@pytest.mark.asyncio
+async def test_poll_timeout() -> None:
     future = pool.submit(time.sleep, 30)
     t0 = time.monotonic()
     timeout = 3
@@ -17,6 +22,3 @@ async def test():
             return
         await asyncio.sleep(0.5)
     print(f"Completed in {time.monotonic() - t0:.1f}s")
-
-asyncio.run(test())
-print("Process exited cleanly")

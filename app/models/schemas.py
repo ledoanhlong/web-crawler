@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import enum
+import ipaddress
+import socket
 import uuid
 from datetime import datetime, timezone
 
@@ -187,6 +189,10 @@ class ScrapingPlan(BaseModel):
         default="",
         description="Free-form notes from the planner about edge cases or things to watch for.",
     )
+    selector_metrics: dict[str, float | int] = Field(
+        default_factory=dict,
+        description="Preflight selector quality metrics computed against sample HTML.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -312,24 +318,125 @@ class SellerLead(BaseModel):
 class ExtractionMethod(str, enum.Enum):
     CSS = "css"
     SMART_SCRAPER = "smart_scraper"
+    FIRECRAWL = "firecrawl"
 
 
 class CrawlStatus(str, enum.Enum):
     PENDING = "pending"
     PLANNING = "planning"
+    PLAN_REVIEW = "plan_review"
     SCRAPING = "scraping"
     PREVIEW = "preview"
     PARSING = "parsing"
     OUTPUT = "output"
     COMPLETED = "completed"
+    PARTIAL = "partial"
     FAILED = "failed"
+
+
+class PipelineStage(str, enum.Enum):
+    PLANNING = "planning"
+    SCRAPING = "scraping"
+    PARSING = "parsing"
+    OUTPUT = "output"
+
+
+class FailureCategory(str, enum.Enum):
+    NETWORK_TRANSIENT = "network_transient"
+    ANTI_BOT = "anti_bot"
+    RENDERING = "rendering"
+    SELECTOR_MISMATCH = "selector_mismatch"
+    PAGINATION_MISMATCH = "pagination_mismatch"
+    DETAIL_ENRICHMENT = "detail_enrichment"
+    PARSER_SCHEMA_MISMATCH = "parser_schema_mismatch"
+    QUALITY_THRESHOLD = "quality_threshold"
+    UNKNOWN = "unknown"
+
+
+class StageConfidence(BaseModel):
+    stage: PipelineStage
+    score: float = Field(ge=0.0, le=1.0)
+    reason: str = Field(default="")
+    measured_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class FailureEvent(BaseModel):
+    category: FailureCategory
+    stage: PipelineStage
+    message: str
+    retryable: bool = True
+    details: dict[str, str] = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class JobDiagnostics(BaseModel):
+    counters: dict[str, int] = Field(
+        default_factory=lambda: {
+            "scrape_attempts": 0,
+            "method_switches": 0,
+            "pages_processed": 0,
+            "empty_pages": 0,
+            "items_extracted": 0,
+            "detail_pages_fetched": 0,
+            "detail_pages_remaining": 0,
+            "parser_non_empty_fields": 0,
+            "parser_total_fields": 0,
+            "parser_structured_fields": 0,
+        },
+    )
+    stage_confidences: list[StageConfidence] = Field(default_factory=list)
+    failures: list[FailureEvent] = Field(default_factory=list)
+    status_timeline: list[str] = Field(default_factory=list)
+    parser_metrics: dict[str, float | int] = Field(
+        default_factory=lambda: {
+            "record_count": 0,
+            "non_empty_fields": 0,
+            "total_fields": 0,
+            "structured_non_empty": 0,
+            "structured_total": 0,
+            "name_present": 0,
+            "scalar_ratio": 0.0,
+            "structured_ratio": 0.0,
+            "name_ratio": 0.0,
+        },
+        description="Parser completeness metrics used to compute parsing-stage confidence.",
+    )
+
+
+def _reject_private_url(hostname: str | None) -> None:
+    """Raise ValueError if the hostname resolves to a private/reserved IP.
+
+    Prevents SSRF attacks targeting cloud metadata endpoints (169.254.x.x),
+    internal services (localhost, 10.x.x.x, 192.168.x.x), etc.
+    """
+    if not hostname:
+        return
+    # Check for obvious private hostnames
+    if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        raise ValueError(f"URL must not target localhost or loopback addresses")
+    try:
+        # Try to parse as IP directly first
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
+            raise ValueError(f"URL must not target private or reserved IP addresses")
+    except ValueError as exc:
+        if "private" in str(exc).lower() or "reserved" in str(exc).lower() or "localhost" in str(exc).lower():
+            raise
+        # Not a direct IP — resolve the hostname
+        try:
+            resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            for _, _, _, _, addr in resolved:
+                ip = ipaddress.ip_address(addr[0])
+                if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
+                    raise ValueError(
+                        f"URL hostname '{hostname}' resolves to a private/reserved IP ({addr[0]})"
+                    )
+        except socket.gaierror:
+            pass  # DNS resolution failed — let the actual HTTP request handle it
 
 
 class CrawlRequest(BaseModel):
     url: str = Field(description="The listing page URL to crawl (directory, marketplace, brand page, etc.).")
-    max_pages: int | None = Field(
-        default=None, description="Override the default max pages for this crawl."
-    )
     detail_page_url: str | None = Field(
         default=None,
         description=(
@@ -377,6 +484,10 @@ class CrawlRequest(BaseModel):
         default=None,
         description="Maximum number of items to scrape (for testing). None means no limit.",
     )
+    max_pages: int | None = Field(
+        default=None,
+        description="Maximum number of pages to scrape. None means use global default.",
+    )
     page_type: str | None = Field(
         default=None,
         description=(
@@ -409,6 +520,7 @@ class CrawlRequest(BaseModel):
             )
         if not parsed.netloc:
             raise ValueError("URL must include a valid domain (e.g. https://example.com)")
+        _reject_private_url(parsed.hostname)
         return v
 
 
@@ -421,7 +533,35 @@ class ConfirmPreviewRequest(BaseModel):
     )
     extraction_method: ExtractionMethod | None = Field(
         default=None,
-        description="User's chosen extraction method for the full crawl (css or smart_scraper).",
+        description="User's chosen extraction method for the full crawl (css, smart_scraper, or firecrawl).",
+    )
+
+
+class UpdatePlanRequest(BaseModel):
+    """Sent by the user to edit plan fields during PLAN_REVIEW."""
+    pagination: PaginationStrategy | None = Field(
+        default=None,
+        description="Override detected pagination strategy.",
+    )
+    requires_javascript: bool | None = Field(
+        default=None,
+        description="Override JS rendering requirement.",
+    )
+    item_container_selector: str | None = Field(
+        default=None,
+        description="Override the CSS selector for item containers.",
+    )
+    detail_link_selector: str | None = Field(
+        default=None,
+        description="Override the detail link CSS selector.",
+    )
+    max_pages: int | None = Field(
+        default=None,
+        description="Override the max pages to scrape.",
+    )
+    feedback: str | None = Field(
+        default=None,
+        description="Free-text feedback to trigger LLM re-analysis.",
     )
 
 
@@ -448,6 +588,10 @@ class CrawlJob(BaseModel):
         default=None,
         description="Preview record extracted via SmartScraperGraph (AI).",
     )
+    preview_record_firecrawl: SellerLead | None = Field(
+        default=None,
+        description="Preview record extracted via FireCrawl (AI).",
+    )
     preview_recommendation: str | None = Field(
         default=None,
         description="LLM explanation of which extraction method is better.",
@@ -455,6 +599,14 @@ class CrawlJob(BaseModel):
     preview_recommended_method: ExtractionMethod | None = Field(
         default=None,
         description="LLM-recommended extraction method.",
+    )
+    preview_items: list[dict] | None = Field(
+        default=None,
+        description="Multiple preview items (up to 10) shown during preview for better validation.",
+    )
+    preview_detail_record: dict | None = Field(
+        default=None,
+        description="Sample detail page data shown during plan review.",
     )
     extraction_method: ExtractionMethod | None = Field(
         default=None,
@@ -478,10 +630,27 @@ class CrawlJob(BaseModel):
         default=None,
         description="Real-time progress information (items scraped, pages processed, etc.).",
     )
+    diagnostics: JobDiagnostics = Field(
+        default_factory=JobDiagnostics,
+        description="Structured reliability diagnostics for confidence, failures, and status timeline.",
+    )
     template_hints: TemplateHints | None = Field(
         default=None,
         exclude=True,
         description="Structural hints from a template, used internally by the planner.",
+    )
+    # Resume / partial-result tracking
+    scraped_detail_urls: list[str] = Field(
+        default_factory=list,
+        description="Detail page URLs that were successfully fetched (for resume tracking).",
+    )
+    pending_detail_urls: list[str] = Field(
+        default_factory=list,
+        description="Detail page URLs that still need to be fetched (populated on timeout/partial).",
+    )
+    resume_from_job_id: str | None = Field(
+        default=None,
+        description="ID of the original job this resume job continues from.",
     )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -560,7 +729,7 @@ class RoutingDecision(BaseModel):
 
 
 class SmartCrawlRequest(BaseModel):
-    urls: list[str] = Field(description="One or more URLs to scrape.")
+    urls: list[str] = Field(min_length=1, description="One or more URLs to scrape.")
     prompt: str = Field(description="What data to extract.")
     fields_wanted: str | None = Field(
         default=None,
@@ -590,6 +759,10 @@ class SmartCrawlRequest(BaseModel):
     max_items: int | None = Field(
         default=None,
         description="Maximum number of items to scrape (for testing). None means no limit.",
+    )
+    max_pages: int | None = Field(
+        default=None,
+        description="Maximum number of pages to scrape. None means use global default.",
     )
     test_single: bool = Field(
         default=False,

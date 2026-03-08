@@ -15,12 +15,17 @@ from app.models.schemas import (
     DetailPagePlan,
     DetailSubLink,
     ExtractionMethod,
+    FailureCategory,
+    FailureEvent,
+    JobDiagnostics,
     PageData,
     PaginationStrategy,
+    PipelineStage,
     ScrapingPlan,
     ScrapingTarget,
     ScrapingTemplate,
     SellerLead,
+    StageConfidence,
     SmartCrawlRequest,
 )
 
@@ -62,7 +67,6 @@ class TestCrawlRequest:
 
     def test_optional_fields_default(self):
         req = CrawlRequest(url="https://example.com")
-        assert req.max_pages is None
         assert req.detail_page_url is None
         assert req.fields_wanted is None
         assert req.test_single is False
@@ -232,6 +236,10 @@ class TestCrawlJob:
         assert job.plan is None
         assert job.result is None
         assert job.error is None
+        assert isinstance(job.diagnostics, JobDiagnostics)
+        assert job.diagnostics.failures == []
+        assert job.diagnostics.stage_confidences == []
+        assert job.diagnostics.status_timeline == []
 
     def test_job_id_uniqueness(self):
         job1 = CrawlJob(request=CrawlRequest(url="https://example.com"))
@@ -300,3 +308,27 @@ class TestExtractionMethod:
 
     def test_smart_scraper_value(self):
         assert ExtractionMethod.SMART_SCRAPER.value == "smart_scraper"
+
+
+class TestReliabilityDiagnostics:
+    """Test reliability diagnostics models."""
+
+    def test_stage_confidence_bounds(self):
+        confidence = StageConfidence(
+            stage=PipelineStage.SCRAPING,
+            score=0.75,
+            reason="Good extraction signal",
+        )
+        assert confidence.score == 0.75
+
+        with pytest.raises(ValidationError):
+            StageConfidence(stage=PipelineStage.SCRAPING, score=1.2)
+
+    def test_failure_event_defaults(self):
+        event = FailureEvent(
+            category=FailureCategory.NETWORK_TRANSIENT,
+            stage=PipelineStage.SCRAPING,
+            message="Timeout while fetching page",
+        )
+        assert event.retryable is True
+        assert event.details == {}

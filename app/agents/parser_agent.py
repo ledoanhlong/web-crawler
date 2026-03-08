@@ -93,7 +93,7 @@ class ParserAgent:
         detail_texts: dict[str, str] = {}
         if detail_htmls:
             for url, html in detail_htmls.items():
-                fields_text = await self._extract_detail_fields(html, plan)
+                fields_text = await self._extract_detail_fields(html, plan, url=url)
                 sub_pages = detail_sub_pages.get(url, {})
                 if sub_pages:
                     sub_parts: list[str] = []
@@ -243,7 +243,7 @@ class ParserAgent:
             field_attributes = plan.detail_page_plan.field_attributes
         elif plan.detail_page_fields:
             field_selectors = plan.detail_page_fields
-            field_attributes = plan.detail_page_field_attributes
+            field_attributes = plan.detail_page_field_attributes or {}
 
         for field, selector in field_selectors.items():
             if not selector or not selector.strip():
@@ -254,8 +254,8 @@ class ParserAgent:
                     attr = field_attributes.get(field)
                     val = el.get(attr) if attr else el.get_text(separator=" ", strip=True)
                     parts.append(f"{field}: {val}")
-            except Exception:
-                pass  # skip invalid selectors
+            except Exception as exc:
+                log.debug("CSS selector '%s' failed for field '%s': %s", selector, field, exc)
         return "\n".join(parts)
 
     @staticmethod
@@ -276,8 +276,46 @@ class ParserAgent:
             return "\n".join(f"{k}: {v}" for k, v in detail.items() if v)
         return ""
 
-    async def _extract_detail_fields(self, html: str, plan: ScrapingPlan) -> str:
-        """Extract fields from detail page — SmartScraperGraph primary, CSS backup."""
+    @staticmethod
+    async def _extract_detail_fields_firecrawl(url: str, plan: ScrapingPlan) -> str:
+        """Extract fields from a detail page using FireCrawl agent() extraction.
+
+        Unlike the CSS and SmartScraper methods which operate on pre-fetched HTML,
+        this method takes a URL and lets FireCrawl handle both fetching and extraction.
+        """
+        from app.utils.firecrawl import firecrawl_extract
+
+        fields = list(plan.detail_page_fields.keys()) if plan.detail_page_fields else [
+            "name", "country", "city", "address", "postal_code",
+            "email", "phone", "website", "description",
+            "product_categories", "brands", "logo_url",
+            "store_url", "social_media",
+            "industry",
+        ]
+        prompt = (
+            f"Extract the following fields from this company/seller detail page: "
+            f"{', '.join(fields)}. "
+            f"Also extract any contact information, social media links, and business details."
+        )
+        result = await firecrawl_extract([url], prompt=prompt)
+        if result and isinstance(result, dict):
+            parts = []
+            for k, v in result.items():
+                if v and str(v).strip():
+                    parts.append(f"{k}: {v}")
+            return "\n".join(parts)
+        return ""
+
+    async def _extract_detail_fields(self, html: str, plan: ScrapingPlan, *, url: str | None = None) -> str:
+        """Extract fields from detail page — FireCrawl / SmartScraperGraph / CSS."""
+        # FireCrawl extraction (requires URL, not just HTML)
+        if url and settings.use_firecrawl and settings.use_firecrawl_for_extraction:
+            fc_result = await self._extract_detail_fields_firecrawl(url, plan)
+            if fc_result:
+                log.info("FireCrawl extracted detail fields for %s", url)
+                return fc_result
+            log.warning("FireCrawl detail extraction empty — falling back to SmartScraper")
+
         # Primary: SmartScraperGraph
         if settings.use_smart_scraper_primary:
             smart_result = await self._extract_detail_fields_smart(html, plan)

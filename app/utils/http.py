@@ -36,6 +36,14 @@ def _get_shared_client() -> httpx.AsyncClient:
         )
     return _shared_client
 
+
+async def close_shared_client() -> None:
+    """Close the shared HTTP client. Call on application shutdown."""
+    global _shared_client
+    if _shared_client is not None and not _shared_client.is_closed:
+        await _shared_client.aclose()
+        _shared_client = None
+
 # ---------------------------------------------------------------------------
 # User-Agent pool (rotated per-request for stealth)
 # ---------------------------------------------------------------------------

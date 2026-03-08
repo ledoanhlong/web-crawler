@@ -54,7 +54,6 @@ def _build_graph_config() -> dict:
 async def smart_extract_items(
     html: str,
     fields: list[str],
-    source_url: str = "",
     *,
     max_items: int | None = None,
 ) -> list[dict[str, str | None]]:
@@ -140,7 +139,6 @@ async def smart_extract_items(
 async def smart_extract_detail(
     html: str,
     fields: list[str],
-    source_url: str = "",
 ) -> dict[str, str]:
     """Extract structured data from a single detail page using a direct LLM call.
 
@@ -219,7 +217,13 @@ async def smart_scrape_multi(
     """
     log.info("SmartScraperMultiGraph: scraping %d URLs", len(urls))
     try:
-        result = await asyncio.to_thread(_run_smart_scraper_multi, prompt, urls)
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_run_smart_scraper_multi, prompt, urls),
+            timeout=300,
+        )
+    except asyncio.TimeoutError:
+        log.error("SmartScraperMultiGraph timed out after 300s")
+        raise TimeoutError("SmartScraperMultiGraph timed out after 300s")
     except Exception as exc:
         log.error("SmartScraperMultiGraph failed: %s", exc)
         raise
@@ -261,7 +265,13 @@ async def generate_scraper_script(
     """
     log.info("ScriptCreatorGraph: generating script for %s (library=%s)", url, library)
     try:
-        result = await asyncio.to_thread(_run_script_creator, prompt, url, library)
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_run_script_creator, prompt, url, library),
+            timeout=300,
+        )
+    except asyncio.TimeoutError:
+        log.error("ScriptCreatorGraph timed out after 300s")
+        raise TimeoutError("ScriptCreatorGraph timed out after 300s")
     except Exception as exc:
         log.error("ScriptCreatorGraph failed: %s", exc)
         raise
@@ -300,7 +310,13 @@ async def generate_scraper_script_multi(
         len(urls), library,
     )
     try:
-        result = await asyncio.to_thread(_run_script_creator_multi, prompt, urls, library)
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_run_script_creator_multi, prompt, urls, library),
+            timeout=300,
+        )
+    except asyncio.TimeoutError:
+        log.error("ScriptCreatorMultiGraph timed out after 300s")
+        raise TimeoutError("ScriptCreatorMultiGraph timed out after 300s")
     except Exception as exc:
         log.error("ScriptCreatorMultiGraph failed: %s", exc)
         raise

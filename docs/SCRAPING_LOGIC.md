@@ -16,7 +16,8 @@ This document provides a comprehensive explanation of how the web crawler's scra
 8. [Extraction Methods](#8-extraction-methods)
 9. [Detail Page Enrichment](#9-detail-page-enrichment)
 10. [Pagination Strategies](#10-pagination-strategies)
-11. [Error Handling & Fallbacks](#11-error-handling--fallbacks)
+11. [FireCrawl Integration](#11-firecrawl-integration)
+12. [Error Handling & Fallbacks](#12-error-handling--fallbacks)
 
 ---
 
@@ -32,22 +33,26 @@ RouterAgent ──► selects strategy (full_pipeline / smart_scraper / script_c
      │
      ▼ (if full_pipeline)
 PlannerAgent ──► analyses HTML, produces ScrapingPlan
+     │    └── FireCrawl /map for URL discovery (optional)
      │
      ▼
 ScraperAgent ──► executes plan, returns raw PageData
+     │    ├── FireCrawl /scrape fetching (if enabled)
      │    ├── CSS Selector extraction
-     │    ├── ScrapeGraphAI extraction (dual preview)
-     │    ├── Detail page fetching
+     │    ├── ScrapeGraphAI extraction
+     │    ├── FireCrawl extraction (optional)
+     │    ├── Detail page fetching (FireCrawl, Playwright, or httpx)
      │    └── API interception
      │
      ▼
 ParserAgent ──► normalizes raw data into SellerLead records
+     │    └── FireCrawl agent() for detail extraction (optional)
      │
      ▼
 OutputAgent ──► quality pass (dedup), writes JSON + CSV
 ```
 
-The pipeline has a **preview checkpoint**: after planning, the system scrapes a single item using both CSS and AI extraction methods, parses it, and pauses for user review. Only after the user confirms does the full crawl proceed.
+The pipeline has a **preview checkpoint**: after planning, the system scrapes a single item using up to three extraction methods (CSS, ScrapeGraphAI, FireCrawl), parses it, and pauses for user review. Only after the user confirms does the full crawl proceed.
 
 ---
 
@@ -126,7 +131,14 @@ The `PlannerAgent` is the most critical stage. It analyses the target page's HTM
    - Sends it to GPT with the `planner_detail` prompt
    - Produces a `DetailPagePlan` with its own `field_selectors` and `sub_links`
 
-8. **Detail API discovery** (if `detail_button_selector` found, no detail page)
+8. **FireCrawl URL discovery** (if `USE_FIRECRAWL` and `USE_FIRECRAWL_FOR_DISCOVERY` are enabled)
+   - Calls FireCrawl `/v2/map` to discover all URLs on the target site
+   - Filters results to URLs that share the same domain and path prefix as the listing URL
+   - Applies heuristics to identify pagination-like URLs (same path with different query params, `/page/N` suffixes, etc.)
+   - Merges discovered URLs into `plan.pagination_urls` to supplement URLs the LLM planner may have missed
+   - This is non-destructive — it only adds URLs, never removes
+
+9. **Detail API discovery** (if `detail_button_selector` found, no detail page)
    - Uses Playwright to click the first item's detail button
    - Intercepts all JSON network responses after the click
    - Scores each response to find the most likely detail API (filters noise: analytics, chat widgets, trackers)
@@ -164,16 +176,30 @@ The `ScraperAgent` executes the `ScrapingPlan` and returns a list of `PageData` 
 
 ### Execution Path Selection
 
-The scraper selects its execution path based on the plan:
+The scraper selects its execution path based on the plan and configuration:
 
 ```
-plan.pagination == API_ENDPOINT?  →  _scrape_api()
-plan.requires_javascript?         →  _scrape_js()
-settings.use_scrapy?              →  _scrape_scrapy() (with httpx fallback)
-otherwise                         →  _scrape_static()
+FireCrawl enabled + compatible pagination? →  _scrape_firecrawl()
+plan.pagination == API_ENDPOINT?            →  _scrape_api()
+plan.requires_javascript?                   →  _scrape_js()
+settings.use_scrapy?                        →  _scrape_scrapy() (with httpx fallback)
+otherwise                                   →  _scrape_static()
 ```
 
-### 4.1 Static Path (`_scrape_static`)
+### 4.1 FireCrawl Path (`_scrape_firecrawl`)
+
+Uses the FireCrawl Cloud API `/v2/scrape` for page fetching. Enabled when `USE_FIRECRAWL=true` and `USE_FIRECRAWL_FOR_FETCHING=true`. Compatible with pagination strategies that have pre-computed URLs (`none`, `page_numbers`).
+
+1. Resolves page URLs from `plan.pagination_urls` or just the base URL
+2. Fetches all pages via `firecrawl_scrape_batch()` (concurrent with semaphore, max 5)
+3. FireCrawl handles JS rendering, anti-bot bypass, and proxy rotation behind the scenes
+4. For each page, extracts items using the existing `_extract_items_with_fallback()` pipeline (CSS selectors on the returned HTML)
+5. Falls back to Playwright or httpx if FireCrawl returns no results for any URLs
+6. Runs detail page enrichment (also via FireCrawl when enabled)
+
+**Why only for `none` and `page_numbers`?** Interactive pagination strategies (infinite scroll, load-more, next button, alphabet tabs) require maintaining browser state across multiple interactions. FireCrawl's `/scrape` endpoint processes one URL at a time and can't replicate the "click-and-wait-repeat" loop. These strategies continue to use Playwright.
+
+### 4.2 Static Path (`_scrape_static`)
 
 Uses `httpx` for fast, concurrent HTTP requests:
 
@@ -182,7 +208,7 @@ Uses `httpx` for fast, concurrent HTTP requests:
 3. For each page HTML, calls `_extract_items_with_fallback()` to get items
 4. Enriches items with detail pages and API data
 
-### 4.2 JavaScript Path (`_scrape_js`)
+### 4.3 JavaScript Path (`_scrape_js`)
 
 Uses Playwright for pages that require browser rendering:
 
@@ -207,7 +233,7 @@ For sites with alphabet tabs that also have numbered pagination within each tab:
 2. Otherwise, auto-detects inner pagination by searching for numbered links using common CSS patterns (`.pagination a`, `.pager a`, etc.)
 3. Extrapolates missing page URLs by detecting the varying query parameter pattern (e.g., `?page=1` → `?page=2` → ... → `?page=N`)
 
-### 4.3 Scrapy Path (`_scrape_scrapy`)
+### 4.4 Scrapy Path (`_scrape_scrapy`)
 
 Runs the Scrapy `PlanSpider` in a **subprocess** to avoid Twisted/asyncio reactor conflicts:
 
@@ -220,7 +246,7 @@ Runs the Scrapy `PlanSpider` in a **subprocess** to avoid Twisted/asyncio reacto
 
 Scrapy is only used for compatible pagination strategies: `none`, `next_button`, `page_numbers`. JS-heavy strategies (scroll, tabs, load-more) always use Playwright.
 
-### 4.4 API Path (`_scrape_api`)
+### 4.5 API Path (`_scrape_api`)
 
 For sites with a discovered JSON API endpoint:
 
@@ -229,7 +255,7 @@ For sites with a discovered JSON API endpoint:
 3. Searches response JSON for list data under common wrapper keys (`data`, `items`, `results`, etc.)
 4. Converts JSON items to string-value dicts for downstream parsing
 
-### 4.5 Item Extraction (`_extract_items`)
+### 4.6 Item Extraction (`_extract_items`)
 
 The core CSS extraction logic:
 
@@ -254,16 +280,20 @@ Key defensive measures:
 - Invalid CSS selectors are caught and logged (field set to `None`)
 - Detail link and API ID selectors have the same defensive checks
 
-### 4.6 Dual Preview (`scrape_preview_dual`)
+### 4.7 Preview (`scrape_preview_dual`)
 
-During the preview stage, the scraper runs **both** extraction methods on the same HTML:
+During the preview stage, the scraper runs **up to three** extraction methods on the same page:
 
-1. Fetches the page once (httpx or Playwright)
-2. Runs CSS extraction via `_extract_items()`
-3. Runs ScrapeGraphAI extraction via `smart_extract_items()`
-4. Returns both results for side-by-side comparison
+1. Fetches the page once (httpx or Playwright depending on `requires_javascript`)
+2. Runs **CSS extraction** via `_extract_items()` on the HTML
+3. Runs **ScrapeGraphAI extraction** via `smart_extract_items()` on the HTML (if `USE_SMART_SCRAPER_PRIMARY=true` and HTML is ≥ 500 chars)
+4. Runs **FireCrawl extraction** via `firecrawl_extract()` against the URL (if `USE_FIRECRAWL=true` and `USE_FIRECRAWL_FOR_EXTRACTION=true`)
+5. Returns a 3-tuple `(css_pages, smart_pages, firecrawl_pages)` — each containing at most 1 item
+6. Each non-empty result set is enriched with detail page data (1 detail page max)
 
 If CSS extraction finds 0 items with httpx, it retries with Playwright (the page may need JS rendering).
+
+The orchestrator then parses each result set through the `ParserAgent`, collects all methods that produced results into a `candidates` dict, and uses an LLM comparison to recommend the best extraction method. The user can accept the recommendation or choose a different method.
 
 ---
 
@@ -277,14 +307,17 @@ The `ParserAgent` normalizes raw scraped data into structured `SellerLead` recor
 
 Before sending to the LLM, the parser builds enriched items:
 
-1. **Detail page data** — For items with a `detail_link`, the parser extracts fields from the detail page HTML using:
-   - ScrapeGraphAI (primary, if enabled)
-   - CSS selectors from `detail_page_plan.field_selectors` (fallback)
-   - Simplified HTML text (last resort)
+1. **Detail page data** — For items with a `detail_link`, the parser extracts fields from the detail page HTML using a cascading strategy (first successful result wins):
+   1. **FireCrawl `agent()`** — If `USE_FIRECRAWL=true` and `USE_FIRECRAWL_FOR_EXTRACTION=true`, calls FireCrawl's LLM-powered extraction on the detail page URL. Unlike the other methods, this takes a URL (not pre-fetched HTML), letting FireCrawl handle both fetching and extraction.
+   2. **ScrapeGraphAI** — If `USE_SMART_SCRAPER_PRIMARY=true`, runs LLM-based extraction on the pre-fetched HTML.
+   3. **CSS selectors** — Uses `detail_page_plan.field_selectors` (or legacy `detail_page_fields`) with BeautifulSoup.
+   4. **Simplified HTML** — As a last resort, sends a truncated (4,000 chars) simplified version of the HTML for the LLM to interpret during batch parsing.
 
-2. **Detail API data** — For items with an `_detail_api_id`, attaches the compact API response JSON (stripped of metadata, truncated long fields)
+2. **Detail API data** — For items with an `_detail_api_id`, attaches the compact API response JSON (stripped of metadata keys like `_links`, `__typename`, `lastModified`, etc.; truncated long text fields to 1,500 chars; large lists capped at 20 items)
 
 3. **Sub-page data** — For detail pages with followed sub-links (e.g., "Products" tab), appends the simplified sub-page HTML
+
+4. **Structured data** — Page-level JSON-LD, Open Graph, and Microdata signals are attached to each item (if compact representation < 3,000 chars), giving the parser LLM extra context
 
 ### Batch Processing
 
@@ -399,22 +432,57 @@ Uses LLM-powered extraction via `SmartScraperGraph`:
 - 120-second timeout to prevent hanging
 - Used as fallback when CSS selectors find fewer than 3 items
 
-### Dual Preview Comparison
+### FireCrawl (AI Extraction)
 
-During preview, both methods run on the same HTML. The orchestrator uses a separate LLM call to compare results and recommend the better method based on:
+Uses FireCrawl's `agent()` endpoint for LLM-powered structured extraction:
+- Operates on URLs — FireCrawl handles both fetching and extraction in one call
+- Does not require pre-fetched HTML (unlike CSS and SmartScraper methods)
+- Can extract data from pages with anti-bot protections, JS rendering, etc.
+- Enabled via `USE_FIRECRAWL=true` and `USE_FIRECRAWL_FOR_EXTRACTION=true`
+- Results are normalized to the same field text format as CSS and SmartScraper for seamless integration with the parser
+- Available for both listing page preview and detail page enrichment
+
+### Triple Preview Comparison
+
+During preview, up to three methods run on the same page. The orchestrator collects all methods that produced results into a `candidates` dict and uses an LLM comparison call to recommend the best method based on:
 - Completeness (non-null fields)
 - Accuracy (clean values)
 - Coverage (useful information)
+
+The comparison is dynamic — it works with any combination of 2 or 3 methods (e.g., if FireCrawl is disabled or fails, it falls back to a 2-way CSS vs SmartScraper comparison). If only one method produces results, it's selected automatically without an LLM call.
 
 ---
 
 ## 9. Detail Page Enrichment
 
-### Three Approaches
+### Four Approaches
 
-1. **Detail Page HTML** — Follow a link to each item's profile page, extract fields via CSS or AI
+1. **Detail Page HTML** — Follow a link to each item's profile page, extract fields via FireCrawl, CSS, or AI
 2. **Detail API Interception** — Click a JS-only button, capture the XHR response, template the API URL
 3. **Sub-Links** — Follow links on detail pages (e.g., "Products", "Contact") for additional data
+4. **FireCrawl `agent()` Extraction** — Use FireCrawl's LLM-powered extraction directly on the detail page URL (handles fetching and extraction in one step)
+
+### Detail Page Fetching
+
+Detail page fetching is the highest-volume fetch operation (one request per item). The scraper selects the fetching method based on configuration:
+
+```
+USE_FIRECRAWL + USE_FIRECRAWL_FOR_FETCHING enabled?
+    → FireCrawl batch fetch (firecrawl_scrape_batch)
+      - Concurrent with semaphore (max 5)
+      - Built-in JS rendering and anti-bot bypass
+      - Falls back to Playwright/httpx for any URLs FireCrawl misses
+
+plan.requires_javascript?
+    → Playwright (fetch_page_js)
+      - Uses browser context for JS-rendered pages
+
+otherwise
+    → httpx (fetch_pages)
+      - Fast static HTTP fetches
+```
+
+Detail pages are fetched in batches of 10. Between batches, the cancel event is checked to allow graceful timeout with partial results.
 
 ### API Interception Flow
 
@@ -465,11 +533,96 @@ When only some page links are visible (e.g., pages 1-10 out of 80):
 
 ---
 
-## 11. Error Handling & Fallbacks
+## 11. FireCrawl Integration
+
+**Files:** `app/utils/firecrawl.py`, `app/config.py`
+
+FireCrawl is an optional cloud API integration that provides enhanced page fetching (anti-bot, JS rendering, proxy rotation), URL discovery, and LLM-powered structured extraction. It is controlled by feature flags and designed with graceful fallbacks — every FireCrawl function returns `None` on failure, allowing callers to fall back to existing methods.
+
+### Configuration
+
+All FireCrawl features are off by default. To enable, set environment variables:
+
+```env
+FIRECRAWL_API_KEY=fc-your-key         # Required — API key from firecrawl.dev
+USE_FIRECRAWL=true                     # Master switch — must be true for any feature
+USE_FIRECRAWL_FOR_FETCHING=true        # Use /scrape for page fetching
+USE_FIRECRAWL_FOR_DISCOVERY=true       # Use /map for URL discovery during planning
+USE_FIRECRAWL_FOR_EXTRACTION=false     # Use agent() for LLM-powered extraction
+```
+
+### Wrapper Module (`app/utils/firecrawl.py`)
+
+Thin async wrapper around the `firecrawl-py` SDK (`AsyncFirecrawl`). The client is initialized lazily on first use.
+
+| Function | FireCrawl Endpoint | Purpose |
+|----------|-------------------|---------|
+| `firecrawl_scrape(url)` | `/v2/scrape` | Fetch a single URL with JS rendering and anti-bot handling. Returns `{markdown, html, metadata, links}` |
+| `firecrawl_map(url)` | `/v2/map` | Discover all URLs on a site. Returns `[{url, title, description}]` |
+| `firecrawl_scrape_batch(urls)` | `/v2/scrape` × N | Fetch multiple URLs concurrently (semaphore max 5). Returns `{url: doc}` dict |
+| `firecrawl_extract(urls, prompt)` | `agent()` | LLM-powered structured extraction. Returns extracted data dict |
+
+### Where FireCrawl Is Used
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  PlannerAgent.plan()                                                │
+│  └─ _discover_urls_firecrawl()  →  /map                            │
+│     Discovers pagination URLs, merges into plan.pagination_urls     │
+│     Flag: USE_FIRECRAWL_FOR_DISCOVERY                               │
+├─────────────────────────────────────────────────────────────────────┤
+│  ScraperAgent.scrape()                                              │
+│  └─ _scrape_firecrawl()  →  /scrape (batch)                        │
+│     Fetches listing pages for none/page_numbers pagination          │
+│     Flag: USE_FIRECRAWL_FOR_FETCHING                                │
+│                                                                     │
+│  ScraperAgent._enrich_detail_pages()  →  /scrape (batch)            │
+│     Fetches detail pages with JS rendering and anti-bot              │
+│     Falls back to Playwright/httpx for missed URLs                  │
+│     Flag: USE_FIRECRAWL_FOR_FETCHING                                │
+│                                                                     │
+│  ScraperAgent.scrape_preview_dual()  →  agent()                     │
+│     Runs FireCrawl extraction as a third preview method             │
+│     Flag: USE_FIRECRAWL_FOR_EXTRACTION                              │
+├─────────────────────────────────────────────────────────────────────┤
+│  ParserAgent._extract_detail_fields()  →  agent()                   │
+│     Extracts structured data from detail page URLs                  │
+│     Falls back to SmartScraper → CSS if empty                       │
+│     Flag: USE_FIRECRAWL_FOR_EXTRACTION                              │
+├─────────────────────────────────────────────────────────────────────┤
+│  Orchestrator.run_preview()                                         │
+│     Includes FireCrawl results in triple preview comparison         │
+│     Dynamic N-way LLM comparison (2 or 3 methods)                  │
+│     No separate flag — follows extraction flag                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Pagination Compatibility
+
+FireCrawl `/scrape` processes one URL at a time and can't maintain browser state across interactions. This means:
+
+| Pagination Strategy | FireCrawl Compatible? | Reason |
+|--------------------|-----------------------|--------|
+| `none` | Yes | Single URL, no interaction needed |
+| `page_numbers` | Yes | Pre-computed URLs, each fetched independently |
+| `next_button` | No | Requires clicking in a persistent browser session |
+| `infinite_scroll` | No | Requires scrolling in a persistent browser session |
+| `load_more_button` | No | Requires clicking in a persistent browser session |
+| `alphabet_tabs` | No | Requires clicking tabs in a persistent browser session |
+| `api_endpoint` | No (not needed) | Direct HTTP GET, no fetching needed |
+
+For incompatible strategies, the scraper falls back to Playwright automatically.
+
+---
+
+## 12. Error Handling & Fallbacks
 
 ### Layered Fallback Strategy
 
 ```
+FireCrawl /scrape fails → Playwright / httpx fallback
+FireCrawl /map fails → non-fatal, planning continues without discovered URLs
+FireCrawl agent() extraction empty → SmartScraper fallback → CSS fallback
 httpx fetch fails → Playwright fetch
 Scrapy fails → httpx fallback
 CSS selectors find 0 items → retry with Playwright (if static fetch was used)
@@ -480,6 +633,15 @@ LLM content filter triggers → retry with aggressive HTML sanitization
 LLM parse batch fails → split batch in half and retry recursively
 QA pass chunk fails → keep original records
 ```
+
+### FireCrawl Fallback Design
+
+All FireCrawl wrapper functions return `None` on any exception (network errors, invalid API key, rate limits, etc.). Callers always check for `None` and fall back to existing methods:
+
+- **Page fetching:** `_scrape_firecrawl()` falls back to `_scrape_js()` / `_scrape_static()` if FireCrawl returns no results
+- **Detail enrichment:** `_enrich_detail_pages()` falls back to Playwright or httpx for any URLs that FireCrawl failed to fetch
+- **URL discovery:** `_discover_urls_firecrawl()` failure is non-fatal — planning continues with LLM-only URL extrapolation
+- **Extraction:** `_extract_detail_fields_firecrawl()` empty result falls back to SmartScraper, then CSS
 
 ### Defensive CSS Selector Handling
 
@@ -495,6 +657,8 @@ QA pass chunk fails → keep original records
 - ScrapeGraphAI extraction: 120s timeout
 - Scrapy subprocess: configurable `scrapy_subprocess_timeout_s` (default 600s)
 - Script execution: 60s sandbox timeout
+- Detail page enrichment: 60s per-page timeout
+- FireCrawl: SDK-level timeouts (defaults from `firecrawl-py`)
 
 ### Rate Limiting
 
@@ -502,3 +666,4 @@ QA pass chunk fails → keep original records
 - Concurrent request semaphore (`max_concurrent_requests`)
 - Scrapy autothrottle with configurable start/max delay
 - Per-domain concurrent request limits
+- FireCrawl batch fetching: semaphore max 5 concurrent requests

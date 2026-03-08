@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator
 
-from playwright.async_api import Browser, Page, async_playwright
+from playwright.async_api import Browser, Page, Route, async_playwright
 
 from app.config import settings
 from app.utils.logging import get_logger
@@ -16,6 +16,9 @@ from app.utils.logging import get_logger
 log = get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Stealth script — injected on every page to avoid bot detection
+# ---------------------------------------------------------------------------
 _STEALTH_JS = """
 () => {
     // Hide webdriver flag
@@ -39,43 +42,147 @@ _STEALTH_JS = """
 }
 """
 
+# ---------------------------------------------------------------------------
+# Layer 1 — Block consent management scripts from loading
+# ---------------------------------------------------------------------------
+_CONSENT_BLOCK_PATTERNS = [
+    "*onetrust.com*",
+    "*cookiebot.com*",
+    "*cookielaw.org*",
+    "*usercentrics.eu*",
+    "*trustarc.com*",
+    "*quantcast.com/choice*",
+    "*privacy-center.org*",
+    "*consentmanager.net*",
+    "*osano.com*",
+    "*iubenda.com/cookie*",
+]
 
-async def _apply_stealth(page: Page) -> None:
-    """Inject anti-detection scripts into the page if stealth mode is enabled."""
-    if not settings.stealth_enabled:
-        return
-    try:
-        await page.add_init_script(_STEALTH_JS)
-    except Exception as exc:
-        log.debug("Stealth injection failed (non-fatal): %s", exc)
+# ---------------------------------------------------------------------------
+# Layer 2 — MutationObserver that kills consent overlays on DOM insertion
+# ---------------------------------------------------------------------------
+_CONSENT_KILLER_JS = """
+() => {
+    const CONSENT_SELS = [
+        '#onetrust-consent-sdk',
+        '#CybotCookiebotDialog',
+        '#usercentrics-root',
+        '[class*="cookie-banner"]',
+        '[class*="consent-banner"]',
+        '[id*="cookie-consent"]',
+        '.cc-window',
+        '#gdpr-consent-tool',
+    ];
+    function killOverlays() {
+        for (const sel of CONSENT_SELS) {
+            document.querySelectorAll(sel).forEach(function(el) {
+                el.style.setProperty('display', 'none', 'important');
+                el.style.setProperty('pointer-events', 'none', 'important');
+                el.setAttribute('aria-hidden', 'true');
+            });
+        }
+    }
+    killOverlays();
+    var obs = new MutationObserver(killOverlays);
+    if (document.body) {
+        obs.observe(document.body, { childList: true, subtree: true });
+    } else {
+        document.addEventListener('DOMContentLoaded', function() {
+            killOverlays();
+            obs.observe(document.body, { childList: true, subtree: true });
+        });
+    }
+}
+"""
 
 
-@asynccontextmanager
-async def get_browser() -> AsyncIterator[Browser]:
-    """Yield a Playwright Chromium browser instance.
+# ---------------------------------------------------------------------------
+# Page factory — creates a Playwright page with all protections enabled
+# ---------------------------------------------------------------------------
+async def create_page(browser: Browser) -> Page:
+    """Create a new Playwright page with stealth, consent blocking, and overlay killing.
 
-    Supports both local launch and remote connection via
-    ``PLAYWRIGHT_WS_ENDPOINT`` for cloud deployments (e.g. Browserless).
+    Every page created through this factory automatically:
+    1. Blocks known consent management script URLs (Layer 1)
+    2. Injects a MutationObserver that hides overlay DOM on insertion (Layer 2)
+    3. Applies stealth anti-detection scripts
     """
-    pw = await async_playwright().start()
+    page = await browser.new_page()
+
+    # Layer 1: block consent scripts from loading
+    async def _abort_route(route: Route) -> None:
+        await route.abort()
+
+    for pattern in _CONSENT_BLOCK_PATTERNS:
+        await page.route(pattern, _abort_route)
+
+    # Stealth
+    if settings.stealth_enabled:
+        try:
+            await page.add_init_script(_STEALTH_JS)
+        except Exception as exc:
+            log.debug("Stealth injection failed (non-fatal): %s", exc)
+
+    # Layer 2: kill overlays via MutationObserver
     try:
-        if settings.playwright_ws_endpoint:
-            log.info("Connecting to remote browser: %s", settings.playwright_ws_endpoint)
-            browser = await pw.chromium.connect(settings.playwright_ws_endpoint)
-        else:
-            log.info("Launching local Chromium (headless=%s)", settings.playwright_headless)
-            browser = await pw.chromium.launch(headless=settings.playwright_headless)
-        yield browser
-        await browser.close()
-    finally:
-        await pw.stop()
+        await page.add_init_script(_CONSENT_KILLER_JS)
+    except Exception as exc:
+        log.debug("Consent killer injection failed (non-fatal): %s", exc)
+
+    return page
 
 
+# ---------------------------------------------------------------------------
+# Safe click — click with automatic overlay recovery
+# ---------------------------------------------------------------------------
+async def safe_click(page: Page, selector: str, *, timeout: int = 10_000) -> bool:
+    """Click an element, recovering from overlay interception.
+
+    1. Try Playwright click (respects visibility, scrolling, etc.)
+    2. On failure: dismiss overlays reactively, then retry with JS click
+    Returns True if the click succeeded, False otherwise.
+    """
+    try:
+        el = await page.query_selector(selector)
+    except Exception:
+        log.debug("Invalid selector for safe_click: %s", selector)
+        return False
+    if not el:
+        return False
+    try:
+        if not await el.is_visible():
+            return False
+    except Exception:
+        return False
+
+    try:
+        await el.click(timeout=timeout)
+        return True
+    except Exception as exc:
+        log.debug("Playwright click failed on '%s': %s — trying recovery", selector, type(exc).__name__)
+
+    # Layer 3 fallback: dismiss overlays reactively then JS click
+    await _dismiss_consent_overlays(page)
+    try:
+        # Re-query in case DOM changed
+        el = await page.query_selector(selector)
+        if el:
+            await el.evaluate("el => el.click()")
+            return True
+    except Exception as js_exc:
+        log.warning("JS click also failed on '%s': %s", selector, js_exc)
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 — Reactive consent dismissal (last-resort fallback)
+# ---------------------------------------------------------------------------
 async def _dismiss_consent_overlays(page: Page) -> None:
     """Dismiss cookie consent / overlay banners that may block clicks.
 
-    Handles both regular DOM consent banners and shadow DOM banners
-    (e.g. Usercentrics, OneTrust) that hide their buttons inside a shadow root.
+    This is the last-resort Layer 3 fallback.  Normally, Layers 1 and 2
+    (route blocking + MutationObserver) prevent overlays from appearing.
+    This function handles edge cases where those layers miss something.
     """
     # 1. Try shadow DOM consent managers (Usercentrics, etc.)
     try:
@@ -101,7 +208,6 @@ async def _dismiss_consent_overlays(page: Page) -> None:
         if dismissed:
             log.debug("Dismissed shadow DOM consent overlay: %s", dismissed)
             await asyncio.sleep(1)
-            return
     except Exception:
         pass
 
@@ -121,11 +227,57 @@ async def _dismiss_consent_overlays(page: Page) -> None:
                 await consent_btn.click()
                 log.debug("Dismissed consent overlay: %s", consent_sel)
                 await asyncio.sleep(1)
-                return
+                break
         except Exception:
             pass
 
+    # 3. Force-remove known consent overlay containers
+    try:
+        removed = await page.evaluate("""() => {
+            const sels = [
+                '#onetrust-consent-sdk',
+                '#CybotCookiebotDialog',
+                '[class*="cookie-banner"]',
+                '[class*="consent-banner"]',
+                '[id*="cookie-consent"]',
+            ];
+            let removed = [];
+            for (const sel of sels) {
+                const el = document.querySelector(sel);
+                if (el) { el.remove(); removed.push(sel); }
+            }
+            return removed.length ? removed.join(', ') : null;
+        }""")
+        if removed:
+            log.debug("Force-removed consent overlay: %s", removed)
+    except Exception:
+        pass
 
+
+@asynccontextmanager
+async def get_browser() -> AsyncIterator[Browser]:
+    """Yield a Playwright Chromium browser instance.
+
+    Supports both local launch and remote connection via
+    ``PLAYWRIGHT_WS_ENDPOINT`` for cloud deployments (e.g. Browserless).
+    """
+    pw = await async_playwright().start()
+    try:
+        if settings.playwright_ws_endpoint:
+            log.info("Connecting to remote browser: %s", settings.playwright_ws_endpoint)
+            browser = await pw.chromium.connect(settings.playwright_ws_endpoint)
+        else:
+            log.info("Launching local Chromium (headless=%s)", settings.playwright_headless)
+            browser = await pw.chromium.launch(headless=settings.playwright_headless)
+        yield browser
+        await browser.close()
+    finally:
+        await pw.stop()
+
+
+# ---------------------------------------------------------------------------
+# High-level page fetching
+# ---------------------------------------------------------------------------
 async def fetch_page_js(
     browser: Browser,
     url: str,
@@ -134,19 +286,14 @@ async def fetch_page_js(
     wait_timeout_ms: int = 15_000,
 ) -> str:
     """Navigate to a URL in a new page, wait for content, and return the HTML."""
-    page: Page = await browser.new_page()
+    page: Page = await create_page(browser)
     try:
-        await _apply_stealth(page)
         log.info("Playwright GET %s", url)
         await page.goto(url, wait_until="commit", timeout=120_000)
-        # After commit, wait for the page to finish loading its resources
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=30_000)
         except Exception:
             pass  # best-effort — continue with whatever loaded
-
-        # Dismiss cookie/consent overlays before waiting for content
-        await _dismiss_consent_overlays(page)
 
         if wait_selector:
             log.debug("Waiting for selector: %s", wait_selector)
@@ -264,7 +411,7 @@ async def intercept_detail_api(
 
     Returns ``(api_url, response_json)`` or ``(None, None)`` if nothing captured.
     """
-    page = await browser.new_page()
+    page = await create_page(browser)
     captured: list[tuple[str, dict]] = []
 
     async def _on_response(response):  # type: ignore[no-untyped-def]
@@ -283,11 +430,7 @@ async def intercept_detail_api(
 
     try:
         page.on("response", _on_response)
-        await _apply_stealth(page)
         await page.goto(url, wait_until="commit", timeout=120_000)
-
-        # Dismiss cookie/consent overlays early
-        await _dismiss_consent_overlays(page)
 
         if wait_selector:
             try:
@@ -308,9 +451,6 @@ async def intercept_detail_api(
         if not button:
             log.warning("No detail button found for selector: %s", detail_button_selector)
             return None, None
-
-        # Dismiss cookie consent / overlay banners that may block clicks
-        await _dismiss_consent_overlays(page)
 
         # Scroll button into view and let the page settle
         await button.scroll_into_view_if_needed()
@@ -384,18 +524,14 @@ async def click_all_tabs(
     3. Otherwise, auto-detect inner pagination from common CSS patterns.
     4. If no inner pagination is found, just click tabs and capture one page each.
     """
-    page = await browser.new_page()
+    page = await create_page(browser)
     htmls: list[str] = []
     try:
-        await _apply_stealth(page)
         await page.goto(url, wait_until="commit", timeout=120_000)
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=30_000)
         except Exception:
             pass
-
-        # Dismiss cookie/consent overlays before interacting with tabs
-        await _dismiss_consent_overlays(page)
 
         # --- Strategy 1: Pre-computed pagination URLs from the planner ---
         if pagination_urls:
@@ -659,9 +795,8 @@ async def take_screenshot(
     """
     from pathlib import Path as P
 
-    page: Page = await browser.new_page()
+    page: Page = await create_page(browser)
     try:
-        await _apply_stealth(page)
         await page.goto(url, wait_until="commit", timeout=60_000)
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=15_000)
@@ -674,8 +809,6 @@ async def take_screenshot(
                 pass
         else:
             await asyncio.sleep(2)
-
-        await _dismiss_consent_overlays(page)
 
         out = P(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -710,10 +843,8 @@ async def fetch_page_js_with_console(
     Returns ``(html, console_entries)``.
     """
     entries: list[ConsoleEntry] = []
-    page: Page = await browser.new_page()
+    page: Page = await create_page(browser)
     try:
-        await _apply_stealth(page)
-
         def _on_console(msg):
             entries.append(ConsoleEntry(
                 level=msg.type,

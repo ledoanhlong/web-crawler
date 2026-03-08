@@ -1,11 +1,12 @@
 # Web Crawler AI Agent
 
-A multi-agent web crawler for extracting seller and company data from marketplaces, trade fairs, and directories. Powered by Azure OpenAI (GPT), Playwright, BeautifulSoup, ScrapeGraphAI, and optionally Scrapy.
+A multi-agent web crawler for extracting seller and company data from marketplaces, trade fairs, and directories. Powered by Azure OpenAI (GPT), Playwright, BeautifulSoup, ScrapeGraphAI, FireCrawl, and optionally Scrapy.
 
 ## Features
 
 - **AI-Powered Planning** — LLM analyses page structure to auto-generate CSS selectors and scraping plans
-- **Dual Extraction** — Compares CSS selector extraction with ScrapeGraphAI (AI) extraction side-by-side
+- **Triple Extraction** — Compares CSS selector extraction, ScrapeGraphAI (AI), and FireCrawl extraction side-by-side
+- **FireCrawl Integration** — Uses FireCrawl Cloud API for page fetching (anti-bot, JS rendering), URL discovery (`/map`), and LLM-powered structured extraction (`agent()`)
 - **Detail Page Enrichment** — Automatically follows detail links or intercepts XHR/API calls for richer data
 - **Multiple Pagination Strategies** — Supports page numbers, next button, infinite scroll, load-more, alphabet tabs, and direct API endpoints
 - **Template System** — Pre-configured plans for known sites (Koelnmesse, WordPress exhibitor lists, etc.)
@@ -26,9 +27,9 @@ RouterAgent → PlannerAgent → ScraperAgent → ParserAgent → OutputAgent
 | Agent | Role |
 |-------|------|
 | **RouterAgent** | Analyses URL(s) and prompt, selects the best strategy (full pipeline, SmartScraper, ScriptCreator) |
-| **PlannerAgent** | Fetches the target page, sends simplified HTML to GPT, produces a `ScrapingPlan` with CSS selectors, pagination strategy, and detail page analysis |
-| **ScraperAgent** | Executes the plan — fetches pages (httpx, Playwright, or Scrapy), extracts items with CSS selectors or ScrapeGraphAI, follows detail pages, intercepts APIs |
-| **ParserAgent** | Normalizes raw scraped data into `SellerLead` records using GPT (field mapping, splitting, cleanup) |
+| **PlannerAgent** | Fetches the target page, sends simplified HTML to GPT, produces a `ScrapingPlan` with CSS selectors, pagination strategy, and detail page analysis. Optionally uses FireCrawl `/map` for URL discovery |
+| **ScraperAgent** | Executes the plan — fetches pages (FireCrawl, httpx, Playwright, or Scrapy), extracts items with CSS selectors, ScrapeGraphAI, or FireCrawl, follows detail pages, intercepts APIs |
+| **ParserAgent** | Normalizes raw scraped data into `SellerLead` records using GPT (field mapping, splitting, cleanup). Can use FireCrawl `agent()` for detail page extraction |
 | **OutputAgent** | Runs a GPT quality pass (dedup, consistency), then writes JSON and CSV output files |
 
 ## Prerequisites
@@ -36,6 +37,7 @@ RouterAgent → PlannerAgent → ScraperAgent → ParserAgent → OutputAgent
 - **Python 3.11+**
 - **Azure OpenAI** deployment (endpoint, API key, deployment name)
 - **Playwright browsers** (installed via `playwright install chromium`)
+- **FireCrawl API key** (optional — for enhanced fetching, URL discovery, and extraction; get one at [firecrawl.dev](https://firecrawl.dev))
 
 ## Installation
 
@@ -86,6 +88,22 @@ RouterAgent → PlannerAgent → ScraperAgent → ParserAgent → OutputAgent
    USE_SMART_SCRAPER_PRIMARY=true    # Enable ScrapeGraphAI as primary extractor
    USE_SCRAPY=false                  # Use Scrapy instead of httpx for static pages
 
+   # FireCrawl Cloud API (optional — enables enhanced fetching and extraction)
+   FIRECRAWL_API_KEY=fc-your-key    # Get from https://firecrawl.dev
+   FIRECRAWL_API_URL=https://api.firecrawl.dev
+   USE_FIRECRAWL=false              # Master switch — must be true to enable any FireCrawl features
+   USE_FIRECRAWL_FOR_FETCHING=true  # Use /scrape for page fetching (anti-bot, JS rendering)
+   USE_FIRECRAWL_FOR_DISCOVERY=true # Use /map for URL discovery during planning
+   USE_FIRECRAWL_FOR_EXTRACTION=false # Use agent() for LLM-powered structured extraction
+
+   # Reliability controls
+   RELIABILITY_AUTO_SWITCH_ENABLED=true
+   RELIABILITY_AUTO_SWITCH_MIN_PAGES=3
+   RELIABILITY_AUTO_SWITCH_ZERO_STREAK=2
+   RELIABILITY_PREVIEW_MARGIN_THRESHOLD=1.5
+   RELIABILITY_SELECTOR_MIN_HIT_RATIO=0.2
+   RELIABILITY_SELECTOR_SAMPLE_CONTAINERS=10
+
    # Playwright
    PLAYWRIGHT_HEADLESS=true
    PLAYWRIGHT_WS_ENDPOINT=           # Remote browser URL (e.g. Browserless)
@@ -123,7 +141,9 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 | `POST` | `/api/v1/smart-crawl` | Intelligent entry point — auto-selects strategy |
 | `POST` | `/api/v1/crawl` | Submit a direct crawl job (skips router) |
 | `POST` | `/api/v1/crawl/{job_id}/confirm` | Confirm or abort a preview |
+| `POST` | `/api/v1/crawl/{job_id}/resume` | Resume a partial crawl |
 | `GET`  | `/api/v1/crawl/{job_id}` | Check job status and results |
+| `GET`  | `/api/v1/crawl/{job_id}/diagnostics` | Structured reliability diagnostics |
 | `GET`  | `/api/v1/crawl/{job_id}/json` | Download JSON results |
 | `GET`  | `/api/v1/crawl/{job_id}/csv` | Download CSV results |
 | `GET`  | `/api/v1/jobs` | List all jobs |
@@ -160,8 +180,14 @@ PENDING → PLANNING → SCRAPING → PREVIEW → (user confirms) → SCRAPING �
 At the **PREVIEW** stage, the system pauses with a sample record for user validation. The user can:
 - **Confirm** to start the full crawl
 - **Provide feedback** (e.g. "I also need email and phone") to trigger re-planning
-- **Choose extraction method** (CSS selectors or AI extraction)
+- **Choose extraction method** (CSS selectors, AI extraction, or FireCrawl extraction)
 - **Abort** to cancel the job
+
+If detail page enrichment times out, the job can finish as **PARTIAL** and later continue with:
+
+```bash
+POST /api/v1/crawl/{job_id}/resume
+```
 
 ## Templates
 
@@ -207,6 +233,7 @@ app/
 ├── templates/                 # Pre-configured scraping plans
 └── utils/
     ├── browser.py             # Playwright helpers
+    ├── firecrawl.py           # FireCrawl Cloud API wrapper
     ├── html.py                # HTML simplification
     ├── http.py                # httpx client
     ├── llm.py                 # Azure OpenAI wrapper
@@ -249,6 +276,80 @@ Each extracted record is normalized into the `SellerLead` schema:
 pip install pytest pytest-asyncio
 pytest test/ -v
 ```
+
+### Smoke Suite (Unseen Site Regression)
+
+Use smoke profiles to validate robustness on representative websites:
+
+1. Copy and edit `test/fixtures/website_profiles.example.json`.
+   For private real-world targets, create `test/fixtures/website_profiles.private.json` (gitignored).
+2. Enable target profiles (`"enabled": true`) and adjust expectations.
+3. Start the API server.
+4. Run smoke suite:
+
+```bash
+python scripts/smoke_sites.py \
+   --api-base http://127.0.0.1:8000/api/v1 \
+   --profiles auto
+```
+
+Reports are saved to `output/smoke_reports/`.
+
+Smoke profile options include:
+
+- `expect_min_records` (int)
+- `expect_min_quality` (0-1 float)
+- `allow_partial` (bool)
+- `auto_resume_partial` (bool)
+
+Compare latest trends and fail on regressions:
+
+```bash
+python scripts/compare_smoke_reports.py \
+   --report-dir output/smoke_reports \
+   --max-pass-rate-drop 0.10 \
+   --max-empty-pages-increase 2.0 \
+   --max-switches-increase 1.0 \
+   --max-parser-scalar-drop 0.10 \
+   --max-parser-structured-drop 0.10 \
+   --allow-new-failures 0
+```
+
+Generate a markdown summary for CI/job reporting:
+
+```bash
+python scripts/smoke_trend_markdown.py \
+   --report-dir output/smoke_reports \
+   --out output/smoke_reports/latest-summary.md
+```
+
+The markdown summary includes hotspot sections for:
+
+- most common failure reasons
+- highest empty-page profiles
+- highest method-switch profiles
+- lowest parser scalar-completeness profiles
+
+For operational guidance, see `docs/RELIABILITY_RUNBOOK.md`.
+
+### Nightly Automation
+
+A GitHub Actions workflow scaffold is included at `.github/workflows/nightly-smoke.yml`.
+
+Before enabling nightly runs, configure repository secrets:
+
+- `AZURE_OPENAI_ENDPOINT`
+- `AZURE_OPENAI_API_KEY`
+- `AZURE_OPENAI_API_VERSION`
+- `AZURE_OPENAI_DEPLOYMENT`
+- `FIRECRAWL_API_KEY` (optional if FireCrawl features are enabled)
+
+Optional reliability governance automation:
+
+- Set repository variable `AUTO_CREATE_SMOKE_ISSUE=true` to automatically open a GitHub issue when smoke trend checks fail.
+- The issue body includes the generated smoke markdown summary and references `docs/POSTMORTEM_TEMPLATE.md` for follow-up.
+
+Use `docs/POSTMORTEM_TEMPLATE.md` for any hard failure discovered by smoke runs.
 
 ### Code Quality
 

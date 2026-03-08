@@ -5,6 +5,14 @@ Executes generated scraping scripts in an isolated subprocess with:
 - Hard timeout (default 60s)
 - Output size limits (1 MB)
 - Pre-execution safety scan for dangerous patterns
+
+**SECURITY NOTE — NOT A SECURITY BOUNDARY**
+
+The regex-based blocklist is a best-effort safety net, not a true sandbox.
+It can be bypassed (e.g. via importlib, getattr, open() for file reads,
+requests for outbound network access). For production deployments exposed
+to untrusted users, run generated scripts inside a Docker container with
+restricted capabilities, network isolation, and filesystem limits.
 """
 
 from __future__ import annotations

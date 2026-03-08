@@ -33,6 +33,9 @@ class OutputAgent:
     ) -> CrawlResult:
         log.info("Building output for %d records (job %s)", len(records), job_id)
 
+        # --- Programmatic dedup (fast, free) ---
+        records = self._dedup_records(records)
+
         # --- Optional LLM quality pass ---
         if len(records) >= _QA_THRESHOLD:
             records = await self._quality_pass(records)
@@ -59,6 +62,27 @@ class OutputAgent:
             json_path=str(json_path),
             csv_path=str(csv_path),
         )
+
+    @staticmethod
+    def _dedup_records(records: list[SellerLead]) -> list[SellerLead]:
+        """Remove exact duplicates by (name, website) or (name, source_url).
+
+        Runs before the LLM quality pass to reduce token usage on obvious dupes.
+        """
+        seen: set[tuple[str, str]] = set()
+        unique: list[SellerLead] = []
+        for r in records:
+            key = (
+                (r.name or "").strip().lower(),
+                (r.website or r.source_url or "").strip().lower(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(r)
+        if len(unique) < len(records):
+            log.info("Programmatic dedup: %d → %d records", len(records), len(unique))
+        return unique
 
     async def _quality_pass(self, records: list[SellerLead]) -> list[SellerLead]:
         """Send records through GPT for dedup + consistency cleanup."""
@@ -137,8 +161,8 @@ class OutputAgent:
                 "email": r.email or "",
                 "phone": r.phone or "",
                 "description": r.description or "",
-                "product_categories": "; ".join(r.product_categories),
-                "brands": "; ".join(r.brands),
+                "product_categories": "; ".join(str(x) for x in r.product_categories),
+                "brands": "; ".join(str(x) for x in r.brands),
                 "marketplace_name": r.marketplace_name or "",
                 "logo_url": r.logo_url or "",
                 "source_url": r.source_url or "",
