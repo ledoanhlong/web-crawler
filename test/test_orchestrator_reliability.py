@@ -22,7 +22,7 @@ def test_build_method_attempt_order_without_preference_has_auto_fallback() -> No
     assert order[0] is None
     assert ExtractionMethod.CSS in order
     assert ExtractionMethod.SMART_SCRAPER in order
-    assert ExtractionMethod.FIRECRAWL in order
+    assert ExtractionMethod.UNIVERSAL_SCRAPER in order
 
 
 def test_preview_quality_score_rewards_contact_completeness() -> None:

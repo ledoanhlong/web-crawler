@@ -318,7 +318,8 @@ class SellerLead(BaseModel):
 class ExtractionMethod(str, enum.Enum):
     CSS = "css"
     SMART_SCRAPER = "smart_scraper"
-    FIRECRAWL = "firecrawl"
+    CRAWL4AI = "crawl4ai"
+    UNIVERSAL_SCRAPER = "universal_scraper"
 
 
 class CrawlStatus(str, enum.Enum):
@@ -533,7 +534,7 @@ class ConfirmPreviewRequest(BaseModel):
     )
     extraction_method: ExtractionMethod | None = Field(
         default=None,
-        description="User's chosen extraction method for the full crawl (css, smart_scraper, or firecrawl).",
+        description="User's chosen extraction method for the full crawl (css, smart_scraper, crawl4ai, or universal_scraper).",
     )
 
 
@@ -588,9 +589,13 @@ class CrawlJob(BaseModel):
         default=None,
         description="Preview record extracted via SmartScraperGraph (AI).",
     )
-    preview_record_firecrawl: SellerLead | None = Field(
+    preview_record_crawl4ai: SellerLead | None = Field(
         default=None,
-        description="Preview record extracted via FireCrawl (AI).",
+        description="Preview record extracted via Crawl4AI (AI/Markdown).",
+    )
+    preview_record_universal_scraper: SellerLead | None = Field(
+        default=None,
+        description="Preview record extracted via universal-scraper (AI/BS4).",
     )
     preview_recommendation: str | None = Field(
         default=None,

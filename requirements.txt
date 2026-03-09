@@ -12,7 +12,8 @@ pandas>=2.2.0
 scrapegraphai>=1.0.0
 langchain-openai>=0.3.0
 scrapy>=2.11.0
-firecrawl-py>=4.0.0
+crawl4ai>=0.4.0
+universal-scraper>=0.1.0
 
 # Development dependencies (optional)
 # Uncomment below to install dev dependencies

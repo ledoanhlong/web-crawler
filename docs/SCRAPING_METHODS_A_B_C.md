@@ -1,11 +1,12 @@
-# Scraping Methods A/B/C (Codebase Deep Dive)
+# Scraping Methods A/B/C/D (Codebase Deep Dive)
 
-This document explains the practical differences between the three extraction methods used in this project.
+This document explains the practical differences between the four extraction methods used in this project.
 
 In code, these methods are represented by `ExtractionMethod`:
 - Method A -> `css`
 - Method B -> `smart_scraper`
-- Method C -> `firecrawl`
+- Method C -> `crawl4ai`
+- Method D -> `universal_scraper`
 
 Source: `app/models/schemas.py` (`class ExtractionMethod`).
 
@@ -15,7 +16,8 @@ Source: `app/models/schemas.py` (`class ExtractionMethod`).
 |---|---|---|
 | A | `css` | Deterministic DOM extraction using planner-generated CSS selectors |
 | B | `smart_scraper` | LLM-based extraction from HTML (with CSS fallback) |
-| C | `firecrawl` | FireCrawl-assisted fetching/extraction path, then project extraction pipeline |
+| C | `crawl4ai` | Local async fetching with markdown output via Crawl4AI |
+| D | `universal_scraper` | AI-powered BeautifulSoup code generation with caching |
 
 ## 2. Where Each Method Is Used
 
@@ -76,35 +78,59 @@ Source: `app/models/schemas.py` (`class ExtractionMethod`).
 - Hard-to-template pages where CSS precision is low.
 - Cases where CSS preview is sparse but visible data exists.
 
-## 5. Method C (`firecrawl`) Details
+## 5. Method C (`crawl4ai`) Details
 
 ### How it works
-- FireCrawl can be used in two ways in this codebase:
-  1. Fetching path (`/scrape`) in scraper execution (`_scrape_firecrawl`).
-  2. Optional structured extraction path (`firecrawl_extract`) during preview when enabled.
-- Even in FireCrawl fetch mode, extracted HTML still goes through project extraction logic (`_extract_items_with_fallback`).
+- Crawl4AI performs local async fetching and converts page content to clean markdown output.
+- Runs entirely locally with no external API dependency.
+- Extracted markdown is then processed through the project extraction pipeline.
 - Files:
-  - `app/agents/scraper_agent.py` (`_scrape_firecrawl`, preview FireCrawl branch)
-  - `app/utils/firecrawl.py`
-  - `app/config.py` (`use_firecrawl*` flags)
+  - `app/agents/scraper_agent.py` (Crawl4AI branch)
+  - `app/utils/crawl4ai.py`
 
 ### Strengths
-- Better fetching resilience for anti-bot and JS-heavy pages.
-- Good fallback when direct site fetch is unstable.
-- Integrates with existing enrichment pipeline.
+- Runs locally -- no external API keys or third-party service required.
+- Async fetching provides good performance on JS-heavy pages.
+- Markdown output is clean and well-structured for downstream extraction.
+- No per-request API cost.
 
 ### Weaknesses
-- Feature-flag dependent and requires API credentials.
-- Pagination compatibility is limited in this implementation:
-  - Compatible: `none`, `page_numbers`
-  - Not direct fit for interactive flows (`infinite_scroll`, `load_more_button`, `alphabet_tabs`), where code falls back to JS/static path.
-- External API dependency adds operational risk/cost.
+- Depends on local browser/rendering environment.
+- Markdown conversion may lose some structural nuance present in raw HTML.
+- Less battle-tested against aggressive anti-bot protections compared to commercial services.
 
 ### Best fit
-- Pages where standard HTTP/browser fetch reliability is poor.
-- Sites with anti-bot pressure where FireCrawl fetching improves stability.
+- JS-heavy pages where standard HTTP fetch is insufficient.
+- Projects that need to avoid external API dependencies and costs.
+- Sites where clean markdown representation captures the needed data well.
 
-## 6. Behavior Differences in Auto/Fallback Mode
+## 6. Method D (`universal_scraper`) Details
+
+### How it works
+- Uses AI to generate custom BeautifulSoup extraction code tailored to each target site.
+- Generated scraper code is cached so subsequent runs reuse the same logic without re-generation.
+- Combines the adaptability of LLM-driven approaches with the speed of deterministic code execution.
+- Files:
+  - `app/utils/universal_scraper.py`
+  - `app/agents/scraper_agent.py` (universal_scraper branch)
+
+### Strengths
+- AI-generated BS4 code adapts to each site's specific structure.
+- Caching means the first run pays the generation cost, but subsequent runs are fast.
+- Deterministic execution once code is generated and cached.
+- No ongoing LLM cost per extraction after initial code generation.
+
+### Weaknesses
+- Initial code generation adds latency and cost on the first run.
+- Generated code quality depends on the AI model's understanding of the page structure.
+- Cache invalidation is needed when site structure changes significantly.
+
+### Best fit
+- Sites that will be scraped repeatedly over time.
+- Cases where you want LLM adaptability upfront but deterministic speed at runtime.
+- Scenarios where per-extraction LLM cost is a concern.
+
+## 7. Behavior Differences in Auto/Fallback Mode
 
 When no explicit method is forced (`extraction_method=None`):
 - Scraper tries CSS first.
@@ -116,11 +142,12 @@ Source: `app/agents/scraper_agent.py` (`_extract_items_with_fallback`).
 When a method is explicitly selected:
 - `css`: CSS only.
 - `smart_scraper`: Smart primary, CSS fallback.
-- `firecrawl`: FireCrawl path if pagination is compatible; otherwise logs warning and falls back to JS/static path.
+- `crawl4ai`: Crawl4AI async fetch with markdown output; falls back to JS/static path if needed.
+- `universal_scraper`: AI-generated BS4 code with caching; regenerates if cached code fails.
 
 Source: `app/agents/scraper_agent.py` (`scrape`).
 
-## 7. Preview and Recommendation Logic (Why A/B/C can differ)
+## 8. Preview and Recommendation Logic (Why A/B/C/D can differ)
 
 Preview stage runs multi-method extraction and parses each candidate into `SellerLead`.
 Then the orchestrator picks recommendation by:
@@ -131,7 +158,7 @@ Source: `app/services/orchestrator.py` (`run_preview_scrape`, `_select_preview_m
 
 This is why the recommended method can change per site even with same prompt.
 
-## 8. Operational Checklist
+## 9. Operational Checklist
 
 Use Method A (`css`) when:
 - Planner selectors look accurate in preview.
@@ -141,28 +168,31 @@ Use Method B (`smart_scraper`) when:
 - CSS preview misses fields/items but data is visibly present.
 - Layout is irregular and selector brittleness is high.
 
-Use Method C (`firecrawl`) when:
-- Fetching/rendering reliability is the bottleneck.
-- You have valid FireCrawl config and compatible pagination.
+Use Method C (`crawl4ai`) when:
+- You need reliable JS-rendered page fetching without external API costs.
+- Clean markdown output is sufficient for your extraction needs.
 
-## 9. Config Flags That Affect A/B/C
+Use Method D (`universal_scraper`) when:
+- You plan to scrape the same site repeatedly and want cached, fast extraction.
+- You want AI-adapted extraction code without ongoing per-request LLM costs.
+
+## 10. Config Flags That Affect A/B/C/D
 
 From `app/config.py`:
 - `use_smart_scraper_primary`
-- `use_firecrawl`
-- `use_firecrawl_for_fetching`
-- `use_firecrawl_for_discovery`
-- `use_firecrawl_for_extraction`
+- `use_crawl4ai`
+- `use_universal_scraper`
 - `reliability_auto_switch_enabled`
 - `reliability_auto_switch_min_pages`
 - `reliability_auto_switch_zero_streak`
 
 These flags can materially change which method effectively runs and when fallback triggers.
 
-## 10. Practical Summary
+## 11. Practical Summary
 
 - Method A (`css`) = fastest and most deterministic when selectors are valid.
 - Method B (`smart_scraper`) = more adaptive to messy markup, but slower and less deterministic.
-- Method C (`firecrawl`) = strongest fetch-resilience path, especially for hard sites, but constrained by feature flags and pagination compatibility.
+- Method C (`crawl4ai`) = local async fetching with markdown output, no external API dependency.
+- Method D (`universal_scraper`) = AI-generated BS4 code with caching, balancing adaptability and runtime speed.
 
 In this codebase, the best method is intentionally site-dependent and validated in preview before full crawl.

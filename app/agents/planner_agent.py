@@ -486,19 +486,7 @@ class PlannerAgent:
             plan.target.detail_link_selector,
         )
 
-        # --- 5. FireCrawl /map URL discovery (supplement pagination_urls) ---
-        if settings.use_firecrawl and settings.use_firecrawl_for_discovery:
-            try:
-                discovered = await self._discover_urls_firecrawl(url, plan)
-                if discovered:
-                    log.info(
-                        "FireCrawl /map added %d URL(s) to pagination_urls (was %d)",
-                        len(discovered), len(plan.pagination_urls),
-                    )
-            except Exception as exc:
-                log.warning("FireCrawl URL discovery failed (non-fatal): %s", exc)
-
-        # --- 6. Analyse a sample detail page (if detail link found) ---
+        # --- 5. Analyse a sample detail page (if detail link found) ---
         if plan.target.detail_link_selector:
             sample_detail_url = self._extract_first_detail_link(html_raw, plan)
             if sample_detail_url:
@@ -621,73 +609,6 @@ class PlannerAgent:
         return plan
 
     # ------------------------------------------------------------------
-    # FireCrawl URL discovery
-    # ------------------------------------------------------------------
-    async def _discover_urls_firecrawl(
-        self, url: str, plan: ScrapingPlan,
-    ) -> list[str]:
-        """Use FireCrawl /map to discover URLs and supplement pagination_urls.
-
-        Filters discovered URLs to those that likely belong to the same
-        listing pagination pattern (same path prefix, similar structure).
-        Returns the list of newly added URLs.
-        """
-        from app.utils.firecrawl import firecrawl_map
-
-        parsed_base = urlparse(url)
-        base_path = parsed_base.path.rstrip("/")
-
-        # Use /map to discover all URLs on the site
-        discovered = await firecrawl_map(
-            url, limit=500, include_subdomains=False,
-        )
-        if not discovered:
-            return []
-
-        # Filter to URLs that likely belong to the same listing section
-        existing_urls = set(plan.pagination_urls)
-        existing_urls.add(url)
-        new_urls: list[str] = []
-
-        for entry in discovered:
-            disc_url = entry.get("url", "")
-            if not disc_url or disc_url in existing_urls:
-                continue
-
-            parsed_disc = urlparse(disc_url)
-            # Must be same domain
-            if parsed_disc.netloc != parsed_base.netloc:
-                continue
-
-            disc_path = parsed_disc.path.rstrip("/")
-
-            # Heuristic: URL path shares a common prefix with the base URL
-            # (e.g., /exhibitors?page=2 matches /exhibitors)
-            if not disc_path.startswith(base_path):
-                continue
-
-            # Heuristic: pagination URLs often differ only in query params
-            # or have a trailing /page/N segment
-            path_suffix = disc_path[len(base_path):]
-            is_pagination_like = (
-                not path_suffix  # same path, different query params
-                or path_suffix.startswith("/page")
-                or path_suffix.startswith("/p/")
-                or path_suffix.lstrip("/").isdigit()
-            )
-            if is_pagination_like or parsed_disc.query:
-                new_urls.append(disc_url)
-                existing_urls.add(disc_url)
-
-        if new_urls:
-            plan.pagination_urls.extend(new_urls)
-            log.info(
-                "FireCrawl /map: discovered %d pagination-like URLs (total now %d)",
-                len(new_urls), len(plan.pagination_urls),
-            )
-
-        return new_urls
-
     # ------------------------------------------------------------------
     # Detail page analysis
     # ------------------------------------------------------------------

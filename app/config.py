@@ -64,13 +64,16 @@ class Settings(BaseSettings):
     # Output
     output_dir: str = "./output"
 
-    # FireCrawl Cloud API
-    firecrawl_api_key: str | None = None
-    firecrawl_api_url: str = "https://api.firecrawl.dev"
-    use_firecrawl: bool = False  # master feature flag
-    use_firecrawl_for_fetching: bool = True    # use /scrape for page fetching
-    use_firecrawl_for_discovery: bool = True   # use /map for URL discovery
-    use_firecrawl_for_extraction: bool = False  # use agent() for structured extraction
+    # Crawl4AI (local async crawler with markdown output)
+    use_crawl4ai: bool = False                   # master feature flag
+    use_crawl4ai_for_fetching: bool = True       # use as page fetcher (markdown output)
+    use_crawl4ai_for_extraction: bool = False    # use built-in extraction strategies
+    crawl4ai_browser_headless: bool = True
+
+    # universal-scraper (AI-powered BS4 code generation + caching)
+    use_universal_scraper: bool = False                # master feature flag
+    use_universal_scraper_for_extraction: bool = True  # use for structured extraction
+    universal_scraper_model: str = "azure/gpt-5.2"     # LiteLLM model name
 
     # Reliability controls
     reliability_auto_switch_enabled: bool = True

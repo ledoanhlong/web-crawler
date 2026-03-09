@@ -1,9 +1,10 @@
-# Evaluation: Scraping Methods A, B, C
+# Evaluation: Scraping Methods A, B, C, D
 
-This document evaluates the three extraction methods implemented in this repository:
+This document evaluates the four extraction methods implemented in this repository:
 - Method A: `css`
 - Method B: `smart_scraper`
-- Method C: `firecrawl`
+- Method C: `crawl4ai`
+- Method D: `universal_scraper`
 
 Scope note:
 - This is an implementation-level evaluation based on your code architecture and control flow.
@@ -23,16 +24,16 @@ Scoring scale: 1 (weak) to 5 (strong).
 
 ## 2. Scorecard
 
-| Criterion | Method A (`css`) | Method B (`smart_scraper`) | Method C (`firecrawl`) |
-|---|---:|---:|---:|
-| Extraction accuracy | 4 | 4 | 4 |
-| Robustness to site variation | 2 | 4 | 4 |
-| Runtime performance | 5 | 2 | 3 |
-| Operational cost | 5 | 2 | 2 |
-| Determinism and reproducibility | 5 | 2 | 3 |
-| Debuggability and maintainability | 5 | 3 | 3 |
-| Anti-bot/fetch resilience | 2 | 3 | 5 |
-| **Overall (simple average)** | **4.0** | **2.9** | **3.4** |
+| Criterion | Method A (`css`) | Method B (`smart_scraper`) | Method C (`crawl4ai`) | Method D (`universal_scraper`) |
+|---|---:|---:|---:|---:|
+| Extraction accuracy | 4 | 4 | 4 | 4 |
+| Robustness to site variation | 2 | 4 | 4 | 4 |
+| Runtime performance | 5 | 2 | 4 | 4 |
+| Operational cost | 5 | 2 | 4 | 3 |
+| Determinism and reproducibility | 5 | 2 | 4 | 4 |
+| Debuggability and maintainability | 5 | 3 | 3 | 3 |
+| Anti-bot/fetch resilience | 2 | 3 | 4 | 3 |
+| **Overall (simple average)** | **4.0** | **2.9** | **3.9** | **3.6** |
 
 ## 3. Method-by-Method Evaluation
 
@@ -71,30 +72,52 @@ Use when:
 - CSS preview has obvious misses but visible data exists.
 - You prioritize recall over strict determinism.
 
-## Method C (`firecrawl`)
+## Method C (`crawl4ai`)
 
-Verdict: Best fetch-resilience strategy for difficult targets; not always best pure extractor.
+Verdict: Best local-first fetch-and-extract strategy with no external API dependency.
 
 Why it helps:
-- Stronger page-fetching reliability on JS-heavy or anti-bot sites.
-- Integrates with your existing extraction and enrichment flow.
+- Local async fetching handles JS-rendered pages without external services.
+- Markdown output is clean and structured, improving downstream extraction quality.
+- No per-request API cost -- runs entirely locally.
 
 Main risks:
-- External API dependency and cost.
-- In current implementation, direct compatibility is strongest for `none` and `page_numbers` pagination.
-- Adds operational complexity (keys, feature flags, service availability).
+- Depends on local browser/rendering environment setup.
+- Markdown conversion may lose some structural nuance from raw HTML.
+- Less battle-tested against the most aggressive anti-bot protections.
 
 Use when:
-- Primary blocker is fetching/rendering reliability.
-- Standard HTTP/browser fetch path is unstable.
+- JS-heavy pages need reliable rendering without external API costs.
+- Clean markdown representation captures the target data well.
+- You want to avoid third-party service dependencies.
+
+## Method D (`universal_scraper`)
+
+Verdict: Best long-term efficiency for repeatedly scraped sites through AI-generated cached code.
+
+Why it helps:
+- AI generates site-specific BeautifulSoup extraction code, adapting to each target's structure.
+- Caching ensures the generation cost is paid only once; subsequent runs execute deterministic code.
+- Balances the adaptability of LLM-driven approaches with the speed of static code.
+
+Main risks:
+- Initial code generation adds latency and LLM cost on the first run.
+- Generated code quality depends on the AI model's interpretation of page structure.
+- Cache invalidation is required when site structure changes significantly.
+
+Use when:
+- The same site will be scraped repeatedly over time.
+- You want AI adaptability upfront but deterministic, fast extraction at runtime.
+- Per-extraction LLM cost is a concern and amortizing generation cost is acceptable.
 
 ## 4. Recommended Decision Rules
 
 1. Start with preview comparison enabled (already in your orchestrator).
 2. Prefer Method A when preview quality is competitive.
 3. Choose Method B when CSS is underfitting and recall is poor.
-4. Choose Method C when site access/rendering reliability is the bottleneck.
-5. Keep auto-switch enabled to recover from empty-page streaks during full crawl.
+4. Choose Method C when you need reliable JS-rendered fetching without external API costs.
+5. Choose Method D when the site will be scraped repeatedly and you want cached, fast extraction.
+6. Keep auto-switch enabled to recover from empty-page streaks during full crawl.
 
 ## 5. Risk Register by Method
 
@@ -102,8 +125,10 @@ Use when:
   - Mitigation: maintain selector quality gates and plan review edits.
 - Method B (`smart_scraper`): non-determinism and latency risk.
   - Mitigation: keep as fallback/targeted choice, not universal default.
-- Method C (`firecrawl`): third-party dependency and compatibility risk.
-  - Mitigation: health checks, fallback to JS/static, constrain to suitable pagination patterns.
+- Method C (`crawl4ai`): local environment dependency risk.
+  - Mitigation: ensure browser/rendering dependencies are properly configured; fall back to JS/static path if local fetch fails.
+- Method D (`universal_scraper`): generated code staleness risk.
+  - Mitigation: implement cache invalidation on extraction failures; monitor for site structure changes.
 
 ## 6. KPI Suggestions for Empirical Validation
 
@@ -118,6 +143,7 @@ Track these per method in smoke runs:
 
 - Primary baseline: Method A (`css`).
 - Strategic fallback: Method B (`smart_scraper`) for extraction recovery.
-- Reliability path: Method C (`firecrawl`) for hard-to-fetch targets.
+- Local fetch-and-extract: Method C (`crawl4ai`) for JS-heavy pages without external API costs.
+- Cached adaptive extraction: Method D (`universal_scraper`) for repeatedly scraped sites.
 
 This mix matches your current architecture: preview-driven selection, explicit method choice, and guarded fallback in full-run orchestration.

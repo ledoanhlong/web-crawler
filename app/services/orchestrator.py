@@ -173,7 +173,8 @@ class Orchestrator:
             preferred,
             ExtractionMethod.CSS,
             ExtractionMethod.SMART_SCRAPER,
-            ExtractionMethod.FIRECRAWL,
+            ExtractionMethod.CRAWL4AI,
+            ExtractionMethod.UNIVERSAL_SCRAPER,
             None,  # Final auto mode in scraper
         ]
         ordered: list[ExtractionMethod | None] = []
@@ -405,7 +406,7 @@ class Orchestrator:
             # ---- Dual preview scrape ----
             self._set_status(job, CrawlStatus.SCRAPING, "preview_scrape")
             log.info("[%s] Dual preview scrape", job.id)
-            css_pages, smart_pages, firecrawl_pages = await self.scraper.scrape_preview_dual(plan)
+            css_pages, smart_pages, crawl4ai_pages, us_pages = await self.scraper.scrape_preview_dual(plan)
 
             # Parse CSS result
             if css_pages and css_pages[0].items:
@@ -424,12 +425,19 @@ class Orchestrator:
                     job.preview_record_smart = smart_records[0]
                     log.info("[%s] Smart preview: %s", job.id, smart_records[0].name)
 
-            # Parse FireCrawl result
-            if firecrawl_pages and firecrawl_pages[0].items:
-                fc_records = await self.parser.parse(firecrawl_pages, plan)
-                if fc_records:
-                    job.preview_record_firecrawl = fc_records[0]
-                    log.info("[%s] FireCrawl preview: %s", job.id, fc_records[0].name)
+            # Parse Crawl4AI result
+            if crawl4ai_pages and crawl4ai_pages[0].items:
+                c4_records = await self.parser.parse(crawl4ai_pages, plan)
+                if c4_records:
+                    job.preview_record_crawl4ai = c4_records[0]
+                    log.info("[%s] Crawl4AI preview: %s", job.id, c4_records[0].name)
+
+            # Parse universal-scraper result
+            if us_pages and us_pages[0].items:
+                us_records = await self.parser.parse(us_pages, plan)
+                if us_records:
+                    job.preview_record_universal_scraper = us_records[0]
+                    log.info("[%s] universal-scraper preview: %s", job.id, us_records[0].name)
 
             # LLM comparison — include all methods that produced results
             candidates: dict[ExtractionMethod, object] = {}
@@ -437,8 +445,10 @@ class Orchestrator:
                 candidates[ExtractionMethod.CSS] = job.preview_record_css
             if job.preview_record_smart:
                 candidates[ExtractionMethod.SMART_SCRAPER] = job.preview_record_smart
-            if job.preview_record_firecrawl:
-                candidates[ExtractionMethod.FIRECRAWL] = job.preview_record_firecrawl
+            if job.preview_record_crawl4ai:
+                candidates[ExtractionMethod.CRAWL4AI] = job.preview_record_crawl4ai
+            if job.preview_record_universal_scraper:
+                candidates[ExtractionMethod.UNIVERSAL_SCRAPER] = job.preview_record_universal_scraper
 
             if len(candidates) >= 2:
                 recommended_method, best_score, margin = self._select_preview_method_deterministic(candidates)
@@ -540,7 +550,8 @@ class Orchestrator:
                 label = {
                     ExtractionMethod.CSS: "CSS Selector",
                     ExtractionMethod.SMART_SCRAPER: "SmartScraperGraph (AI)",
-                    ExtractionMethod.FIRECRAWL: "FireCrawl (AI)",
+                    ExtractionMethod.UNIVERSAL_SCRAPER: "universal-scraper (AI/BS4)",
+                    ExtractionMethod.CRAWL4AI: "Crawl4AI (AI/Markdown)",
                 }.get(method, method.value)
                 parts.append(f"**{label} extraction:**\n{data}")
 

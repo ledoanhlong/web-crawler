@@ -189,6 +189,130 @@ async def smart_extract_detail(
     return detail
 
 
+# ── Markdown-based LLM extraction (used when Crawl4AI provides markdown) ──
+
+
+async def smart_extract_items_from_markdown(
+    markdown: str,
+    fields: list[str],
+    *,
+    max_items: int | None = None,
+) -> list[dict[str, str | None]]:
+    """Extract listing items from clean markdown using a direct LLM call.
+
+    Identical to ``smart_extract_items`` but operates on Crawl4AI's
+    markdown output instead of raw HTML.  The clean markdown dramatically
+    reduces token usage and avoids truncation on large pages.
+    """
+    from app.utils.llm import chat_completion_json
+
+    if not markdown or len(markdown) < 100:
+        return []
+
+    fields_str = ", ".join(fields)
+    if max_items and max_items > 0:
+        item_instruction = f"Extract only the first {max_items} seller/company/exhibitor entry from this content."
+    else:
+        item_instruction = "Extract ALL seller/company/exhibitor entries from this content."
+
+    prompt = (
+        f"{item_instruction}\n"
+        f"For each entry, extract these fields: {fields_str}.\n"
+        f"Return a JSON object with a key \"items\" containing a list of objects.\n"
+        f"Each object should have the field names as keys and the extracted text as values.\n"
+        f"If a field is not found for an entry, set it to null.\n"
+        f"For any URL fields (like detail_link, logo, logo_url), return the full or relative URL as-is."
+    )
+
+    log.info(
+        "LLM markdown extraction: extracting items (fields: %s, markdown_size: %d chars)",
+        fields_str, len(markdown),
+    )
+    try:
+        result = await chat_completion_json(
+            [
+                {"role": "system", "content": "You are a precise data extraction assistant. Extract structured data from the provided content."},
+                {"role": "user", "content": f"{prompt}\n\n--- CONTENT ---\n{markdown}"},
+            ],
+            temperature=0.1,
+        )
+    except Exception as exc:
+        log.warning("LLM markdown item extraction failed: %s", exc)
+        return []
+
+    if result is None:
+        return []
+
+    items: list[dict[str, str | None]] = []
+    raw_items: list = []
+
+    if isinstance(result, list):
+        raw_items = result
+    elif isinstance(result, dict):
+        for key in ("items", "data", "results", "records", "entries"):
+            if key in result and isinstance(result[key], list):
+                raw_items = result[key]
+                break
+        if not raw_items and not any(isinstance(v, list) for v in result.values()):
+            raw_items = [result]
+
+    for raw in raw_items:
+        if isinstance(raw, dict):
+            item = {k: str(v) if v is not None else None for k, v in raw.items()}
+            items.append(item)
+
+    log.info("LLM markdown extraction: extracted %d items", len(items))
+    return items
+
+
+async def smart_extract_detail_from_markdown(
+    markdown: str,
+    fields: list[str],
+) -> dict[str, str]:
+    """Extract structured data from a detail page's markdown using a direct LLM call.
+
+    Identical to ``smart_extract_detail`` but operates on clean markdown
+    instead of raw HTML.
+    """
+    from app.utils.llm import chat_completion_json
+
+    if not markdown or len(markdown) < 50:
+        return {}
+
+    fields_str = ", ".join(fields)
+    prompt = (
+        f"Extract the following information about this seller/company from the content: "
+        f"{fields_str}.\n"
+        f"Also extract any contact information (email, phone, address, website) "
+        f"and social media links you can find.\n"
+        f"Return a flat JSON object with field names as keys."
+    )
+
+    log.info("LLM markdown detail extraction: extracting fields (markdown_size: %d chars)", len(markdown))
+    try:
+        result = await chat_completion_json(
+            [
+                {"role": "system", "content": "You are a precise data extraction assistant. Extract structured data from the provided content."},
+                {"role": "user", "content": f"{prompt}\n\n--- CONTENT ---\n{markdown}"},
+            ],
+            temperature=0.1,
+        )
+    except Exception as exc:
+        log.warning("LLM markdown detail extraction failed: %s", exc)
+        return {}
+
+    if not isinstance(result, dict):
+        return {}
+
+    detail: dict[str, str] = {}
+    for k, v in result.items():
+        if v is not None:
+            detail[k] = str(v) if not isinstance(v, str) else v
+
+    log.info("LLM markdown detail extraction: extracted %d fields", len(detail))
+    return detail
+
+
 # ---------------------------------------------------------------------------
 # SmartScraperMultiGraph — scrape multiple URLs in one shot
 # ---------------------------------------------------------------------------

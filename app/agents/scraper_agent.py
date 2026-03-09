@@ -3,7 +3,8 @@
 Supports:
 - Static pages via httpx (or Scrapy when enabled)
 - JS-rendered pages via Playwright
-- FireCrawl Cloud API for page fetching and detail enrichment
+- Crawl4AI for local async crawling with markdown output
+- universal-scraper for AI-powered BS4 extraction with caching
 - Multiple pagination strategies (next button, page numbers, alphabet tabs,
   infinite scroll, load-more, and direct API endpoints)
 - Optional detail-page enrichment
@@ -97,20 +98,43 @@ class ScraperAgent:
 
         enrich_result: EnrichResult | None = None
 
-        # FireCrawl path — use when explicitly selected or when enabled for fetching
-        _firecrawl_compatible = plan.pagination in (
+        # Crawl4AI path — use when explicitly selected or when enabled for fetching
+        _crawl4ai_compatible = plan.pagination in (
             PaginationStrategy.NONE,
             PaginationStrategy.PAGE_NUMBERS,
+            PaginationStrategy.NEXT_BUTTON,
         )
-        _use_firecrawl = (
-            (extraction_method == ExtractionMethod.FIRECRAWL and _firecrawl_compatible)
-            or (settings.use_firecrawl and settings.use_firecrawl_for_fetching and _firecrawl_compatible)
+        _use_crawl4ai = (
+            (extraction_method == ExtractionMethod.CRAWL4AI and _crawl4ai_compatible)
+            or (settings.use_crawl4ai and settings.use_crawl4ai_for_fetching and _crawl4ai_compatible)
         )
-        if _use_firecrawl:
-            pages, enrich_result = await self._scrape_firecrawl(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
-        elif extraction_method == ExtractionMethod.FIRECRAWL and not _firecrawl_compatible:
+        if _use_crawl4ai:
+            pages, enrich_result = await self._scrape_crawl4ai(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
+        elif extraction_method == ExtractionMethod.CRAWL4AI and not _crawl4ai_compatible:
             log.warning(
-                "FireCrawl selected but pagination '%s' is not compatible — "
+                "Crawl4AI selected but pagination '%s' is not compatible — "
+                "falling back to %s path",
+                plan.pagination.value,
+                "JS" if plan.requires_javascript else "static",
+            )
+            if plan.requires_javascript:
+                pages, enrich_result = await self._scrape_js(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
+            else:
+                pages, enrich_result = await self._scrape_static(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
+
+        # universal-scraper path — use when explicitly selected or when enabled
+        elif plan.pagination in (
+            PaginationStrategy.NONE,
+            PaginationStrategy.PAGE_NUMBERS,
+            PaginationStrategy.NEXT_BUTTON,
+        ) and (
+            (extraction_method == ExtractionMethod.UNIVERSAL_SCRAPER)
+            or (settings.use_universal_scraper and settings.use_universal_scraper_for_extraction)
+        ):
+            pages, enrich_result = await self._scrape_universal_scraper(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
+        elif extraction_method == ExtractionMethod.UNIVERSAL_SCRAPER and plan.pagination not in (PaginationStrategy.NONE, PaginationStrategy.PAGE_NUMBERS, PaginationStrategy.NEXT_BUTTON):
+            log.warning(
+                "universal-scraper selected but pagination '%s' is not compatible — "
                 "falling back to %s path",
                 plan.pagination.value,
                 "JS" if plan.requires_javascript else "static",
@@ -213,12 +237,12 @@ class ScraperAgent:
 
         return pages
 
-    async def scrape_preview_dual(self, plan: ScrapingPlan) -> tuple[list[PageData], list[PageData], list[PageData]]:
-        """Fetch the *landing page only* and return up to three previews.
+    async def scrape_preview_dual(self, plan: ScrapingPlan) -> tuple[list[PageData], list[PageData], list[PageData], list[PageData]]:
+        """Fetch the *landing page only* and return up to four previews.
 
-        Returns (css_pages, smart_pages, firecrawl_pages).  CSS returns
-        up to 5 items for better validation; smart/firecrawl return 1.
-        firecrawl_pages is populated only when FireCrawl extraction is enabled.
+        Returns (css_pages, smart_pages, crawl4ai_pages, us_pages).
+        CSS returns up to 5 items for better validation; others return 1.
+        crawl4ai_pages / us_pages are populated only when enabled.
         This is intentionally lightweight — no pagination, no tab clicking,
         no scrolling — just the first page load.
         """
@@ -233,7 +257,7 @@ class ScraperAgent:
             html = await fetch_page(plan.url)
 
         if not html:
-            return [], [], []
+            return [], [], [], []
 
         # If CSS found 0 items and we used httpx, retry with Playwright
         preview_html = self._slice_html_for_preview(html, plan.target.item_container_selector)
@@ -265,62 +289,70 @@ class ScraperAgent:
                 self._backfill_detail_links(preview_html, smart_items, plan.target)
             smart_items = smart_items[:1]
 
-        # ── Run FireCrawl extraction if enabled ─────────────────────────
-        # Triggered when either extraction (agent()) or fetching (/scrape) is on,
-        # so the user can compare FireCrawl results in the preview and choose it.
-        firecrawl_items: list[dict[str, str | None]] = []
-        _fc_preview_enabled = settings.use_firecrawl and (
-            settings.use_firecrawl_for_extraction or settings.use_firecrawl_for_fetching
+        # ── Run Crawl4AI extraction if enabled ──────────────────────────
+        crawl4ai_items: list[dict[str, str | None]] = []
+        _c4_preview_enabled = settings.use_crawl4ai and (
+            settings.use_crawl4ai_for_extraction or settings.use_crawl4ai_for_fetching
         )
-        if _fc_preview_enabled:
+        if _c4_preview_enabled:
             t0 = _time.monotonic()
             fields = list(plan.target.field_selectors.keys())
+            if plan.target.detail_link_selector and "detail_link" not in fields:
+                fields.append("detail_link")
 
-            if settings.use_firecrawl_for_extraction:
-                # Use FireCrawl agent() for AI-powered extraction
-                from app.utils.firecrawl import firecrawl_extract
+            if settings.use_crawl4ai_for_extraction:
+                # Use Crawl4AI's own LLM extraction
+                from app.utils.crawl4ai import crawl4ai_extract
 
-                log.info("FireCrawl extract preview starting for %s", plan.url)
-                prompt = (
-                    f"Extract seller/company records from this page. "
-                    f"Fields to extract: {', '.join(fields)}. "
-                    f"Return at most 1 record."
-                )
-                fc_data = await firecrawl_extract([plan.url], prompt=prompt)
+                log.info("Crawl4AI extract preview starting for %s", plan.url)
+                c4_data = await crawl4ai_extract(plan.url, fields=fields)
+                if c4_data:
+                    crawl4ai_items = c4_data[:1]
             else:
-                # Use FireCrawl /scrape to fetch, then extract with CSS
-                from app.utils.firecrawl import firecrawl_scrape
+                # Use Crawl4AI to fetch markdown, then extract with LLM
+                from app.utils.crawl4ai import crawl4ai_fetch
+                from app.utils.smart_scraper import smart_extract_items_from_markdown
 
-                log.info("FireCrawl fetch preview starting for %s", plan.url)
-                fc_doc = await firecrawl_scrape(plan.url, formats=["html"])
-                fc_html = (fc_doc.get("html") or fc_doc.get("raw_html") or "") if fc_doc else ""
-                if fc_html:
-                    fc_items_raw = self._extract_items(fc_html, plan.target, plan.detail_api_plan)[:1]
-                    # Wrap in the same format as firecrawl_extract output
-                    fc_data = fc_items_raw if fc_items_raw else None
-                else:
-                    fc_data = None
-            if fc_data:
-                # Normalize: fc_data might be a dict with a records list or a single record
-                if isinstance(fc_data, list):
-                    firecrawl_items = fc_data[:1]
-                elif isinstance(fc_data, dict):
-                    records = fc_data.get("records") or fc_data.get("items") or fc_data.get("data") or []
-                    if isinstance(records, list):
-                        firecrawl_items = records[:1]
-                    else:
-                        firecrawl_items = [fc_data]
-            log.info("FireCrawl extract preview finished in %.1fs (%d items)", _time.monotonic() - t0, len(firecrawl_items))
+                log.info("Crawl4AI fetch preview starting for %s", plan.url)
+                c4_doc = await crawl4ai_fetch(plan.url)
+                if c4_doc and c4_doc.get("markdown"):
+                    crawl4ai_items = await smart_extract_items_from_markdown(
+                        c4_doc["markdown"], fields, max_items=1,
+                    )
+                    if crawl4ai_items and plan.target.detail_link_selector:
+                        c4_html = c4_doc.get("html", "")
+                        if c4_html:
+                            self._backfill_detail_links(c4_html, crawl4ai_items, plan.target)
+                    crawl4ai_items = crawl4ai_items[:1]
+            log.info("Crawl4AI preview finished in %.1fs (%d items)", _time.monotonic() - t0, len(crawl4ai_items))
+
+        # ── Run universal-scraper extraction if enabled ──────────────────
+        us_items: list[dict[str, str | None]] = []
+        _us_preview_enabled = settings.use_universal_scraper and settings.use_universal_scraper_for_extraction
+        if _us_preview_enabled:
+            t0 = _time.monotonic()
+            fields = list(plan.target.field_selectors.keys())
+            if plan.target.detail_link_selector and "detail_link" not in fields:
+                fields.append("detail_link")
+
+            from app.utils.universal_scraper import universal_scraper_extract
+
+            log.info("universal-scraper preview starting for %s", plan.url)
+            us_data = await universal_scraper_extract(plan.url, fields=fields)
+            if us_data:
+                us_items = us_data[:1]
+            log.info("universal-scraper preview finished in %.1fs (%d items)", _time.monotonic() - t0, len(us_items))
 
         log.info(
-            "Preview — CSS: %d items, Smart: %d items, FireCrawl: %d items",
-            len(css_items), len(smart_items), len(firecrawl_items),
+            "Preview — CSS: %d items, Smart: %d items, Crawl4AI: %d items, UniversalScraper: %d items",
+            len(css_items), len(smart_items), len(crawl4ai_items), len(us_items),
         )
 
         sd = extract_all_structured_data(html)
         css_pages = [PageData(url=plan.url, items=css_items, structured_data=sd)] if css_items else []
         smart_pages = [PageData(url=plan.url, items=smart_items, structured_data=sd)] if smart_items else []
-        firecrawl_pages = [PageData(url=plan.url, items=firecrawl_items, structured_data=sd)] if firecrawl_items else []
+        crawl4ai_pages = [PageData(url=plan.url, items=crawl4ai_items, structured_data=sd)] if crawl4ai_items else []
+        us_pages = [PageData(url=plan.url, items=us_items, structured_data=sd)] if us_items else []
 
         # Enrich all with detail pages (1 item each)
         if css_pages and css_pages[0].items:
@@ -329,11 +361,14 @@ class ScraperAgent:
         if smart_pages and smart_pages[0].items:
             smart_pages = (await self._enrich_detail_pages(smart_pages, plan, max_details=1)).pages
             smart_pages = await self._enrich_detail_api(smart_pages, plan, max_details=1)
-        if firecrawl_pages and firecrawl_pages[0].items:
-            firecrawl_pages = (await self._enrich_detail_pages(firecrawl_pages, plan, max_details=1)).pages
-            firecrawl_pages = await self._enrich_detail_api(firecrawl_pages, plan, max_details=1)
+        if crawl4ai_pages and crawl4ai_pages[0].items:
+            crawl4ai_pages = (await self._enrich_detail_pages(crawl4ai_pages, plan, max_details=1)).pages
+            crawl4ai_pages = await self._enrich_detail_api(crawl4ai_pages, plan, max_details=1)
+        if us_pages and us_pages[0].items:
+            us_pages = (await self._enrich_detail_pages(us_pages, plan, max_details=1)).pages
+            us_pages = await self._enrich_detail_api(us_pages, plan, max_details=1)
 
-        return css_pages, smart_pages, firecrawl_pages
+        return css_pages, smart_pages, crawl4ai_pages, us_pages
 
     async def scrape_detail_urls_only(
         self,
@@ -448,36 +483,36 @@ class ScraperAgent:
         return pages, enrich_result
 
     # ------------------------------------------------------------------
-    # FireCrawl path
+    # universal-scraper path
     # ------------------------------------------------------------------
-    async def _scrape_firecrawl(
+    async def _scrape_universal_scraper(
         self, plan: ScrapingPlan, *, max_items: int | None = None,
         extraction_method: ExtractionMethod | None = None,
         progress_callback: Callable[[dict], None] | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> tuple[list[PageData], EnrichResult | None]:
-        """Scrape pages using FireCrawl /scrape for page fetching.
+        """Scrape pages using universal-scraper for AI-powered extraction.
 
-        Compatible with pagination strategies that have pre-computed URLs
-        (none, page_numbers).  Fetches each URL via FireCrawl, then runs
-        the standard extraction pipeline on the returned HTML.
-        Falls back to static/JS path if FireCrawl fails.
+        universal-scraper handles its own fetching (via Selenium) and
+        extraction (via AI-generated BS4 code).  Falls back to the
+        JS/static path if universal-scraper fails.
         """
-        from app.utils.firecrawl import firecrawl_scrape_batch
+        from app.utils.universal_scraper import universal_scraper_extract_batch
 
         urls = self._resolve_page_urls(plan)
-        log.info("FireCrawl scrape: %d page URL(s)", len(urls))
+        log.info("universal-scraper scrape: %d page URL(s)", len(urls))
 
-        # Fetch all pages via FireCrawl
-        fc_results = await firecrawl_scrape_batch(
-            urls, formats=["html", "markdown"],
-        )
+        fields = list(plan.target.field_selectors.keys())
+        if plan.target.detail_link_selector and "detail_link" not in fields:
+            fields.append("detail_link")
 
-        # Check if FireCrawl returned any results
-        successful = {u: doc for u, doc in fc_results.items() if doc is not None}
+        us_results = await universal_scraper_extract_batch(urls, fields=fields)
+
+        # Check if universal-scraper returned any results
+        successful = {u: items for u, items in us_results.items() if items}
         if not successful:
             log.warning(
-                "FireCrawl returned no results for %d URLs — falling back to %s path",
+                "universal-scraper returned no results for %d URLs — falling back to %s path",
                 len(urls),
                 "JS" if plan.requires_javascript else "static",
             )
@@ -495,21 +530,116 @@ class ScraperAgent:
                 cancel_event=cancel_event,
             )
 
-        # Fall back to existing methods for URLs that FireCrawl missed
+        pages: list[PageData] = []
+        total_items = 0
+        pages_processed = 0
+        for url in urls:
+            if cancel_event and cancel_event.is_set():
+                log.info("universal-scraper cancelled before processing remaining pages")
+                break
+            if max_items is not None and total_items >= max_items:
+                break
+            items_raw = successful.get(url)
+            if not items_raw:
+                pages_processed += 1
+                self._emit_page_progress(
+                    progress_callback, method=extraction_method,
+                    page_url=url, page_items=0,
+                    pages_processed=pages_processed, total_items=total_items,
+                )
+                continue
+
+            # Normalize to list of dicts with string values
+            items: list[dict[str, str | None]] = []
+            for raw in items_raw:
+                item = {k: str(v) if v is not None else None for k, v in raw.items()}
+                items.append(item)
+
+            if max_items is not None:
+                items = items[: max_items - total_items]
+            total_items += len(items)
+            pages_processed += 1
+            self._emit_page_progress(
+                progress_callback, method=extraction_method,
+                page_url=url, page_items=len(items),
+                pages_processed=pages_processed, total_items=total_items,
+            )
+            pages.append(PageData(url=url, items=items))
+
+        log.info("universal-scraper scrape: extracted %d items from %d page(s)", total_items, len(pages))
+
+        # Detail page enrichment
+        enrich_result = await self._enrich_detail_pages(
+            pages, plan, max_details=max_items,
+            progress_callback=progress_callback, cancel_event=cancel_event,
+        )
+        pages = enrich_result.pages
+        pages = await self._enrich_detail_api(pages, plan, max_details=max_items)
+        return pages, enrich_result
+
+    # ------------------------------------------------------------------
+    # Crawl4AI path
+    # ------------------------------------------------------------------
+    async def _scrape_crawl4ai(
+        self, plan: ScrapingPlan, *, max_items: int | None = None,
+        extraction_method: ExtractionMethod | None = None,
+        progress_callback: Callable[[dict], None] | None = None,
+        cancel_event: asyncio.Event | None = None,
+    ) -> tuple[list[PageData], EnrichResult | None]:
+        """Scrape pages using Crawl4AI for fetching (markdown + HTML).
+
+        Compatible with pagination strategies that have pre-computed URLs
+        (none, page_numbers, next_button).  Fetches each URL via Crawl4AI,
+        then extracts items using either:
+        - Crawl4AI's own LLM extraction (when extraction_method == CRAWL4AI)
+        - Markdown-enhanced SmartScraper (when markdown is available)
+        - CSS selectors on the HTML fallback
+
+        Falls back to JS/static path if Crawl4AI fails.
+        """
+        from app.utils.crawl4ai import crawl4ai_fetch_batch
+
+        urls = self._resolve_page_urls(plan)
+        log.info("Crawl4AI scrape: %d page URL(s)", len(urls))
+
+        c4_results = await crawl4ai_fetch_batch(urls)
+
+        successful = {u: doc for u, doc in c4_results.items() if doc is not None}
+        if not successful:
+            log.warning(
+                "Crawl4AI returned no results for %d URLs — falling back to %s path",
+                len(urls),
+                "JS" if plan.requires_javascript else "static",
+            )
+            if plan.requires_javascript:
+                return await self._scrape_js(
+                    plan, max_items=max_items,
+                    extraction_method=extraction_method,
+                    progress_callback=progress_callback,
+                    cancel_event=cancel_event,
+                )
+            return await self._scrape_static(
+                plan, max_items=max_items,
+                extraction_method=extraction_method,
+                progress_callback=progress_callback,
+                cancel_event=cancel_event,
+            )
+
+        # Fall back to httpx for URLs that Crawl4AI missed
         failed_urls = [u for u in urls if u not in successful]
         if failed_urls:
-            log.info("FireCrawl missed %d URL(s), fetching via fallback", len(failed_urls))
+            log.info("Crawl4AI missed %d URL(s), fetching via fallback", len(failed_urls))
             fallback_htmls = await fetch_pages(failed_urls)
             for u, html in fallback_htmls.items():
                 if html:
-                    successful[u] = {"html": html}
+                    successful[u] = {"html": html, "markdown": ""}
 
         pages: list[PageData] = []
         total_items = 0
         pages_processed = 0
         for url in urls:
             if cancel_event and cancel_event.is_set():
-                log.info("FireCrawl scraping cancelled before processing remaining pages")
+                log.info("Crawl4AI scraping cancelled before processing remaining pages")
                 break
             if max_items is not None and total_items >= max_items:
                 break
@@ -517,70 +647,50 @@ class ScraperAgent:
             if not doc:
                 pages_processed += 1
                 self._emit_page_progress(
-                    progress_callback,
-                    method=extraction_method,
-                    page_url=url,
-                    page_items=0,
-                    pages_processed=pages_processed,
-                    total_items=total_items,
+                    progress_callback, method=extraction_method,
+                    page_url=url, page_items=0,
+                    pages_processed=pages_processed, total_items=total_items,
                 )
                 continue
-            # Use HTML for item extraction (CSS selectors need HTML, not markdown)
-            html = doc.get("html") or doc.get("raw_html") or ""
-            if not html:
-                pages_processed += 1
-                self._emit_page_progress(
-                    progress_callback,
-                    method=extraction_method,
-                    page_url=url,
-                    page_items=0,
-                    pages_processed=pages_processed,
-                    total_items=total_items,
+
+            html = doc.get("html", "")
+            markdown = doc.get("markdown", "")
+
+            # Choose extraction approach based on method
+            if extraction_method == ExtractionMethod.CRAWL4AI and markdown:
+                # Use markdown-enhanced LLM extraction
+                from app.utils.smart_scraper import smart_extract_items_from_markdown
+
+                fields = list(plan.target.field_selectors.keys())
+                if plan.target.detail_link_selector and "detail_link" not in fields:
+                    fields.append("detail_link")
+                items = await smart_extract_items_from_markdown(markdown, fields)
+                if items and plan.target.detail_link_selector and html:
+                    self._backfill_detail_links(html, items, plan.target)
+            elif html:
+                # Use standard extraction with fallback on the HTML
+                items = await self._extract_items_with_fallback(
+                    html, plan.target, plan.detail_api_plan,
+                    extraction_method=extraction_method,
                 )
-                continue
-            items = await self._extract_items_with_fallback(
-                html, plan.target, plan.detail_api_plan,
-                extraction_method=extraction_method,
-            )
+            else:
+                items = []
+
             if max_items is not None:
                 items = items[: max_items - total_items]
             total_items += len(items)
             pages_processed += 1
             self._emit_page_progress(
-                progress_callback,
-                method=extraction_method,
-                page_url=url,
-                page_items=len(items),
-                pages_processed=pages_processed,
-                total_items=total_items,
+                progress_callback, method=extraction_method,
+                page_url=url, page_items=len(items),
+                pages_processed=pages_processed, total_items=total_items,
             )
             pages.append(PageData(
                 url=url, items=items,
-                structured_data=extract_all_structured_data(html),
+                structured_data=extract_all_structured_data(html) if html else {},
             ))
 
-        log.info("FireCrawl scrape: extracted %d items from %d page(s)", total_items, len(pages))
-
-        # If pagination is PAGE_NUMBERS but we only had 1 pre-resolved URL,
-        # the site likely has more pages that weren't discovered.  Fall back
-        # to the JS path which has robust pagination (clicking next-page
-        # buttons, discovering new pages dynamically).
-        if (
-            plan.pagination == PaginationStrategy.PAGE_NUMBERS
-            and len(urls) <= 1
-            and (max_items is None or total_items < max_items)
-        ):
-            log.info(
-                "FireCrawl got only %d pre-resolved URL(s) for PAGE_NUMBERS "
-                "pagination — falling back to JS path for full pagination",
-                len(urls),
-            )
-            return await self._scrape_js(
-                plan, max_items=max_items,
-                extraction_method=extraction_method,
-                progress_callback=progress_callback,
-                cancel_event=cancel_event,
-            )
+        log.info("Crawl4AI scrape: extracted %d items from %d page(s)", total_items, len(pages))
 
         # Detail page enrichment
         enrich_result = await self._enrich_detail_pages(
@@ -1096,61 +1206,7 @@ class ScraperAgent:
 
         # Fetch detail pages in batches (check cancel_event between batches)
         detail_htmls: dict[str, str] = {}
-        if settings.use_firecrawl and settings.use_firecrawl_for_fetching:
-            # FireCrawl path — batch fetch with built-in JS rendering and anti-bot
-            from app.utils.firecrawl import firecrawl_scrape_batch
-
-            log.info("Using FireCrawl for detail page enrichment (%d URLs)", total_detail)
-            for batch_start in range(0, len(unique_urls), _DETAIL_BATCH_SIZE):
-                if cancel_event and cancel_event.is_set():
-                    remaining_urls = unique_urls[batch_start:]
-                    log.warning(
-                        "Detail enrichment cancelled after %d/%d pages (timeout). %d remaining.",
-                        len(fetched_urls), total_detail, len(remaining_urls),
-                    )
-                    break
-
-                batch = unique_urls[batch_start:batch_start + _DETAIL_BATCH_SIZE]
-                if progress_callback:
-                    progress_callback({
-                        "stage": "enriching_details",
-                        "detail_current": batch_start,
-                        "detail_total": total_detail,
-                        "detail_url": f"(FireCrawl batch {batch_start // _DETAIL_BATCH_SIZE + 1})",
-                    })
-                fc_batch = await firecrawl_scrape_batch(batch, formats=["html"])
-                for url, doc in fc_batch.items():
-                    if doc and (doc.get("html") or doc.get("raw_html")):
-                        html = doc.get("html") or doc.get("raw_html") or ""
-                        detail_htmls[url] = html
-                        fetched_urls.append(url)
-
-                # Fall back to existing methods for URLs that FireCrawl missed
-                missed = [u for u in batch if u not in detail_htmls]
-                if missed:
-                    log.info("FireCrawl missed %d detail URL(s), fetching via fallback", len(missed))
-                    if plan.requires_javascript:
-                        async with get_browser() as browser:
-                            for url in missed:
-                                try:
-                                    html = await asyncio.wait_for(
-                                        fetch_page_js(browser, url),
-                                        timeout=DETAIL_PAGE_TIMEOUT_S,
-                                    )
-                                    if html:
-                                        detail_htmls[url] = html
-                                        fetched_urls.append(url)
-                                except Exception as exc:
-                                    log.warning("Fallback fetch failed for %s: %s", url, exc)
-                    else:
-                        fallback_htmls = await fetch_pages(missed)
-                        for url, html in fallback_htmls.items():
-                            if html:
-                                detail_htmls[url] = html
-                                fetched_urls.append(url)
-
-            log.info("Detail enrichment complete (FireCrawl): fetched %d/%d pages", len(detail_htmls), total_detail)
-        elif plan.requires_javascript:
+        if plan.requires_javascript:
             concurrency = min(settings.max_concurrent_requests, 3)
             sem = asyncio.Semaphore(concurrency)
 
@@ -1942,6 +1998,45 @@ class ScraperAgent:
                     log.info("SmartScraperGraph extraction: %d items", len(smart_items))
                     return smart_items
                 log.warning("SmartScraperGraph returned 0 items — falling back to CSS")
+            return self._extract_items(html, target, detail_api_plan)
+
+        if extraction_method == ExtractionMethod.CRAWL4AI:
+            # When called from _extract_items_with_fallback with HTML only
+            # (i.e. not from _scrape_crawl4ai which handles markdown directly),
+            # fall back to SmartScraper on the HTML, then CSS.
+            if settings.use_smart_scraper_primary and len(html) >= 500:
+                from app.utils.smart_scraper import smart_extract_items
+
+                fields = list(target.field_selectors.keys())
+                if target.detail_link_selector and "detail_link" not in fields:
+                    fields.append("detail_link")
+                smart_items = await self._smart_extract_chunked(
+                    html, fields, target.item_container_selector,
+                )
+                if smart_items:
+                    if target.detail_link_selector:
+                        self._backfill_detail_links(html, smart_items, target)
+                    log.info("Crawl4AI fallback (SmartScraper on HTML): %d items", len(smart_items))
+                    return smart_items
+            return self._extract_items(html, target, detail_api_plan)
+
+        if extraction_method == ExtractionMethod.UNIVERSAL_SCRAPER:
+            # universal-scraper handles its own fetching; when called here
+            # with pre-fetched HTML, fall back to SmartScraper then CSS.
+            if settings.use_smart_scraper_primary and len(html) >= 500:
+                from app.utils.smart_scraper import smart_extract_items
+
+                fields = list(target.field_selectors.keys())
+                if target.detail_link_selector and "detail_link" not in fields:
+                    fields.append("detail_link")
+                smart_items = await self._smart_extract_chunked(
+                    html, fields, target.item_container_selector,
+                )
+                if smart_items:
+                    if target.detail_link_selector:
+                        self._backfill_detail_links(html, smart_items, target)
+                    log.info("universal-scraper fallback (SmartScraper on HTML): %d items", len(smart_items))
+                    return smart_items
             return self._extract_items(html, target, detail_api_plan)
 
         # None / auto — original fallback logic

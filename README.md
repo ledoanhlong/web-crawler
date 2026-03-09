@@ -1,12 +1,13 @@
 # Web Crawler AI Agent
 
-A multi-agent web crawler for extracting seller and company data from marketplaces, trade fairs, and directories. Powered by Azure OpenAI (GPT), Playwright, BeautifulSoup, ScrapeGraphAI, FireCrawl, and optionally Scrapy.
+A multi-agent web crawler for extracting seller and company data from marketplaces, trade fairs, and directories. Powered by Azure OpenAI (GPT), Playwright, BeautifulSoup, ScrapeGraphAI, Crawl4AI, universal-scraper, and optionally Scrapy.
 
 ## Features
 
 - **AI-Powered Planning** — LLM analyses page structure to auto-generate CSS selectors and scraping plans
-- **Triple Extraction** — Compares CSS selector extraction, ScrapeGraphAI (AI), and FireCrawl extraction side-by-side
-- **FireCrawl Integration** — Uses FireCrawl Cloud API for page fetching (anti-bot, JS rendering), URL discovery (`/map`), and LLM-powered structured extraction (`agent()`)
+- **Multi-Method Extraction** — Compares CSS selector extraction, ScrapeGraphAI (AI), Crawl4AI (markdown), and universal-scraper (AI/BS4) side-by-side
+- **Crawl4AI Integration** — Local async crawler with clean markdown output for reduced LLM token usage
+- **universal-scraper Integration** — AI-powered BeautifulSoup code generation with intelligent caching for ~90% cost savings on similar pages
 - **Detail Page Enrichment** — Automatically follows detail links or intercepts XHR/API calls for richer data
 - **Multiple Pagination Strategies** — Supports page numbers, next button, infinite scroll, load-more, alphabet tabs, and direct API endpoints
 - **Template System** — Pre-configured plans for known sites (Koelnmesse, WordPress exhibitor lists, etc.)
@@ -27,9 +28,9 @@ RouterAgent → PlannerAgent → ScraperAgent → ParserAgent → OutputAgent
 | Agent | Role |
 |-------|------|
 | **RouterAgent** | Analyses URL(s) and prompt, selects the best strategy (full pipeline, SmartScraper, ScriptCreator) |
-| **PlannerAgent** | Fetches the target page, sends simplified HTML to GPT, produces a `ScrapingPlan` with CSS selectors, pagination strategy, and detail page analysis. Optionally uses FireCrawl `/map` for URL discovery |
-| **ScraperAgent** | Executes the plan — fetches pages (FireCrawl, httpx, Playwright, or Scrapy), extracts items with CSS selectors, ScrapeGraphAI, or FireCrawl, follows detail pages, intercepts APIs |
-| **ParserAgent** | Normalizes raw scraped data into `SellerLead` records using GPT (field mapping, splitting, cleanup). Can use FireCrawl `agent()` for detail page extraction |
+| **PlannerAgent** | Fetches the target page, sends simplified HTML to GPT, produces a `ScrapingPlan` with CSS selectors, pagination strategy, and detail page analysis. Optionally uses Crawl4AI for markdown-based URL discovery |
+| **ScraperAgent** | Executes the plan — fetches pages (Crawl4AI, httpx, Playwright, or Scrapy), extracts items with CSS selectors, ScrapeGraphAI, or universal-scraper, follows detail pages, intercepts APIs |
+| **ParserAgent** | Normalizes raw scraped data into `SellerLead` records using GPT (field mapping, splitting, cleanup). Can use universal-scraper for detail page extraction |
 | **OutputAgent** | Runs a GPT quality pass (dedup, consistency), then writes JSON and CSV output files |
 
 ## Prerequisites
@@ -37,7 +38,6 @@ RouterAgent → PlannerAgent → ScraperAgent → ParserAgent → OutputAgent
 - **Python 3.11+**
 - **Azure OpenAI** deployment (endpoint, API key, deployment name)
 - **Playwright browsers** (installed via `playwright install chromium`)
-- **FireCrawl API key** (optional — for enhanced fetching, URL discovery, and extraction; get one at [firecrawl.dev](https://firecrawl.dev))
 
 ## Installation
 
@@ -88,13 +88,16 @@ RouterAgent → PlannerAgent → ScraperAgent → ParserAgent → OutputAgent
    USE_SMART_SCRAPER_PRIMARY=true    # Enable ScrapeGraphAI as primary extractor
    USE_SCRAPY=false                  # Use Scrapy instead of httpx for static pages
 
-   # FireCrawl Cloud API (optional — enables enhanced fetching and extraction)
-   FIRECRAWL_API_KEY=fc-your-key    # Get from https://firecrawl.dev
-   FIRECRAWL_API_URL=https://api.firecrawl.dev
-   USE_FIRECRAWL=false              # Master switch — must be true to enable any FireCrawl features
-   USE_FIRECRAWL_FOR_FETCHING=true  # Use /scrape for page fetching (anti-bot, JS rendering)
-   USE_FIRECRAWL_FOR_DISCOVERY=true # Use /map for URL discovery during planning
-   USE_FIRECRAWL_FOR_EXTRACTION=false # Use agent() for LLM-powered structured extraction
+   # Crawl4AI (local async crawler with markdown output)
+   USE_CRAWL4AI=false
+   USE_CRAWL4AI_FOR_FETCHING=true
+   USE_CRAWL4AI_FOR_EXTRACTION=false
+   CRAWL4AI_BROWSER_HEADLESS=true
+
+   # universal-scraper (AI-powered BS4 code generation + caching)
+   USE_UNIVERSAL_SCRAPER=false
+   USE_UNIVERSAL_SCRAPER_FOR_EXTRACTION=true
+   UNIVERSAL_SCRAPER_MODEL=azure/gpt-5.2
 
    # Reliability controls
    RELIABILITY_AUTO_SWITCH_ENABLED=true
@@ -180,7 +183,7 @@ PENDING → PLANNING → SCRAPING → PREVIEW → (user confirms) → SCRAPING �
 At the **PREVIEW** stage, the system pauses with a sample record for user validation. The user can:
 - **Confirm** to start the full crawl
 - **Provide feedback** (e.g. "I also need email and phone") to trigger re-planning
-- **Choose extraction method** (CSS selectors, AI extraction, or FireCrawl extraction)
+- **Choose extraction method** (CSS selectors, AI extraction, or universal-scraper extraction)
 - **Abort** to cancel the job
 
 If detail page enrichment times out, the job can finish as **PARTIAL** and later continue with:
@@ -233,7 +236,8 @@ app/
 ├── templates/                 # Pre-configured scraping plans
 └── utils/
     ├── browser.py             # Playwright helpers
-    ├── firecrawl.py           # FireCrawl Cloud API wrapper
+    ├── crawl4ai.py              # Crawl4AI async crawler wrapper
+    ├── universal_scraper.py     # universal-scraper AI/BS4 wrapper
     ├── html.py                # HTML simplification
     ├── http.py                # httpx client
     ├── llm.py                 # Azure OpenAI wrapper
@@ -342,7 +346,7 @@ Before enabling nightly runs, configure repository secrets:
 - `AZURE_OPENAI_API_KEY`
 - `AZURE_OPENAI_API_VERSION`
 - `AZURE_OPENAI_DEPLOYMENT`
-- `FIRECRAWL_API_KEY` (optional if FireCrawl features are enabled)
+- `UNIVERSAL_SCRAPER_MODEL` (optional — configures the LLM model used by universal-scraper)
 
 Optional reliability governance automation:
 

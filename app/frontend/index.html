@@ -794,7 +794,7 @@ function renderJobDetail(j){
 
   if(isPlanReview && j.plan){
     body += renderPlanReviewCard(j);
-  } else if(isPreview && (j.preview_record_css || j.preview_record_smart || j.preview_record_firecrawl)){
+  } else if(isPreview && (j.preview_record_css || j.preview_record_smart || j.preview_record_universal_scraper || j.preview_record_crawl4ai)){
     body += renderDualPreviewCard(j);
   } else if(isPreview && j.preview_record){
     body += renderPreviewCard(j);
@@ -1030,14 +1030,16 @@ function renderDualPreviewCard(j){
   const isTest = j.request.test_single;
   const cssRec = j.preview_record_css;
   const smartRec = j.preview_record_smart;
-  const fcRec = j.preview_record_firecrawl;
+  const usRec = j.preview_record_universal_scraper;
+  const c4Rec = j.preview_record_crawl4ai;
   const recMethod = j.preview_recommended_method;
 
   // Build list of available methods
   const methods = [];
   if(cssRec) methods.push({key:'css', label:'CSS Selectors', rec:cssRec});
   if(smartRec) methods.push({key:'smart_scraper', label:'AI (Smart)', rec:smartRec});
-  if(fcRec) methods.push({key:'firecrawl', label:'FireCrawl', rec:fcRec});
+  if(usRec) methods.push({key:'universal_scraper', label:'AI (Universal)', rec:usRec});
+  if(c4Rec) methods.push({key:'crawl4ai', label:'Crawl4AI', rec:c4Rec});
   const methodLabels = methods.map((_,i)=>'Method '+ String.fromCharCode(65+i));
 
   const methodCount = methods.length;

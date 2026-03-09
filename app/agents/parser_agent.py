@@ -276,45 +276,26 @@ class ParserAgent:
             return "\n".join(f"{k}: {v}" for k, v in detail.items() if v)
         return ""
 
-    @staticmethod
-    async def _extract_detail_fields_firecrawl(url: str, plan: ScrapingPlan) -> str:
-        """Extract fields from a detail page using FireCrawl agent() extraction.
-
-        Unlike the CSS and SmartScraper methods which operate on pre-fetched HTML,
-        this method takes a URL and lets FireCrawl handle both fetching and extraction.
-        """
-        from app.utils.firecrawl import firecrawl_extract
-
-        fields = list(plan.detail_page_fields.keys()) if plan.detail_page_fields else [
-            "name", "country", "city", "address", "postal_code",
-            "email", "phone", "website", "description",
-            "product_categories", "brands", "logo_url",
-            "store_url", "social_media",
-            "industry",
-        ]
-        prompt = (
-            f"Extract the following fields from this company/seller detail page: "
-            f"{', '.join(fields)}. "
-            f"Also extract any contact information, social media links, and business details."
-        )
-        result = await firecrawl_extract([url], prompt=prompt)
-        if result and isinstance(result, dict):
-            parts = []
-            for k, v in result.items():
-                if v and str(v).strip():
-                    parts.append(f"{k}: {v}")
-            return "\n".join(parts)
-        return ""
-
     async def _extract_detail_fields(self, html: str, plan: ScrapingPlan, *, url: str | None = None) -> str:
-        """Extract fields from detail page — FireCrawl / SmartScraperGraph / CSS."""
-        # FireCrawl extraction (requires URL, not just HTML)
-        if url and settings.use_firecrawl and settings.use_firecrawl_for_extraction:
-            fc_result = await self._extract_detail_fields_firecrawl(url, plan)
-            if fc_result:
-                log.info("FireCrawl extracted detail fields for %s", url)
-                return fc_result
-            log.warning("FireCrawl detail extraction empty — falling back to SmartScraper")
+        """Extract fields from detail page — universal-scraper / SmartScraperGraph / CSS."""
+        # universal-scraper extraction (requires URL, handles its own fetching)
+        if url and settings.use_universal_scraper and settings.use_universal_scraper_for_extraction:
+            from app.utils.universal_scraper import universal_scraper_extract_detail
+
+            fields = list(plan.detail_page_fields.keys()) if plan.detail_page_fields else [
+                "name", "country", "city", "address", "postal_code",
+                "email", "phone", "website", "description",
+                "product_categories", "brands", "logo_url",
+                "store_url", "social_media",
+                "industry",
+            ]
+            us_result = await universal_scraper_extract_detail(url, fields=fields)
+            if us_result:
+                result_str = "\n".join(f"{k}: {v}" for k, v in us_result.items() if v)
+                if result_str:
+                    log.info("universal-scraper extracted detail fields for %s", url)
+                    return result_str
+            log.warning("universal-scraper detail extraction empty — falling back to SmartScraper")
 
         # Primary: SmartScraperGraph
         if settings.use_smart_scraper_primary:
