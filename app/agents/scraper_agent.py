@@ -111,12 +111,14 @@ class ScraperAgent:
         if _use_crawl4ai:
             pages, enrich_result = await self._scrape_crawl4ai(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
         elif extraction_method == ExtractionMethod.CRAWL4AI and not _crawl4ai_compatible:
+            actual = "js" if plan.requires_javascript else "static"
             log.warning(
                 "Crawl4AI selected but pagination '%s' is not compatible — "
                 "falling back to %s path",
-                plan.pagination.value,
-                "JS" if plan.requires_javascript else "static",
+                plan.pagination.value, actual,
             )
+            if progress_callback:
+                progress_callback({"stage": "method_fallback", "requested_method": extraction_method.value, "actual_method": actual, "fallback_reason": f"pagination '{plan.pagination.value}' incompatible"})
             if plan.requires_javascript:
                 pages, enrich_result = await self._scrape_js(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
             else:
@@ -133,12 +135,14 @@ class ScraperAgent:
         ):
             pages, enrich_result = await self._scrape_universal_scraper(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
         elif extraction_method == ExtractionMethod.UNIVERSAL_SCRAPER and plan.pagination not in (PaginationStrategy.NONE, PaginationStrategy.PAGE_NUMBERS, PaginationStrategy.NEXT_BUTTON):
+            actual = "js" if plan.requires_javascript else "static"
             log.warning(
                 "universal-scraper selected but pagination '%s' is not compatible — "
                 "falling back to %s path",
-                plan.pagination.value,
-                "JS" if plan.requires_javascript else "static",
+                plan.pagination.value, actual,
             )
+            if progress_callback:
+                progress_callback({"stage": "method_fallback", "requested_method": extraction_method.value, "actual_method": actual, "fallback_reason": f"pagination '{plan.pagination.value}' incompatible"})
             if plan.requires_javascript:
                 pages, enrich_result = await self._scrape_js(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
             else:

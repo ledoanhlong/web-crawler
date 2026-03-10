@@ -206,7 +206,10 @@ async def smart_extract_items_from_markdown(
     """
     from app.utils.llm import chat_completion_json
 
-    if not markdown or len(markdown) < 100:
+    # Markdown is denser than HTML (no tags), so threshold is lower than
+    # HTML equivalent (500 chars).  200 chars ensures enough content for
+    # at least one meaningful listing entry.
+    if not markdown or len(markdown) < 200:
         return []
 
     fields_str = ", ".join(fields)
@@ -276,7 +279,9 @@ async def smart_extract_detail_from_markdown(
     """
     from app.utils.llm import chat_completion_json
 
-    if not markdown or len(markdown) < 50:
+    # Detail pages need less content than listings, but 50 chars is too
+    # sparse for meaningful field extraction.
+    if not markdown or len(markdown) < 100:
         return {}
 
     fields_str = ", ".join(fields)

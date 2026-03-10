@@ -7,13 +7,14 @@ fall back gracefully to the existing CSS / SmartScraper pipeline.
 
 Since universal-scraper is synchronous (uses Selenium internally), all
 calls are wrapped with ``asyncio.to_thread()`` to avoid blocking the
-event loop.
+event loop.  Each call creates its own ``UniversalScraper`` instance to
+avoid thread-safety issues with shared mutable state (``set_fields`` +
+``scrape_url`` must be atomic per request).
 """
 
 from __future__ import annotations
 
 import asyncio
-import threading
 from typing import Any
 
 from app.config import settings
@@ -21,27 +22,33 @@ from app.utils.logging import get_logger
 
 log = get_logger(__name__)
 
-_scraper: Any = None  # UniversalScraper instance (lazy)
-_scraper_lock = threading.Lock()
 
+def _new_scraper(model_name: str | None = None) -> Any:
+    """Create a fresh UniversalScraper instance.
 
-def _get_scraper(model_name: str | None = None) -> Any:
-    """Lazily initialise and return the universal-scraper instance."""
-    global _scraper
-    if _scraper is not None:
-        return _scraper
+    For Azure OpenAI models (model name starts with ``azure/``), litellm
+    reads credentials from ``AZURE_API_KEY``, ``AZURE_API_BASE``, and
+    ``AZURE_API_VERSION`` env vars.  We bridge them from the app's own
+    ``AZURE_OPENAI_*`` settings so users don't need to duplicate config.
+    """
+    import os
+    from universal_scraper import UniversalScraper  # import only when needed
 
-    with _scraper_lock:
-        # Double-check after acquiring lock
-        if _scraper is not None:
-            return _scraper
+    model = model_name or settings.universal_scraper_model
 
-        from universal_scraper import UniversalScraper  # import only when needed
+    # Bridge Azure env vars for litellm if not already set
+    if model.startswith("azure/"):
+        if not os.environ.get("AZURE_API_KEY"):
+            os.environ["AZURE_API_KEY"] = settings.azure_openai_api_key
+        if not os.environ.get("AZURE_API_BASE"):
+            os.environ["AZURE_API_BASE"] = settings.azure_openai_endpoint
+        if not os.environ.get("AZURE_API_VERSION"):
+            os.environ["AZURE_API_VERSION"] = settings.azure_openai_api_version
 
-        model = model_name or settings.universal_scraper_model
-        _scraper = UniversalScraper(model_name=model)
-        log.info("universal-scraper initialised (model=%s)", model)
-        return _scraper
+    return UniversalScraper(
+        model_name=model,
+        api_key=settings.azure_openai_api_key if model.startswith("azure/") else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +66,7 @@ async def universal_scraper_extract(
     Returns a list of extracted item dicts, or ``None`` on failure.
     """
     def _extract() -> Any:
-        scraper = _get_scraper(model_name)
+        scraper = _new_scraper(model_name)
         scraper.set_fields(fields)
         return scraper.scrape_url(url)
 
@@ -139,8 +146,10 @@ async def universal_scraper_extract_detail(
 ) -> dict[str, str]:
     """Extract fields from a single detail page using universal-scraper.
 
-    Returns a dict of field_name -> value, suitable for enrichment in
-    the parser pipeline.  Returns empty dict on failure.
+    Returns a dict of ``{field_name: value}`` suitable for enrichment in
+    the parser pipeline.  Returns an empty dict (``{}``) when extraction
+    fails or the page yields no usable data.  Callers should treat an
+    empty return value as a no-op enrichment.
     """
     items = await universal_scraper_extract(url, fields=fields)
     if not items:

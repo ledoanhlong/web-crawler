@@ -22,7 +22,22 @@ def test_build_method_attempt_order_without_preference_has_auto_fallback() -> No
     assert order[0] is None
     assert ExtractionMethod.CSS in order
     assert ExtractionMethod.SMART_SCRAPER in order
+    assert ExtractionMethod.CRAWL4AI in order
     assert ExtractionMethod.UNIVERSAL_SCRAPER in order
+
+
+def test_build_method_attempt_order_crawl4ai_preferred() -> None:
+    order = Orchestrator._build_method_attempt_order(ExtractionMethod.CRAWL4AI)
+    assert order[0] == ExtractionMethod.CRAWL4AI
+    assert order[-1] is None
+    assert len(order) == len(set(order))
+
+
+def test_build_method_attempt_order_universal_scraper_preferred() -> None:
+    order = Orchestrator._build_method_attempt_order(ExtractionMethod.UNIVERSAL_SCRAPER)
+    assert order[0] == ExtractionMethod.UNIVERSAL_SCRAPER
+    assert order[-1] is None
+    assert len(order) == len(set(order))
 
 
 def test_preview_quality_score_rewards_contact_completeness() -> None:

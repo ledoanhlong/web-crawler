@@ -119,7 +119,31 @@ def _sanitize_plan_data(plan_data: dict) -> dict:
                 continue
             parts = [p.strip() for p in raw.split(",") if p.strip()]
             valid_parts = [p for p in parts if not _NON_STANDARD_RE.search(p)]
-            target[sel_key] = ", ".join(valid_parts) if valid_parts else None
+            if valid_parts:
+                target[sel_key] = ", ".join(valid_parts)
+            elif sel_key == "item_container_selector":
+                # item_container_selector is required — keep the original
+                # (a bad selector that matches nothing is better than None
+                # which causes a Pydantic validation crash)
+                log.warning(
+                    "All parts of %s contain non-standard pseudo-classes; "
+                    "keeping original value: %s", sel_key, raw,
+                )
+            else:
+                target[sel_key] = None
+
+    # Ensure item_container_selector is never None — the LLM sometimes
+    # returns null for this required field.  Use a placeholder that will
+    # match 0 elements so _validate_selectors triggers its re-prompt loop.
+    target = plan_data.get("target")
+    if isinstance(target, dict):
+        ics = target.get("item_container_selector")
+        if not ics or not isinstance(ics, str) or not ics.strip():
+            target["item_container_selector"] = "#__placeholder_no_match__"
+            log.warning(
+                "LLM returned empty/null item_container_selector — "
+                "using placeholder to trigger selector re-prompt",
+            )
 
     return plan_data
 

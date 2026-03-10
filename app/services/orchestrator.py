@@ -651,6 +651,12 @@ class Orchestrator:
                 page_data_list = []
                 enrich_result = None
                 selected_method = job.extraction_method
+                if selected_method is None and job.preview_recommended_method is not None:
+                    selected_method = job.preview_recommended_method
+                    log.info(
+                        "[%s] No user method choice — using preview recommendation: %s",
+                        job.id, selected_method.value,
+                    )
                 attempts = self._build_method_attempt_order(selected_method)
 
                 for attempt_idx, method in enumerate(attempts, start=1):
@@ -667,6 +673,17 @@ class Orchestrator:
                         nonlocal zero_item_streak, attempted_pages, switch_reason
                         job.progress = info
                         job.updated_at = datetime.now(timezone.utc)
+
+                        if info.get("stage") == "method_fallback":
+                            job.diagnostics.counters["method_fallbacks"] = (
+                                job.diagnostics.counters.get("method_fallbacks", 0) + 1
+                            )
+                            log.info(
+                                "[%s] Method fallback: %s -> %s (reason: %s)",
+                                job.id, info.get("requested_method"),
+                                info.get("actual_method"), info.get("fallback_reason"),
+                            )
+                            return
 
                         if info.get("stage") != "scraping_pages":
                             return

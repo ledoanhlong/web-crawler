@@ -36,6 +36,7 @@ async def _get_crawler() -> Any:
         browser_cfg = BrowserConfig(
             headless=settings.crawl4ai_browser_headless,
             verbose=False,
+            extra_args=["--disable-quic"],  # avoid ERR_QUIC_PROTOCOL_ERROR
         )
         _crawler = AsyncWebCrawler(config=browser_cfg)
         await _crawler.start()
@@ -49,7 +50,6 @@ async def _get_crawler() -> Any:
 async def crawl4ai_fetch(
     url: str,
     *,
-    only_main_content: bool = True,
     wait_for: str | None = None,
 ) -> dict | None:
     """Fetch a single URL via Crawl4AI and return clean markdown + HTML.
@@ -61,7 +61,6 @@ async def crawl4ai_fetch(
         from crawl4ai import CrawlerRunConfig  # import only when needed
 
         run_cfg = CrawlerRunConfig(
-            only_main_content=only_main_content,
             wait_until="networkidle",
         )
         if wait_for:
@@ -95,8 +94,6 @@ async def crawl4ai_fetch(
 # ---------------------------------------------------------------------------
 async def crawl4ai_fetch_batch(
     urls: list[str],
-    *,
-    only_main_content: bool = True,
 ) -> dict[str, dict | None]:
     """Fetch multiple URLs concurrently via ``crawl4ai_fetch``.
 
@@ -107,7 +104,7 @@ async def crawl4ai_fetch_batch(
 
     async def _fetch_one(u: str) -> tuple[str, dict | None]:
         async with sem:
-            doc = await crawl4ai_fetch(u, only_main_content=only_main_content)
+            doc = await crawl4ai_fetch(u)
             return u, doc
 
     results = await asyncio.gather(*[_fetch_one(u) for u in urls], return_exceptions=True)
@@ -152,7 +149,6 @@ async def crawl4ai_extract(
         )
 
         run_cfg = CrawlerRunConfig(
-            only_main_content=True,
             extraction_strategy=extraction,
             wait_until="networkidle",
         )

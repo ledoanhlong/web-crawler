@@ -309,6 +309,16 @@ class TestExtractionMethod:
     def test_smart_scraper_value(self):
         assert ExtractionMethod.SMART_SCRAPER.value == "smart_scraper"
 
+    def test_crawl4ai_value(self):
+        assert ExtractionMethod.CRAWL4AI.value == "crawl4ai"
+
+    def test_universal_scraper_value(self):
+        assert ExtractionMethod.UNIVERSAL_SCRAPER.value == "universal_scraper"
+
+    def test_all_methods_have_unique_values(self):
+        values = [m.value for m in ExtractionMethod]
+        assert len(values) == len(set(values))
+
 
 class TestReliabilityDiagnostics:
     """Test reliability diagnostics models."""
