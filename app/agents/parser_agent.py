@@ -196,12 +196,8 @@ class ParserAgent:
             },
         ]
 
-        # Use higher max_tokens when items carry detail page data (more output needed)
-        has_detail = any("_detail_page_data" in item or "_detail_api_data" in item for item in enriched_items)
-        max_tokens = 32_000 if has_detail else 16_000
-
         try:
-            result = await chat_completion_json(messages, max_tokens=max_tokens)
+            result = await chat_completion_json(messages, max_tokens=32_000)
         except Exception as exc:
             log.error("LLM parse batch failed (%d items): %s", len(enriched_items), exc)
             # If batch has more than one item, try splitting it in half
@@ -263,14 +259,34 @@ class ParserAgent:
         """Extract fields from a detail page using LLM-based extraction."""
         from app.utils.smart_scraper import smart_extract_detail
 
-        # Use plan fields if available, otherwise use a broad generic set
-        fields = list(plan.detail_page_fields.keys()) if plan.detail_page_fields else [
+        _GENERIC_FIELDS = [
             "name", "country", "city", "address", "postal_code",
             "email", "phone", "website", "description",
             "product_categories", "brands", "logo_url",
             "store_url", "social_media",
             "industry",
         ]
+        _JUNK_KEYWORDS = {"cookie", "consent", "gdpr", "privacy", "tracking", "analytics"}
+
+        # Use plan fields if available, but fall back to generic list when
+        # the planner analysed the wrong page (e.g. a cookie-consent dialog)
+        # and produced irrelevant field names.
+        fields = None
+        if plan.detail_page_fields:
+            candidate = list(plan.detail_page_fields.keys())
+            junk_count = sum(
+                1 for f in candidate
+                if any(kw in f.lower() for kw in _JUNK_KEYWORDS)
+            )
+            if junk_count <= len(candidate) * 0.5:
+                fields = candidate
+            else:
+                log.warning(
+                    "detail_page_fields look like cookie/consent fields (%d/%d) — using generic fields",
+                    junk_count, len(candidate),
+                )
+        if not fields:
+            fields = _GENERIC_FIELDS
         detail = await smart_extract_detail(html, fields)
         if detail:
             return "\n".join(f"{k}: {v}" for k, v in detail.items() if v)

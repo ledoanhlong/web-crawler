@@ -6,7 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from playwright.async_api import Browser, Page, Route, async_playwright
 
@@ -284,8 +284,14 @@ async def fetch_page_js(
     *,
     wait_selector: str | None = None,
     wait_timeout_ms: int = 15_000,
-) -> str:
-    """Navigate to a URL in a new page, wait for content, and return the HTML."""
+    capture_inner_text: bool = False,
+) -> str | tuple[str, str]:
+    """Navigate to a URL in a new page, wait for content, and return the HTML.
+
+    When *capture_inner_text* is ``True``, also evaluates
+    ``document.body.innerText`` (which captures shadow-DOM content that
+    ``page.content()`` misses) and returns ``(html, inner_text)``.
+    """
     page: Page = await create_page(browser)
     try:
         log.info("Playwright GET %s", url)
@@ -308,7 +314,19 @@ async def fetch_page_js(
         else:
             # Give JS-rendered content a moment to settle
             await asyncio.sleep(3)
-        return await page.content()
+
+        html = await page.content()
+
+        if capture_inner_text:
+            try:
+                inner_text = await page.evaluate(
+                    "() => document.body ? document.body.innerText : ''"
+                )
+            except Exception:
+                inner_text = ""
+            return html, inner_text
+
+        return html
     finally:
         await page.close()
 
@@ -502,6 +520,179 @@ async def intercept_detail_api(
             best_url, best_score, len(best_body),
         )
         return best_url, best_body
+    finally:
+        await page.close()
+
+
+# ---------------------------------------------------------------------------
+# Listing API interception (captures XHR during page load)
+# ---------------------------------------------------------------------------
+
+# Common JSON keys that wrap a list of items
+_LIST_CONTAINER_KEYS = ("data", "results", "items", "records", "entries",
+                        "rows", "list", "objects", "content", "hits")
+
+# URL keywords that suggest a listing/directory endpoint
+_LISTING_URL_KEYWORDS = {
+    "list", "search", "directory", "catalog", "exhibitor",
+    "seller", "vendor", "company", "member", "partner",
+}
+
+
+def _find_items_list(body: Any) -> tuple[list[dict], str | None]:
+    """Find the list of item dicts in a JSON response.
+
+    Returns ``(items_list, json_path)`` or ``([], None)`` if not found.
+    """
+    if isinstance(body, list):
+        items = [x for x in body if isinstance(x, dict)]
+        return (items, None) if items else ([], None)
+
+    if isinstance(body, dict):
+        # Check known container keys (one level deep)
+        for key in _LIST_CONTAINER_KEYS:
+            val = body.get(key)
+            if isinstance(val, list) and val and isinstance(val[0], dict):
+                return val, key
+
+        # Check any key that holds a list of dicts
+        for key, val in body.items():
+            if isinstance(val, list) and len(val) >= 3 and isinstance(val[0], dict):
+                return val, key
+
+        # Check one level of nesting (e.g. body.data.results)
+        for outer_key, outer_val in body.items():
+            if isinstance(outer_val, dict):
+                for inner_key in _LIST_CONTAINER_KEYS:
+                    val = outer_val.get(inner_key)
+                    if isinstance(val, list) and val and isinstance(val[0], dict):
+                        return val, f"{outer_key}.{inner_key}"
+
+    return [], None
+
+
+def _score_listing_api_response(api_url: str, body: Any) -> tuple[int, list[dict], str | None]:
+    """Score a JSON response on how likely it is to be a listing API.
+
+    Returns ``(score, items_list, json_path)``.  Negative score = noise.
+    """
+    url_lower = api_url.lower()
+
+    # Penalize noise URLs heavily
+    for frag in _NOISE_URL_FRAGMENTS:
+        if frag in url_lower:
+            return -1000, [], None
+
+    items, json_path = _find_items_list(body)
+    if not items:
+        return -500, [], None  # no list found — probably not a listing API
+
+    # Score based on item content
+    sample = items[:5]
+    detail_hits = 0
+    for item in sample:
+        item_keys = {k.lower() for k in item.keys()}
+        if isinstance(item, dict):
+            for v in item.values():
+                if isinstance(v, dict):
+                    item_keys.update(kk.lower() for kk in v.keys())
+        detail_hits += sum(1 for k in item_keys if any(dk in k for dk in _DETAIL_DATA_KEYS))
+
+    # List length bonus
+    length_bonus = 0
+    if len(items) > 20:
+        length_bonus = 100
+    elif len(items) > 5:
+        length_bonus = 50
+
+    # URL keyword bonus
+    url_bonus = sum(15 for kw in _LISTING_URL_KEYWORDS if kw in url_lower)
+
+    score = detail_hits * 10 + length_bonus + url_bonus + len(items)
+    return score, items, json_path
+
+
+async def intercept_listing_api(
+    browser: Browser,
+    url: str,
+    *,
+    wait_selector: str | None = None,
+    expected_fields: list[str] | None = None,
+    timeout_ms: int = 20_000,
+) -> tuple[str | None, list[dict] | None, str | None]:
+    """Capture JSON listing API calls during page load.
+
+    Listens for all JSON network responses during navigation and scoring
+    each one to find the most likely listing API (one that returns an array
+    of items with seller/company-like keys).
+
+    Returns ``(api_url, items_list, json_path)`` or ``(None, None, None)``.
+    """
+    page = await create_page(browser)
+    captured: list[tuple[str, Any]] = []
+
+    async def _on_response(response):  # type: ignore[no-untyped-def]
+        content_type = response.headers.get("content-type", "")
+        if "json" not in content_type:
+            return
+        try:
+            body = await response.json()
+            captured.append((response.url, body))
+        except Exception:
+            pass
+
+    try:
+        page.on("response", _on_response)
+        await page.goto(url, wait_until="commit", timeout=120_000)
+
+        if wait_selector:
+            try:
+                await page.wait_for_selector(wait_selector, timeout=15_000)
+            except Exception:
+                pass
+        else:
+            await asyncio.sleep(3)
+
+        # Wait for network to settle — listing APIs may load after initial render
+        try:
+            await page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except Exception:
+            pass
+        await asyncio.sleep(2)  # extra buffer for late API calls
+
+        log.debug(
+            "Listing API interception: captured %d JSON responses from %s",
+            len(captured), url,
+        )
+
+        if not captured:
+            return None, None, None
+
+        # Score all captured responses
+        scored = [
+            (u, items, path, score)
+            for u, body in captured
+            for score, items, path in [_score_listing_api_response(u, body)]
+        ]
+        scored.sort(key=lambda x: x[3], reverse=True)
+
+        for u, _, _, s in scored[:5]:
+            log.debug("  Listing API candidate: score=%d url=%s", s, u[:120])
+
+        best_url, best_items, best_path, best_score = scored[0]
+
+        if best_score < 0:
+            log.info(
+                "No listing API found among %d responses (best score=%d)",
+                len(scored), best_score,
+            )
+            return None, None, None
+
+        log.info(
+            "Captured listing API: %s (score=%d, %d items, path=%s)",
+            best_url[:120], best_score, len(best_items), best_path,
+        )
+        return best_url, best_items, best_path
     finally:
         await page.close()
 

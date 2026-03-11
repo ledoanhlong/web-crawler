@@ -91,6 +91,24 @@ class DetailPagePlan(BaseModel):
     )
 
 
+class ListingApiPlan(BaseModel):
+    """Describes a discovered listing API that returns items as JSON."""
+
+    api_url: str = Field(description="The URL that returned the listing JSON.")
+    items_json_path: str | None = Field(
+        default=None,
+        description="Dot-path to the items array inside the response (e.g. 'data.results').",
+    )
+    sample_items: list[dict] | None = Field(
+        default=None,
+        description="First few items from the API response (for parser context).",
+    )
+    total_count: int | None = Field(
+        default=None,
+        description="Total number of items returned by the API.",
+    )
+
+
 class DetailApiPlan(BaseModel):
     """Describes how to fetch detail data from a discovered JSON API endpoint."""
 
@@ -180,6 +198,10 @@ class ScrapingPlan(BaseModel):
     detail_api_plan: DetailApiPlan | None = Field(
         default=None,
         description="API-based detail enrichment plan (when details are loaded via XHR, not page navigation).",
+    )
+    listing_api_plan: ListingApiPlan | None = Field(
+        default=None,
+        description="Discovered listing API that returns items as JSON (auto-detected via network interception).",
     )
     wait_selector: str | None = Field(
         default=None,
@@ -320,6 +342,7 @@ class ExtractionMethod(str, enum.Enum):
     SMART_SCRAPER = "smart_scraper"
     CRAWL4AI = "crawl4ai"
     UNIVERSAL_SCRAPER = "universal_scraper"
+    LISTING_API = "listing_api"
 
 
 class CrawlStatus(str, enum.Enum):
@@ -596,6 +619,10 @@ class CrawlJob(BaseModel):
     preview_record_universal_scraper: SellerLead | None = Field(
         default=None,
         description="Preview record extracted via universal-scraper (AI/BS4).",
+    )
+    preview_record_listing_api: SellerLead | None = Field(
+        default=None,
+        description="Preview record extracted via intercepted listing API (direct JSON).",
     )
     preview_recommendation: str | None = Field(
         default=None,

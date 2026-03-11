@@ -62,6 +62,9 @@ async def crawl4ai_fetch(
 
         run_cfg = CrawlerRunConfig(
             wait_until="networkidle",
+            remove_overlay_elements=True,
+            excluded_tags=["nav", "footer", "header", "noscript"],
+            excluded_selector="#CybotCookiebotDialog, .cookie-banner, [role='banner'], [role='navigation'], [role='contentinfo']",
         )
         if wait_for:
             run_cfg.wait_for = wait_for
@@ -151,6 +154,9 @@ async def crawl4ai_extract(
         run_cfg = CrawlerRunConfig(
             extraction_strategy=extraction,
             wait_until="networkidle",
+            remove_overlay_elements=True,
+            excluded_tags=["nav", "footer", "header", "noscript"],
+            excluded_selector="#CybotCookiebotDialog, .cookie-banner, [role='banner'], [role='navigation'], [role='contentinfo']",
         )
 
         crawler = await _get_crawler()

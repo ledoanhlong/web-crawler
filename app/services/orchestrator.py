@@ -406,7 +406,7 @@ class Orchestrator:
             # ---- Dual preview scrape ----
             self._set_status(job, CrawlStatus.SCRAPING, "preview_scrape")
             log.info("[%s] Dual preview scrape", job.id)
-            css_pages, smart_pages, crawl4ai_pages, us_pages = await self.scraper.scrape_preview_dual(plan)
+            css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages = await self.scraper.scrape_preview_dual(plan)
 
             # Parse CSS result
             if css_pages and css_pages[0].items:
@@ -439,6 +439,13 @@ class Orchestrator:
                     job.preview_record_universal_scraper = us_records[0]
                     log.info("[%s] universal-scraper preview: %s", job.id, us_records[0].name)
 
+            # Parse listing API result
+            if listing_api_pages and listing_api_pages[0].items:
+                la_records = await self.parser.parse(listing_api_pages, plan)
+                if la_records:
+                    job.preview_record_listing_api = la_records[0]
+                    log.info("[%s] Listing API preview: %s", job.id, la_records[0].name)
+
             # LLM comparison — include all methods that produced results
             candidates: dict[ExtractionMethod, object] = {}
             if job.preview_record_css:
@@ -449,6 +456,8 @@ class Orchestrator:
                 candidates[ExtractionMethod.CRAWL4AI] = job.preview_record_crawl4ai
             if job.preview_record_universal_scraper:
                 candidates[ExtractionMethod.UNIVERSAL_SCRAPER] = job.preview_record_universal_scraper
+            if job.preview_record_listing_api:
+                candidates[ExtractionMethod.LISTING_API] = job.preview_record_listing_api
 
             if len(candidates) >= 2:
                 recommended_method, best_score, margin = self._select_preview_method_deterministic(candidates)
@@ -552,6 +561,7 @@ class Orchestrator:
                     ExtractionMethod.SMART_SCRAPER: "SmartScraperGraph (AI)",
                     ExtractionMethod.UNIVERSAL_SCRAPER: "universal-scraper (AI/BS4)",
                     ExtractionMethod.CRAWL4AI: "Crawl4AI (AI/Markdown)",
+                    ExtractionMethod.LISTING_API: "Listing API (Direct JSON)",
                 }.get(method, method.value)
                 parts.append(f"**{label} extraction:**\n{data}")
 

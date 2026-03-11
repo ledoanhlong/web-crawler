@@ -423,7 +423,7 @@ const STAGE_ICONS = {
 };
 
 const TABLE_COLS = ['name','country','city','address','postal_code','website','store_url','email','phone','description','product_categories','brands','marketplace_name'];
-const PREVIEW_FIELDS = ['name','country','city','address','postal_code','website','store_url','email','phone','description','product_categories','brands','marketplace_name','logo_url','social_media'];
+const PREVIEW_FIELDS = ['name','country','city','address','postal_code','website','store_url','email','phone','description','product_categories','brands','marketplace_name','logo_url','social_media','raw_extra'];
 
 let jobs = {};
 let expandedJobId = null;
@@ -794,7 +794,7 @@ function renderJobDetail(j){
 
   if(isPlanReview && j.plan){
     body += renderPlanReviewCard(j);
-  } else if(isPreview && (j.preview_record_css || j.preview_record_smart || j.preview_record_universal_scraper || j.preview_record_crawl4ai)){
+  } else if(isPreview && (j.preview_record_css || j.preview_record_smart || j.preview_record_universal_scraper || j.preview_record_crawl4ai || j.preview_record_listing_api)){
     body += renderDualPreviewCard(j);
   } else if(isPreview && j.preview_record){
     body += renderPreviewCard(j);
@@ -1032,6 +1032,7 @@ function renderDualPreviewCard(j){
   const smartRec = j.preview_record_smart;
   const usRec = j.preview_record_universal_scraper;
   const c4Rec = j.preview_record_crawl4ai;
+  const laRec = j.preview_record_listing_api;
   const recMethod = j.preview_recommended_method;
 
   // Build list of available methods
@@ -1040,6 +1041,7 @@ function renderDualPreviewCard(j){
   if(smartRec) methods.push({key:'smart_scraper', label:'AI (Smart)', rec:smartRec});
   if(usRec) methods.push({key:'universal_scraper', label:'AI (Universal)', rec:usRec});
   if(c4Rec) methods.push({key:'crawl4ai', label:'Crawl4AI', rec:c4Rec});
+  if(laRec) methods.push({key:'listing_api', label:'Listing API', rec:laRec});
   const methodLabels = methods.map((_,i)=>'Method '+ String.fromCharCode(65+i));
 
   const methodCount = methods.length;

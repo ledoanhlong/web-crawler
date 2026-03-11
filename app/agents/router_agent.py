@@ -48,7 +48,7 @@ class RouterAgent:
             result = await chat_completion_json(
                 messages=[{"role": "user", "content": filled}],
                 temperature=0.1,
-                max_tokens=500,
+                max_tokens=16_000,
             )
 
             strategy_raw = result.get("strategy", "smart_scraper")

@@ -10,6 +10,7 @@ multi-URL / script-generation features.
 from __future__ import annotations
 
 import asyncio
+import re
 from functools import lru_cache
 
 from app.config import settings
@@ -87,10 +88,13 @@ async def smart_extract_items(
 
     prompt = (
         f"{item_instruction}\n"
+        f"Each entry should be an individual company or business from the listing "
+        f"(not the page title, site name, or section headers).\n"
         f"For each entry, extract these fields: {fields_str}.\n"
         f"Return a JSON object with a key \"items\" containing a list of objects.\n"
         f"Each object should have the field names as keys and the extracted text as values.\n"
         f"If a field is not found for an entry, set it to null.\n"
+        f"If no individual company/exhibitor entries are found, return {{\"items\": []}}.\n"
         f"For any URL fields (like detail_link, logo, logo_url), return the full or relative URL as-is from the HTML."
     )
 
@@ -105,6 +109,7 @@ async def smart_extract_items(
                 {"role": "user", "content": f"{prompt}\n\n--- HTML ---\n{html}"},
             ],
             temperature=0.1,
+            max_tokens=32_000,
         )
     except Exception as exc:
         log.warning("LLM item extraction failed: %s", exc)
@@ -171,6 +176,7 @@ async def smart_extract_detail(
                 {"role": "user", "content": f"{prompt}\n\n--- HTML ---\n{html}"},
             ],
             temperature=0.1,
+            max_tokens=32_000,
         )
     except Exception as exc:
         log.warning("LLM detail extraction failed: %s", exc)
@@ -212,7 +218,14 @@ async def smart_extract_items_from_markdown(
     if not markdown or len(markdown) < 200:
         return []
 
-    fields_str = ", ".join(fields)
+    # Filter out internal/LLM-generated field names that don't make sense
+    # for markdown extraction (e.g. raw_values_json, exhibitor_path).
+    _INTERNAL_FIELD_RE = re.compile(r"(raw_|_json$|_path$|_id$|_html$)")
+    clean_fields = [f for f in fields if not _INTERNAL_FIELD_RE.search(f)]
+    if not clean_fields:
+        clean_fields = fields  # fallback to original if all got filtered
+
+    fields_str = ", ".join(clean_fields)
     if max_items and max_items > 0:
         item_instruction = f"Extract only the first {max_items} seller/company/exhibitor entry from this content."
     else:
@@ -220,6 +233,8 @@ async def smart_extract_items_from_markdown(
 
     prompt = (
         f"{item_instruction}\n"
+        f"Each entry should be an individual company or business from the listing "
+        f"(not the page title or section headers).\n"
         f"For each entry, extract these fields: {fields_str}.\n"
         f"Return a JSON object with a key \"items\" containing a list of objects.\n"
         f"Each object should have the field names as keys and the extracted text as values.\n"
@@ -238,6 +253,7 @@ async def smart_extract_items_from_markdown(
                 {"role": "user", "content": f"{prompt}\n\n--- CONTENT ---\n{markdown}"},
             ],
             temperature=0.1,
+            max_tokens=32_000,
         )
     except Exception as exc:
         log.warning("LLM markdown item extraction failed: %s", exc)
@@ -301,6 +317,7 @@ async def smart_extract_detail_from_markdown(
                 {"role": "user", "content": f"{prompt}\n\n--- CONTENT ---\n{markdown}"},
             ],
             temperature=0.1,
+            max_tokens=32_000,
         )
     except Exception as exc:
         log.warning("LLM markdown detail extraction failed: %s", exc)

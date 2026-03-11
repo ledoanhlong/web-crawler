@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     use_universal_scraper_for_extraction: bool = True  # use for structured extraction
     universal_scraper_model: str = "azure/gpt-5.2"     # LiteLLM model name
 
+    # Shadow-DOM / advanced fallbacks
+    use_inner_text_fallback: bool = True          # JS innerText when markdown/CSS fail
+    use_listing_api_interception: bool = True     # intercept XHR listing APIs during page load
+
     # Reliability controls
     reliability_auto_switch_enabled: bool = True
     reliability_auto_switch_min_pages: int = 3

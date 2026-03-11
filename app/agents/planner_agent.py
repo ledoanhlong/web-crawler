@@ -33,6 +33,8 @@ log = get_logger(__name__)
 
 SYSTEM_PROMPT = load_prompt("planner_listing")
 
+_MIN_LISTING_CONTAINERS = 3
+
 
 def _sanitize_plan_data(plan_data: dict) -> dict:
     """Clean up LLM output before Pydantic validation.
@@ -144,6 +146,11 @@ def _sanitize_plan_data(plan_data: dict) -> dict:
                 "LLM returned empty/null item_container_selector — "
                 "using placeholder to trigger selector re-prompt",
             )
+
+    # Strip selector_metrics — this is computed by the validator, not the LLM.
+    # The LLM sometimes echoes it back with wrong types (e.g. "high" instead
+    # of a float), causing Pydantic validation errors.
+    plan_data.pop("selector_metrics", None)
 
     return plan_data
 
@@ -667,7 +674,7 @@ class PlannerAgent:
             ]
 
             try:
-                result: dict = await chat_completion_json(messages, max_tokens=8_000)
+                result: dict = await chat_completion_json(messages, max_tokens=16_000)
                 break
             except Exception as exc:
                 if attempt == 0 and "content_filter" in str(exc).lower():
@@ -751,7 +758,7 @@ class PlannerAgent:
             },
         ]
 
-        result: dict = await chat_completion_json(messages, max_tokens=2_000)
+        result: dict = await chat_completion_json(messages, max_tokens=16_000)
         detail_api = DetailApiPlan.model_validate(result)
         detail_api.sample_response = api_response
         log.info(
@@ -770,7 +777,7 @@ class PlannerAgent:
         html_raw: str,
         fields_wanted: str | None = None,
         *,
-        max_retries: int = 2,
+        max_retries: int = 3,
     ) -> ScrapingPlan:
         """Test LLM-generated CSS selectors against the actual HTML.
 
@@ -781,6 +788,8 @@ class PlannerAgent:
         soup = BeautifulSoup(html_raw, "lxml")
 
         for attempt in range(max_retries):
+            reject_reason: str | None = None
+
             try:
                 matches = soup.select(plan.target.item_container_selector)
             except Exception as exc:
@@ -794,38 +803,62 @@ class PlannerAgent:
                 metrics = self._compute_selector_metrics(plan, soup)
                 plan.selector_metrics = metrics
                 hit_ratio = float(metrics.get("field_hit_ratio", 0.0))
+                container_count = int(metrics.get("container_count", 0))
+                field_checks = int(metrics.get("field_checks", 0))
                 log.info(
                     "Selector validation: '%s' matched %d elements",
                     plan.target.item_container_selector, len(matches),
                 )
-                # If selectors are structurally weak, ask LLM for a revision.
-                if (
-                    hit_ratio < settings.reliability_selector_min_hit_ratio
-                    and attempt < max_retries - 1
-                    and metrics.get("field_checks", 0) > 0
-                ):
-                    log.warning(
-                        "Selector hit ratio %.3f below threshold %.3f (attempt %d/%d) — revising",
-                        hit_ratio,
-                        settings.reliability_selector_min_hit_ratio,
-                        attempt + 1,
-                        max_retries,
+
+                # Check 1: All field selectors are empty
+                has_defined_fields = bool(plan.target.field_selectors)
+                if has_defined_fields and field_checks == 0:
+                    reject_reason = (
+                        "All field selectors are empty. Please provide CSS selectors "
+                        "for each field relative to the container element."
                     )
-                else:
+
+                # Check 2: Too few containers for a listing page
+                elif container_count < _MIN_LISTING_CONTAINERS:
+                    reject_reason = (
+                        f"Your container selector matched only {container_count} element(s), "
+                        "which likely selects the wrapper/container rather than individual "
+                        "items. Look for the repeating child elements inside that container."
+                    )
+
+                # Check 3: Low hit-ratio
+                elif hit_ratio < settings.reliability_selector_min_hit_ratio and field_checks > 0:
+                    reject_reason = (
+                        f"Field extraction quality is low (hit_ratio={hit_ratio:.3f})."
+                    )
+
+                # Accept if no issue found or last attempt
+                if reject_reason is None or attempt >= max_retries - 1:
+                    if reject_reason and attempt >= max_retries - 1:
+                        log.warning(
+                            "Accepting plan despite issue on final attempt: %s",
+                            reject_reason,
+                        )
                     if plan.notes:
                         plan.notes += "\n"
                     plan.notes += (
                         "Selector preflight metrics: "
-                        f"containers={metrics.get('container_count')}, "
+                        f"containers={container_count}, "
                         f"field_hit_ratio={metrics.get('field_hit_ratio')}"
                     )
                     return plan
 
-            # Selector matched nothing — build a hint of the page's actual structure
-            log.warning(
-                "Selector '%s' matched 0 elements (attempt %d/%d) — asking LLM to revise",
-                plan.target.item_container_selector, attempt + 1, max_retries,
-            )
+                log.warning(
+                    "Selector issue (attempt %d/%d): %s",
+                    attempt + 1, max_retries, reject_reason,
+                )
+
+            if not matches:
+                # Selector matched nothing
+                log.warning(
+                    "Selector '%s' matched 0 elements (attempt %d/%d) — asking LLM to revise",
+                    plan.target.item_container_selector, attempt + 1, max_retries,
+                )
 
             # Collect some real container candidates from the page
             body = soup.find("body")
@@ -850,12 +883,36 @@ class PlannerAgent:
                 f"Return the complete revised plan as JSON."
             )
 
-            if matches:
+            if matches and reject_reason:
                 metrics = self._compute_selector_metrics(plan, soup)
+                # Show inner structure of the matched container to help the
+                # LLM find the actual repeating child elements.
+                inner_hint = ""
+                try:
+                    container_el = matches[0]
+                    inner_parts: list[str] = []
+                    for child in container_el.find_all(True, recursive=False):
+                        inner_parts.append(str(child)[:300])
+                        if len(inner_parts) >= 10:
+                            break
+                    if inner_parts:
+                        inner_hint = (
+                            f"\n\nHere are the direct children inside your matched container "
+                            f"`{plan.target.item_container_selector}`:\n"
+                            f"```html\n" + "\n".join(inner_parts) + "\n```\n"
+                            "Look for the repeating elements among these children — "
+                            "those are the individual items you should target with "
+                            "item_container_selector. Then provide field_selectors "
+                            "relative to each item.\n"
+                        )
+                except Exception:
+                    pass
+
                 feedback_content = (
-                    "Your selectors matched containers but field extraction quality is low. "
+                    f"{reject_reason}\n\n"
                     "Please improve item_container_selector and field_selectors for robust extraction.\n\n"
-                    f"Current preflight metrics: {json.dumps(metrics)}\n\n"
+                    f"Current preflight metrics: {json.dumps(metrics)}\n"
+                    f"{inner_hint}\n"
                     f"Here is a snapshot of the page's top-level body structure:\n"
                     f"```html\n{structure_hint}\n```\n\n"
                     f"Here is the simplified HTML again:\n"
@@ -875,7 +932,7 @@ class PlannerAgent:
                 {
                     "role": "assistant",
                     "content": json.dumps(
-                        plan.model_dump(mode="json", exclude={"url"}),
+                        plan.model_dump(mode="json", exclude={"url", "selector_metrics"}),
                         ensure_ascii=False,
                     ),
                 },
