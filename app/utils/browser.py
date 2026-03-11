@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,28 +18,98 @@ log = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Realistic user agent pool (rotated per page when stealth is enabled)
+# ---------------------------------------------------------------------------
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0",
+]
+
+# Realistic viewport sizes (common desktop resolutions)
+_VIEWPORTS = [
+    {"width": 1920, "height": 1080},
+    {"width": 1366, "height": 768},
+    {"width": 1536, "height": 864},
+    {"width": 1440, "height": 900},
+    {"width": 1680, "height": 1050},
+    {"width": 1280, "height": 720},
+    {"width": 1600, "height": 900},
+]
+
+
+# ---------------------------------------------------------------------------
 # Stealth script — injected on every page to avoid bot detection
 # ---------------------------------------------------------------------------
 _STEALTH_JS = """
 () => {
     // Hide webdriver flag
     Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-    // Spoof plugins
+    // Spoof plugins (realistic Chrome plugin list)
     Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5],
+        get: () => {
+            const p = [
+                {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format'},
+                {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: ''},
+                {name: 'Native Client', filename: 'internal-nacl-plugin', description: ''},
+            ];
+            p.length = 3;
+            return p;
+        },
     });
     // Spoof languages
     Object.defineProperty(navigator, 'languages', {
         get: () => ['en-US', 'en'],
     });
     // Chrome runtime stub
-    window.chrome = {runtime: {}};
+    window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}};
     // Permissions query override
     const origQuery = window.navigator.permissions.query;
     window.navigator.permissions.query = (parameters) =>
         parameters.name === 'notifications'
             ? Promise.resolve({state: Notification.permission})
             : origQuery(parameters);
+
+    // WebGL vendor/renderer spoofing
+    const getParameter = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function(param) {
+        if (param === 37445) return 'Google Inc. (Intel)';      // UNMASKED_VENDOR_WEBGL
+        if (param === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)'; // UNMASKED_RENDERER_WEBGL
+        return getParameter.call(this, param);
+    };
+    // Also patch WebGL2
+    if (typeof WebGL2RenderingContext !== 'undefined') {
+        const getParam2 = WebGL2RenderingContext.prototype.getParameter;
+        WebGL2RenderingContext.prototype.getParameter = function(param) {
+            if (param === 37445) return 'Google Inc. (Intel)';
+            if (param === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)';
+            return getParam2.call(this, param);
+        };
+    }
+
+    // Connection API spoofing (headless often missing)
+    if (!navigator.connection) {
+        Object.defineProperty(navigator, 'connection', {
+            get: () => ({effectiveType: '4g', rtt: 50, downlink: 10, saveData: false}),
+        });
+    }
+
+    // Spoof hardware concurrency (headless defaults vary)
+    Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+
+    // Spoof deviceMemory
+    Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+
+    // Prevent iframe detection of automation
+    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+        get: function() {
+            return window;
+        }
+    });
 }
 """
 
@@ -103,11 +174,27 @@ async def create_page(browser: Browser) -> Page:
     """Create a new Playwright page with stealth, consent blocking, and overlay killing.
 
     Every page created through this factory automatically:
-    1. Blocks known consent management script URLs (Layer 1)
-    2. Injects a MutationObserver that hides overlay DOM on insertion (Layer 2)
-    3. Applies stealth anti-detection scripts
+    1. Uses a randomized user agent and viewport (when enabled)
+    2. Blocks known consent management script URLs (Layer 1)
+    3. Injects a MutationObserver that hides overlay DOM on insertion (Layer 2)
+    4. Applies stealth anti-detection scripts (WebGL, plugins, navigator fingerprint)
     """
-    page = await browser.new_page()
+    context_kwargs: dict[str, Any] = {}
+
+    if settings.stealth_enabled:
+        if settings.stealth_randomize_user_agent:
+            context_kwargs["user_agent"] = random.choice(_USER_AGENTS)
+        if settings.stealth_randomize_viewport:
+            vp = random.choice(_VIEWPORTS)
+            context_kwargs["viewport"] = vp
+            context_kwargs["screen"] = vp
+
+    # Create a browser context with stealth settings for better fingerprint
+    if context_kwargs:
+        context = await browser.new_context(**context_kwargs)
+        page = await context.new_page()
+    else:
+        page = await browser.new_page()
 
     # Layer 1: block consent scripts from loading
     async def _abort_route(route: Route) -> None:
@@ -327,6 +414,37 @@ async def fetch_page_js(
             return html, inner_text
 
         return html
+    finally:
+        await page.close()
+
+
+async def capture_screenshot(
+    browser: Browser,
+    url: str,
+    *,
+    wait_selector: str | None = None,
+    full_page: bool = False,
+) -> bytes:
+    """Navigate to a URL and capture a PNG screenshot.
+
+    Returns raw PNG bytes suitable for the vision model API.
+    """
+    page = await create_page(browser)
+    try:
+        await page.goto(url, wait_until="commit", timeout=120_000)
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=30_000)
+        except Exception:
+            pass
+        if wait_selector:
+            try:
+                await page.wait_for_selector(wait_selector, timeout=15_000)
+            except Exception:
+                pass
+        else:
+            await asyncio.sleep(3)
+
+        return await page.screenshot(full_page=full_page, type="png")
     finally:
         await page.close()
 

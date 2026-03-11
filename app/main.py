@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 
 from app.api.routes import router
 from app.config import settings
+from app.services.provider_health import get_provider_health_snapshot, refresh_provider_health
 from app.utils.logging import get_logger
 
 _FRONTEND_DIR = Path(__file__).parent / "frontend"
@@ -40,9 +41,25 @@ async def _shutdown() -> None:
     await close_shared_client()
 
 
+@app.on_event("startup")
+async def _startup() -> None:
+    # Warm provider health state so /health immediately reports endpoint reachability.
+    try:
+        await refresh_provider_health()
+    except Exception as exc:
+        log.warning("Provider health startup check failed: %s", exc)
+
+
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> dict:
+    try:
+        snapshot = await refresh_provider_health()
+    except Exception:
+        snapshot = get_provider_health_snapshot()
+    return {
+        "status": "ok" if snapshot.get("status") == "ok" else "degraded",
+        "providers": snapshot,
+    }
 
 
 @app.get("/", include_in_schema=False)

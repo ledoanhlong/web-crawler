@@ -343,6 +343,7 @@ class ExtractionMethod(str, enum.Enum):
     CRAWL4AI = "crawl4ai"
     UNIVERSAL_SCRAPER = "universal_scraper"
     LISTING_API = "listing_api"
+    CLAUDE = "claude"
 
 
 class CrawlStatus(str, enum.Enum):
@@ -393,6 +394,18 @@ class FailureEvent(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class ProviderTelemetryEvent(BaseModel):
+    provider: str
+    stage: PipelineStage
+    method: str
+    latency_ms: float = 0.0
+    fallback_reason: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    estimated_cost_usd: float | None = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class JobDiagnostics(BaseModel):
     counters: dict[str, int] = Field(
         default_factory=lambda: {
@@ -410,6 +423,11 @@ class JobDiagnostics(BaseModel):
     )
     stage_confidences: list[StageConfidence] = Field(default_factory=list)
     failures: list[FailureEvent] = Field(default_factory=list)
+    provider_events: list[ProviderTelemetryEvent] = Field(default_factory=list)
+    provider_summary: dict[str, str | int | float] = Field(
+        default_factory=dict,
+        description="Aggregated provider health/usage snapshot for this job.",
+    )
     status_timeline: list[str] = Field(default_factory=list)
     parser_metrics: dict[str, float | int] = Field(
         default_factory=lambda: {
@@ -623,6 +641,10 @@ class CrawlJob(BaseModel):
     preview_record_listing_api: SellerLead | None = Field(
         default=None,
         description="Preview record extracted via intercepted listing API (direct JSON).",
+    )
+    preview_record_claude: SellerLead | None = Field(
+        default=None,
+        description="Preview record extracted via Claude Opus 4.6 (complex site fallback).",
     )
     preview_recommendation: str | None = Field(
         default=None,

@@ -353,6 +353,55 @@ class PlannerAgent:
             "field_hit_ratio": round(hit_ratio, 4),
         }
 
+    @staticmethod
+    def _content_test_selectors(
+        plan: ScrapingPlan,
+        containers: list,
+        *,
+        sample_n: int = 5,
+    ) -> float:
+        """Test whether field selectors actually extract meaningful text content.
+
+        Returns a score between 0.0 (no content) and 1.0 (all fields have content).
+        A score below 0.3 indicates the selectors match DOM elements but
+        they are empty or contain only whitespace / boilerplate.
+        """
+        if not plan.target.field_selectors or not containers:
+            return 1.0  # nothing to test → pass
+
+        sample = containers[:sample_n]
+        total_field_checks = 0
+        fields_with_content = 0
+
+        for container in sample:
+            for field_name, selector in plan.target.field_selectors.items():
+                if not selector or not selector.strip():
+                    continue
+                total_field_checks += 1
+                try:
+                    el = container.select_one(selector)
+                except Exception:
+                    continue
+                if not el:
+                    continue
+
+                # Check for attribute-based extraction
+                attr = (plan.target.field_attributes or {}).get(field_name)
+                if attr:
+                    val = el.get(attr, "")
+                    if val and str(val).strip():
+                        fields_with_content += 1
+                        continue
+
+                # Check for text content (strip whitespace)
+                text = el.get_text(strip=True)
+                if text and len(text) >= 2:
+                    fields_with_content += 1
+
+        if total_field_checks == 0:
+            return 1.0
+        return fields_with_content / total_field_checks
+
     async def plan(
         self,
         url: str,
@@ -455,6 +504,41 @@ class PlannerAgent:
 
         # --- 4b. Validate CSS selectors against the actual HTML ---
         plan = await self._validate_selectors(plan, html_raw, fields_wanted)
+
+        # --- 4b-vision. If selectors still perform poorly, try vision-based planning ---
+        if settings.use_vision_planning:
+            metrics = plan.selector_metrics or {}
+            container_count = int(metrics.get("container_count", 0))
+            hit_ratio = float(metrics.get("field_hit_ratio", 0.0))
+            content_score = self._content_test_selectors(
+                plan,
+                BeautifulSoup(html_raw, "lxml").select(plan.target.item_container_selector)
+                if container_count > 0 else [],
+            )
+            if container_count < _MIN_LISTING_CONTAINERS or hit_ratio < 0.2 or content_score < 0.3:
+                log.info(
+                    "Selector quality poor (containers=%d, hit_ratio=%.2f, content=%.2f) — "
+                    "attempting vision-based planning for %s",
+                    container_count, hit_ratio, content_score, url,
+                )
+                vision_plan = await self._plan_with_vision(
+                    url, html_raw, fields_wanted=fields_wanted,
+                    wait_selector=plan.wait_selector,
+                )
+                if vision_plan:
+                    # Validate the vision-derived plan
+                    vision_plan = await self._validate_selectors(vision_plan, html_raw, fields_wanted)
+                    v_metrics = vision_plan.selector_metrics or {}
+                    v_containers = int(v_metrics.get("container_count", 0))
+                    v_ratio = float(v_metrics.get("field_hit_ratio", 0.0))
+                    if v_containers > container_count or v_ratio > hit_ratio:
+                        log.info(
+                            "Vision plan improved results: containers %d→%d, ratio %.2f→%.2f",
+                            container_count, v_containers, hit_ratio, v_ratio,
+                        )
+                        plan = vision_plan
+                    else:
+                        log.info("Vision plan did not improve results — keeping original")
 
         # --- 4c. If the plan says JS is required but we fetched with httpx,
         #         the CSS selectors were derived from the wrong DOM.
@@ -832,6 +916,22 @@ class PlannerAgent:
                         f"Field extraction quality is low (hit_ratio={hit_ratio:.3f})."
                     )
 
+                # Check 4: Selector content test — verify extracted fields contain
+                # non-trivial text, not just empty elements or boilerplate.
+                if reject_reason is None and has_defined_fields and container_count >= _MIN_LISTING_CONTAINERS:
+                    content_score = self._content_test_selectors(plan, matches)
+                    if content_score < 0.3:
+                        reject_reason = (
+                            f"Content test failed (score={content_score:.2f}): the selectors "
+                            "match elements but they contain little or no meaningful text. "
+                            "Please check that field_selectors point to elements that "
+                            "actually contain the data (text nodes, href, src attributes)."
+                        )
+                        log.warning(
+                            "Selector content test failed: score=%.2f (attempt %d/%d)",
+                            content_score, attempt + 1, max_retries,
+                        )
+
                 # Accept if no issue found or last attempt
                 if reject_reason is None or attempt >= max_retries - 1:
                     if reject_reason and attempt >= max_retries - 1:
@@ -954,6 +1054,83 @@ class PlannerAgent:
                 log.warning("Selector validation retry failed: %s", exc)
                 break
 
+        return plan
+
+    # ------------------------------------------------------------------
+    # Vision-based planning (GPT-4o screenshot analysis)
+    # ------------------------------------------------------------------
+    async def _plan_with_vision(
+        self,
+        url: str,
+        html_raw: str,
+        *,
+        fields_wanted: str | None = None,
+        wait_selector: str | None = None,
+    ) -> ScrapingPlan | None:
+        """Take a screenshot and use the vision model to generate a scraping plan.
+
+        Returns None if vision planning fails or is not configured.
+        """
+        from app.utils.llm import get_vision_client, chat_completion_vision_json, encode_image_base64
+        from app.utils.browser import capture_screenshot, get_browser
+
+        if get_vision_client() is None:
+            log.info("Vision model not configured — skipping vision-based planning")
+            return None
+
+        try:
+            async with get_browser() as browser:
+                screenshot_bytes = await capture_screenshot(
+                    browser, url, wait_selector=wait_selector,
+                )
+        except Exception as exc:
+            log.warning("Screenshot capture failed: %s", exc)
+            return None
+
+        image_uri = encode_image_base64(screenshot_bytes)
+        html_simple = simplify_html(html_raw, aggressive=True)
+        # Truncate HTML to keep vision request reasonable
+        if len(html_simple) > 30_000:
+            html_simple = html_simple[:30_000] + "\n<!-- truncated -->"
+
+        vision_prompt = load_prompt("planner_vision")
+        user_content: list[dict] = [
+            {"type": "text", "text": (
+                f"Analyse this listing page at: {url}\n\n"
+                f"Here is the simplified HTML:\n```html\n{html_simple}\n```"
+            )},
+            {"type": "image_url", "image_url": {"url": image_uri}},
+        ]
+        if fields_wanted:
+            user_content[0]["text"] += (
+                f"\n\nThe user wants these specific fields: {fields_wanted}"
+            )
+
+        messages = [
+            {"role": "system", "content": vision_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        try:
+            plan_data = await chat_completion_vision_json(messages, max_tokens=16_000)
+        except Exception as exc:
+            log.warning("Vision planning LLM call failed: %s", exc)
+            return None
+
+        plan_data["url"] = url
+        plan_data = _sanitize_plan_data(plan_data)
+
+        try:
+            plan = ScrapingPlan.model_validate(plan_data)
+        except Exception as exc:
+            log.warning("Vision plan validation failed: %s", exc)
+            return None
+
+        log.info(
+            "Vision plan: selector='%s', %d fields",
+            plan.target.item_container_selector,
+            len(plan.target.field_selectors),
+        )
         return plan
 
     # ------------------------------------------------------------------

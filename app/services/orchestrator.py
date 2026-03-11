@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 from app.agents.output_agent import OutputAgent
@@ -36,11 +37,13 @@ from app.models.schemas import (
     FailureCategory,
     FailureEvent,
     PipelineStage,
+    ProviderTelemetryEvent,
     StageConfidence,
 )
 from app.services.plan_cache import plan_cache
 from app.utils.fingerprint import fingerprint as fingerprint_page
 from app.utils.http import fetch_page_full
+from app.utils.llm import get_claude_runtime_state
 from app.utils.logging import get_logger, log_kv
 from app.utils.quality import evaluate_quality
 
@@ -123,6 +126,35 @@ class Orchestrator:
             failure_message=message,
         )
 
+    def _record_provider_event(
+        self,
+        job: CrawlJob,
+        *,
+        provider: str,
+        stage: PipelineStage,
+        method: str,
+        latency_ms: float,
+        fallback_reason: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        estimated_cost_usd: float | None = None,
+    ) -> None:
+        if estimated_cost_usd is None and provider == "openai":
+            # Heuristic estimate when upstream tools do not expose token usage.
+            estimated_cost_usd = 0.002 if method in ("css", "auto") else 0.006
+
+        event = ProviderTelemetryEvent(
+            provider=provider,
+            stage=stage,
+            method=method,
+            latency_ms=round(latency_ms, 2),
+            fallback_reason=fallback_reason,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost_usd=round(float(estimated_cost_usd), 6) if estimated_cost_usd is not None else None,
+        )
+        job.diagnostics.provider_events.append(event)
+
     @staticmethod
     def _preview_quality_score(record: object) -> float:
         """Compute deterministic quality score for a preview SellerLead-like object."""
@@ -169,12 +201,14 @@ class Orchestrator:
     @staticmethod
     def _build_method_attempt_order(preferred: ExtractionMethod | None) -> list[ExtractionMethod | None]:
         """Build ordered extraction method attempts for guarded fallback retries."""
+        claude_order = [ExtractionMethod.CLAUDE]
         base_order: list[ExtractionMethod | None] = [
             preferred,
             ExtractionMethod.CSS,
             ExtractionMethod.SMART_SCRAPER,
             ExtractionMethod.CRAWL4AI,
             ExtractionMethod.UNIVERSAL_SCRAPER,
+            *claude_order,
             None,  # Final auto mode in scraper
         ]
         ordered: list[ExtractionMethod | None] = []
@@ -406,7 +440,7 @@ class Orchestrator:
             # ---- Dual preview scrape ----
             self._set_status(job, CrawlStatus.SCRAPING, "preview_scrape")
             log.info("[%s] Dual preview scrape", job.id)
-            css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages = await self.scraper.scrape_preview_dual(plan)
+            css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages, claude_pages = await self.scraper.scrape_preview_dual(plan)
 
             # Parse CSS result
             if css_pages and css_pages[0].items:
@@ -446,6 +480,13 @@ class Orchestrator:
                     job.preview_record_listing_api = la_records[0]
                     log.info("[%s] Listing API preview: %s", job.id, la_records[0].name)
 
+            # Parse Claude result
+            if claude_pages and claude_pages[0].items:
+                claude_records = await self.parser.parse(claude_pages, plan)
+                if claude_records:
+                    job.preview_record_claude = claude_records[0]
+                    log.info("[%s] Claude preview: %s", job.id, claude_records[0].name)
+
             # LLM comparison — include all methods that produced results
             candidates: dict[ExtractionMethod, object] = {}
             if job.preview_record_css:
@@ -458,6 +499,8 @@ class Orchestrator:
                 candidates[ExtractionMethod.UNIVERSAL_SCRAPER] = job.preview_record_universal_scraper
             if job.preview_record_listing_api:
                 candidates[ExtractionMethod.LISTING_API] = job.preview_record_listing_api
+            if job.preview_record_claude and not settings.claude_fallback_only:
+                candidates[ExtractionMethod.CLAUDE] = job.preview_record_claude
 
             if len(candidates) >= 2:
                 recommended_method, best_score, margin = self._select_preview_method_deterministic(candidates)
@@ -668,10 +711,16 @@ class Orchestrator:
                         job.id, selected_method.value,
                     )
                 attempts = self._build_method_attempt_order(selected_method)
+                claude_attempts = 0
 
                 for attempt_idx, method in enumerate(attempts, start=1):
                     if cancel_event.is_set():
                         break
+                    if method == ExtractionMethod.CLAUDE:
+                        if settings.claude_fallback_only and claude_attempts >= settings.claude_max_retries_per_stage:
+                            continue
+                        claude_attempts += 1
+
                     job.diagnostics.counters["scrape_attempts"] += 1
 
                     zero_item_streak = 0
@@ -718,6 +767,7 @@ class Orchestrator:
                             )
                             raise _SwitchMethodRequested(switch_reason)
 
+                    attempt_started = time.perf_counter()
                     try:
                         page_data_list, enrich_result = await self.scraper.scrape(
                             plan,
@@ -726,7 +776,30 @@ class Orchestrator:
                             progress_callback=_progress_cb,
                             cancel_event=cancel_event,
                         )
+                        attempt_latency_ms = (time.perf_counter() - attempt_started) * 1000
+                        provider_stats = self.scraper.get_provider_stats()
+                        claude_stats = provider_stats.get("claude", {})
+                        provider_name = "claude" if method == ExtractionMethod.CLAUDE or claude_stats else "openai"
+                        self._record_provider_event(
+                            job,
+                            provider=provider_name,
+                            stage=PipelineStage.SCRAPING,
+                            method=method.value if method else "auto",
+                            latency_ms=attempt_latency_ms,
+                            input_tokens=int(claude_stats.get("input_tokens")) if claude_stats.get("input_tokens") is not None else None,
+                            output_tokens=int(claude_stats.get("output_tokens")) if claude_stats.get("output_tokens") is not None else None,
+                            estimated_cost_usd=float(claude_stats.get("estimated_cost_usd")) if claude_stats.get("estimated_cost_usd") is not None else None,
+                        )
                     except _SwitchMethodRequested as exc:
+                        attempt_latency_ms = (time.perf_counter() - attempt_started) * 1000
+                        self._record_provider_event(
+                            job,
+                            provider="openai",
+                            stage=PipelineStage.SCRAPING,
+                            method=method.value if method else "auto",
+                            latency_ms=attempt_latency_ms,
+                            fallback_reason=switch_reason or str(exc),
+                        )
                         job.diagnostics.counters["method_switches"] += 1
                         self._record_failure(
                             job,
@@ -742,6 +815,15 @@ class Orchestrator:
                         )
                         continue
                     except Exception as exc:
+                        attempt_latency_ms = (time.perf_counter() - attempt_started) * 1000
+                        self._record_provider_event(
+                            job,
+                            provider="claude" if method == ExtractionMethod.CLAUDE else "openai",
+                            stage=PipelineStage.SCRAPING,
+                            method=method.value if method else "auto",
+                            latency_ms=attempt_latency_ms,
+                            fallback_reason=str(exc),
+                        )
                         self._record_failure(
                             job,
                             category=FailureCategory.UNKNOWN,
@@ -787,6 +869,27 @@ class Orchestrator:
                 settings.max_pages_per_crawl = original_max_pages
             total_items = sum(len(pd.items) for pd in page_data_list)
             log.info("[%s] Scraped %d items from %d pages", job.id, total_items, len(page_data_list))
+
+            total_est_cost = 0.0
+            total_in = 0
+            total_out = 0
+            for event in job.diagnostics.provider_events:
+                if event.estimated_cost_usd:
+                    total_est_cost += float(event.estimated_cost_usd)
+                if event.input_tokens:
+                    total_in += int(event.input_tokens)
+                if event.output_tokens:
+                    total_out += int(event.output_tokens)
+            claude_runtime = get_claude_runtime_state()
+            job.diagnostics.provider_summary = {
+                "event_count": len(job.diagnostics.provider_events),
+                "estimated_total_cost_usd": round(total_est_cost, 6),
+                "estimated_input_tokens": total_in,
+                "estimated_output_tokens": total_out,
+                "claude_disabled": claude_runtime.get("disabled", False),
+                "claude_consecutive_errors": int(claude_runtime.get("consecutive_errors", 0)),
+            }
+
             scraping_score = 0.9 if total_items >= 10 else (0.7 if total_items > 0 else 0.2)
             self._record_confidence(
                 job,

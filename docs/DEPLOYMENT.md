@@ -16,8 +16,10 @@ This project is deployed as two separate services:
    polls job status                               │  Azure OpenAI
    every 1-2s                                    ▼
                                         ┌────────────────────────┐
-                                        │  Azure OpenAI Service  │
-                                        │  (gpt-5.2)             │
+                                        │  Model Providers        │
+                                        │  - OpenAI (gpt-5.2)     │
+                                        │  - Vision (gpt-4o)      │
+                                        │  - Claude Opus 4.6      │
                                         └────────────────────────┘
 ```
 
@@ -48,6 +50,25 @@ export AZURE_OPENAI_API_KEY="your-api-key-here"
 # Optional — override defaults
 export AZURE_OPENAI_API_VERSION="2025-04-01-preview"
 export AZURE_OPENAI_DEPLOYMENT="gpt-5.2"
+
+# Optional — Vision provider (GPT-4o)
+export AZURE_VISION_ENDPOINT="https://your-resource.openai.azure.com/"
+export AZURE_VISION_API_KEY="your-api-key-here"
+export AZURE_VISION_DEPLOYMENT="gpt-4o"
+export USE_VISION_PLANNING="true"
+
+# Optional — Claude provider (Azure AI Foundry Anthropic endpoint)
+export AZURE_CLAUDE_ENDPOINT="https://your-claude-deployment.services.ai.azure.com/"
+export AZURE_CLAUDE_API_KEY="your-claude-api-key-here"
+export AZURE_CLAUDE_DEPLOYMENT="claude-opus-4-6"
+export USE_CLAUDE_EXTRACTION="true"
+
+# Optional — Claude circuit breaker + cost-control policy
+export CLAUDE_CIRCUIT_BREAKER_ENABLED="true"
+export CLAUDE_CIRCUIT_BREAKER_MAX_ERRORS="3"
+export CLAUDE_CIRCUIT_BREAKER_COOLDOWN_S="600"
+export CLAUDE_FALLBACK_ONLY="true"
+export CLAUDE_MAX_RETRIES_PER_STAGE="1"
 
 # Optional — Azure resource naming
 export AZURE_RESOURCE_GROUP="web-crawler-rg"
@@ -81,7 +102,10 @@ This script will:
 
 ```bash
 curl https://<your-backend-url>/health
-# → {"status": "ok"}
+# → {"status":"ok|degraded","providers":{...}}
+
+# Optional: provider-level per-job telemetry after a crawl
+curl https://<your-backend-url>/api/v1/crawl/<job-id>/telemetry
 ```
 
 ### Container Resources
@@ -164,6 +188,24 @@ export FRONTEND_URL="https://my-crawler.vercel.app"
 |----------|---------|-------------|
 | `AZURE_OPENAI_API_VERSION` | `2025-04-01-preview` | API version |
 | `AZURE_OPENAI_DEPLOYMENT` | `gpt-5.2` | Model deployment name |
+| `AZURE_VISION_ENDPOINT` | `""` | Vision endpoint (GPT-4o). Can reuse OpenAI endpoint |
+| `AZURE_VISION_API_KEY` | `""` | Vision API key |
+| `AZURE_VISION_API_VERSION` | `2025-04-01-preview` | Vision API version |
+| `AZURE_VISION_DEPLOYMENT` | `gpt-4o` | Vision deployment name |
+| `USE_VISION_PLANNING` | `true` | Enables screenshot-based planner fallback |
+| `AZURE_CLAUDE_ENDPOINT` | `""` | Azure AI Foundry Claude endpoint (root URL or full `/anthropic/v1/messages`) |
+| `AZURE_CLAUDE_API_KEY` | `""` | Claude API key |
+| `AZURE_CLAUDE_DEPLOYMENT` | `claude-opus-4-6` | Claude model deployment name |
+| `USE_CLAUDE_EXTRACTION` | `true` | Enables Claude extraction fallback |
+| `CLAUDE_CIRCUIT_BREAKER_ENABLED` | `true` | Temporarily disables Claude after repeated failures |
+| `CLAUDE_CIRCUIT_BREAKER_MAX_ERRORS` | `3` | Consecutive Claude errors before breaker opens |
+| `CLAUDE_CIRCUIT_BREAKER_COOLDOWN_S` | `600` | Breaker cooldown window |
+| `CLAUDE_FALLBACK_ONLY` | `true` | OpenAI-first policy; Claude only on fallback |
+| `CLAUDE_MAX_RETRIES_PER_STAGE` | `1` | Max Claude attempts per scrape stage |
+| `OPENAI_INPUT_COST_PER_MTOK` | `2.5` | Cost estimate input tokens per 1M (USD) |
+| `OPENAI_OUTPUT_COST_PER_MTOK` | `10.0` | Cost estimate output tokens per 1M (USD) |
+| `CLAUDE_INPUT_COST_PER_MTOK` | `15.0` | Cost estimate input tokens per 1M (USD) |
+| `CLAUDE_OUTPUT_COST_PER_MTOK` | `75.0` | Cost estimate output tokens per 1M (USD) |
 | `ALLOWED_ORIGINS` | `["*"]` | CORS allowed origins (JSON list) |
 | `FRONTEND_URL` | `""` | Vercel frontend URL |
 | `OUTPUT_DIR` | `./output` | Results storage directory |
@@ -255,6 +297,20 @@ az containerapp logs show \
 Common issues:
 - Missing `AZURE_OPENAI_ENDPOINT` or `AZURE_OPENAI_API_KEY` — container crashes on startup
 - Playwright browser not installed — ensure `playwright install chromium` runs in Dockerfile
+- Claude endpoint mismatch — use Azure AI Foundry endpoint (root URL or full `/anthropic/v1/messages`)
+
+### `/health` returns `degraded`
+
+`/health` now includes provider readiness. `degraded` means at least one provider failed check.
+
+Common causes:
+- Vision provider not configured but `USE_VISION_PLANNING=true`
+- Claude auth/endpoint issue
+- Claude circuit breaker open after repeated runtime failures
+
+Use:
+- `GET /health` to inspect provider statuses
+- `GET /api/v1/crawl/<job-id>/telemetry` to inspect provider events, fallback reasons, latency, and estimated costs
 
 ### Frontend shows errors / can't reach backend
 
@@ -262,6 +318,7 @@ Common issues:
 2. Verify `VITE_API_BASE_URL` was set in Vercel before deploying
 3. Check that `ALLOWED_ORIGINS` on the backend includes your Vercel URL
 4. Test the backend directly: `curl https://<backend-url>/health`
+5. If jobs complete but quality is low, inspect provider telemetry: `curl https://<backend-url>/api/v1/crawl/<job-id>/telemetry`
 
 ### Crawl jobs disappear after container restart
 

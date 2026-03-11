@@ -1,10 +1,11 @@
-# Evaluation: Scraping Methods A, B, C, D
+# Evaluation: Scraping Methods A, B, C, D, E
 
-This document evaluates the four extraction methods implemented in this repository:
+This document evaluates the extraction methods implemented in this repository:
 - Method A: `css`
 - Method B: `smart_scraper`
 - Method C: `crawl4ai`
 - Method D: `universal_scraper`
+- Method E: `claude`
 
 Scope note:
 - This is an implementation-level evaluation based on your code architecture and control flow.
@@ -24,16 +25,16 @@ Scoring scale: 1 (weak) to 5 (strong).
 
 ## 2. Scorecard
 
-| Criterion | Method A (`css`) | Method B (`smart_scraper`) | Method C (`crawl4ai`) | Method D (`universal_scraper`) |
-|---|---:|---:|---:|---:|
-| Extraction accuracy | 4 | 4 | 4 | 4 |
-| Robustness to site variation | 2 | 4 | 4 | 4 |
-| Runtime performance | 5 | 2 | 4 | 4 |
-| Operational cost | 5 | 2 | 4 | 3 |
-| Determinism and reproducibility | 5 | 2 | 4 | 4 |
-| Debuggability and maintainability | 5 | 3 | 3 | 3 |
-| Anti-bot/fetch resilience | 2 | 3 | 4 | 3 |
-| **Overall (simple average)** | **4.0** | **2.9** | **3.9** | **3.6** |
+| Criterion | Method A (`css`) | Method B (`smart_scraper`) | Method C (`crawl4ai`) | Method D (`universal_scraper`) | Method E (`claude`) |
+|---|---:|---:|---:|---:|---:|
+| Extraction accuracy | 4 | 4 | 4 | 4 | 5 |
+| Robustness to site variation | 2 | 4 | 4 | 4 | 5 |
+| Runtime performance | 5 | 2 | 4 | 4 | 2 |
+| Operational cost | 5 | 2 | 4 | 3 | 1 |
+| Determinism and reproducibility | 5 | 2 | 4 | 4 | 3 |
+| Debuggability and maintainability | 5 | 3 | 3 | 3 | 3 |
+| Anti-bot/fetch resilience | 2 | 3 | 4 | 3 | 4 |
+| **Overall (simple average)** | **4.0** | **2.9** | **3.9** | **3.6** | **3.3** |
 
 ## 3. Method-by-Method Evaluation
 
@@ -110,6 +111,25 @@ Use when:
 - You want AI adaptability upfront but deterministic, fast extraction at runtime.
 - Per-extraction LLM cost is a concern and amortizing generation cost is acceptable.
 
+## Method E (`claude`)
+
+Verdict: Highest-recovery fallback for hard sites where other methods return sparse/empty output.
+
+Why it helps:
+- Strong extraction quality on irregular markup and difficult layouts.
+- Works well as a fallback after CSS/Smart/Crawl4AI/universal methods underperform.
+- Emits latency/token/cost telemetry for operational control.
+
+Main risks:
+- Highest cost among methods.
+- Slower than CSS and usually slower than local methods.
+- Requires correct Azure AI Foundry Anthropic endpoint configuration.
+
+Use when:
+- Other methods miss too many fields/items.
+- You explicitly need max-recall extraction on complex pages.
+- Cost-control is enforced via fallback-only policy and retry caps.
+
 ## 4. Recommended Decision Rules
 
 1. Start with preview comparison enabled (already in your orchestrator).
@@ -117,7 +137,8 @@ Use when:
 3. Choose Method B when CSS is underfitting and recall is poor.
 4. Choose Method C when you need reliable JS-rendered fetching without external API costs.
 5. Choose Method D when the site will be scraped repeatedly and you want cached, fast extraction.
-6. Keep auto-switch enabled to recover from empty-page streaks during full crawl.
+6. Keep Method E (`claude`) as fallback-only for difficult pages.
+7. Keep auto-switch enabled to recover from empty-page streaks during full crawl.
 
 ## 5. Risk Register by Method
 
@@ -129,6 +150,8 @@ Use when:
   - Mitigation: ensure browser/rendering dependencies are properly configured; fall back to JS/static path if local fetch fails.
 - Method D (`universal_scraper`): generated code staleness risk.
   - Mitigation: implement cache invalidation on extraction failures; monitor for site structure changes.
+- Method E (`claude`): cost and provider instability risk.
+  - Mitigation: circuit breaker, fallback-only policy, and max retries per stage.
 
 ## 6. KPI Suggestions for Empirical Validation
 
@@ -145,5 +168,6 @@ Track these per method in smoke runs:
 - Strategic fallback: Method B (`smart_scraper`) for extraction recovery.
 - Local fetch-and-extract: Method C (`crawl4ai`) for JS-heavy pages without external API costs.
 - Cached adaptive extraction: Method D (`universal_scraper`) for repeatedly scraped sites.
+- Last-resort high-recall recovery: Method E (`claude`) with strict cost controls.
 
 This mix matches your current architecture: preview-driven selection, explicit method choice, and guarded fallback in full-run orchestration.

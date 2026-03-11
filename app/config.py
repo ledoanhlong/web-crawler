@@ -8,6 +8,31 @@ class Settings(BaseSettings):
     azure_openai_api_version: str = "2025-04-01-preview"
     azure_openai_deployment: str = "gpt-5.2"
 
+    # Azure OpenAI — Vision model (GPT-4o for screenshot-based planning)
+    azure_vision_endpoint: str = ""
+    azure_vision_api_key: str = ""
+    azure_vision_api_version: str = "2025-04-01-preview"
+    azure_vision_deployment: str = "gpt-4o"
+    use_vision_planning: bool = True   # screenshot fallback when CSS selectors fail
+
+    # Azure AI Foundry — Claude Opus 4.6 (complex site extraction)
+    azure_claude_endpoint: str = ""
+    azure_claude_api_key: str = ""
+    azure_claude_deployment: str = "claude-opus-4-6"
+    use_claude_extraction: bool = True  # full-page LLM fallback for hard sites
+    # Claude circuit breaker
+    claude_circuit_breaker_enabled: bool = True
+    claude_circuit_breaker_max_errors: int = 3
+    claude_circuit_breaker_cooldown_s: int = 600
+    # Cost-control policy
+    claude_fallback_only: bool = True
+    claude_max_retries_per_stage: int = 1
+    # Approximate pricing (USD per 1M tokens) for telemetry estimates
+    openai_input_cost_per_mtok: float = 2.5
+    openai_output_cost_per_mtok: float = 10.0
+    claude_input_cost_per_mtok: float = 15.0
+    claude_output_cost_per_mtok: float = 75.0
+
     # Crawler
     max_concurrent_requests: int = 5
     request_delay_ms: int = 1000
@@ -26,6 +51,8 @@ class Settings(BaseSettings):
 
     # Stealth / anti-detection
     stealth_enabled: bool = True
+    stealth_randomize_viewport: bool = True
+    stealth_randomize_user_agent: bool = True
     proxy_urls: list[str] = []
 
     # Sitemap & robots.txt

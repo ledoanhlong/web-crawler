@@ -1,12 +1,13 @@
-# Scraping Methods A/B/C/D (Codebase Deep Dive)
+# Scraping Methods A/B/C/D/E (Codebase Deep Dive)
 
-This document explains the practical differences between the four extraction methods used in this project.
+This document explains the practical differences between the extraction methods used in this project.
 
 In code, these methods are represented by `ExtractionMethod`:
 - Method A -> `css`
 - Method B -> `smart_scraper`
 - Method C -> `crawl4ai`
 - Method D -> `universal_scraper`
+- Method E -> `claude`
 
 Source: `app/models/schemas.py` (`class ExtractionMethod`).
 
@@ -18,6 +19,7 @@ Source: `app/models/schemas.py` (`class ExtractionMethod`).
 | B | `smart_scraper` | LLM-based extraction from HTML (with CSS fallback) |
 | C | `crawl4ai` | Local async fetching with markdown output via Crawl4AI |
 | D | `universal_scraper` | AI-powered BeautifulSoup code generation with caching |
+| E | `claude` | Last-resort extraction via Claude Opus 4.6 (Azure AI Foundry Anthropic endpoint) |
 
 ## 2. Where Each Method Is Used
 
@@ -135,7 +137,8 @@ Source: `app/models/schemas.py` (`class ExtractionMethod`).
 When no explicit method is forced (`extraction_method=None`):
 - Scraper tries CSS first.
 - If CSS yields 0 items and Smart mode is enabled, tries Smart extraction.
-- If Smart also fails, returns CSS result (possibly empty).
+- If Smart also fails and Claude fallback is enabled, tries Claude extraction.
+- If Claude also fails, returns CSS result (possibly empty).
 
 Source: `app/agents/scraper_agent.py` (`_extract_items_with_fallback`).
 
@@ -144,10 +147,11 @@ When a method is explicitly selected:
 - `smart_scraper`: Smart primary, CSS fallback.
 - `crawl4ai`: Crawl4AI async fetch with markdown output; falls back to JS/static path if needed.
 - `universal_scraper`: AI-generated BS4 code with caching; regenerates if cached code fails.
+- `claude`: Claude primary, CSS fallback.
 
 Source: `app/agents/scraper_agent.py` (`scrape`).
 
-## 8. Preview and Recommendation Logic (Why A/B/C/D can differ)
+## 8. Preview and Recommendation Logic (Why A/B/C/D/E can differ)
 
 Preview stage runs multi-method extraction and parses each candidate into `SellerLead`.
 Then the orchestrator picks recommendation by:
@@ -158,7 +162,30 @@ Source: `app/services/orchestrator.py` (`run_preview_scrape`, `_select_preview_m
 
 This is why the recommended method can change per site even with same prompt.
 
-## 9. Operational Checklist
+## 9. Method E (`claude`) Details
+
+### How it works
+- Uses Azure AI Foundry Claude Opus 4.6 through the Anthropic Messages endpoint.
+- Receives simplified HTML plus expected fields and returns JSON records.
+- Used as a fallback or explicit method (depending on policy flags).
+
+Files:
+- `app/agents/scraper_agent.py` (`_claude_extract_items`)
+- `app/utils/llm.py` (`chat_completion_claude_with_meta`)
+
+### Strengths
+- Strong recovery on complex/irregular pages where selectors underperform.
+- Returns token/latency/cost telemetry for operational tracking.
+
+### Weaknesses
+- Higher latency/cost than CSS and usually higher than Smart/Crawl4AI.
+- Requires correct Azure Foundry Anthropic endpoint and API key setup.
+
+### Best fit
+- Last-resort recovery on hard sites.
+- Explicit user override when preview quality is poor across other methods.
+
+## 10. Operational Checklist
 
 Use Method A (`css`) when:
 - Planner selectors look accurate in preview.
@@ -176,23 +203,34 @@ Use Method D (`universal_scraper`) when:
 - You plan to scrape the same site repeatedly and want cached, fast extraction.
 - You want AI-adapted extraction code without ongoing per-request LLM costs.
 
-## 10. Config Flags That Affect A/B/C/D
+Use Method E (`claude`) when:
+- CSS/Smart/Crawl4AI/universal-scraper previews are sparse or empty.
+- You need maximum extraction robustness for difficult sites.
+
+## 11. Config Flags That Affect A/B/C/D/E
 
 From `app/config.py`:
 - `use_smart_scraper_primary`
 - `use_crawl4ai`
 - `use_universal_scraper`
+- `use_claude_extraction`
+- `claude_fallback_only`
+- `claude_max_retries_per_stage`
+- `claude_circuit_breaker_enabled`
+- `claude_circuit_breaker_max_errors`
+- `claude_circuit_breaker_cooldown_s`
 - `reliability_auto_switch_enabled`
 - `reliability_auto_switch_min_pages`
 - `reliability_auto_switch_zero_streak`
 
 These flags can materially change which method effectively runs and when fallback triggers.
 
-## 11. Practical Summary
+## 12. Practical Summary
 
 - Method A (`css`) = fastest and most deterministic when selectors are valid.
 - Method B (`smart_scraper`) = more adaptive to messy markup, but slower and less deterministic.
 - Method C (`crawl4ai`) = local async fetching with markdown output, no external API dependency.
 - Method D (`universal_scraper`) = AI-generated BS4 code with caching, balancing adaptability and runtime speed.
+- Method E (`claude`) = highest-recovery fallback for difficult pages, with circuit-breaker and cost controls.
 
 In this codebase, the best method is intentionally site-dependent and validated in preview before full crawl.

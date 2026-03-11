@@ -59,6 +59,15 @@ class EnrichResult:
 class ScraperAgent:
     """Execute a scraping plan and return raw extracted data."""
 
+    def __init__(self) -> None:
+        self._provider_stats: dict[str, dict[str, float | int | str]] = {}
+
+    def reset_provider_stats(self) -> None:
+        self._provider_stats = {}
+
+    def get_provider_stats(self) -> dict[str, dict[str, float | int | str]]:
+        return dict(self._provider_stats)
+
     @staticmethod
     def _emit_page_progress(
         progress_callback: Callable[[dict], None] | None,
@@ -95,6 +104,7 @@ class ScraperAgent:
         and contains fetched/remaining URL lists for resume tracking.
         """
         log.info("Starting scrape for %s (js=%s, max_items=%s, method=%s)", plan.url, plan.requires_javascript, max_items, extraction_method)
+        self.reset_provider_stats()
 
         enrich_result: EnrichResult | None = None
 
@@ -250,12 +260,12 @@ class ScraperAgent:
 
         return pages
 
-    async def scrape_preview_dual(self, plan: ScrapingPlan) -> tuple[list[PageData], list[PageData], list[PageData], list[PageData], list[PageData]]:
-        """Fetch the *landing page only* and return up to five previews.
+    async def scrape_preview_dual(self, plan: ScrapingPlan) -> tuple[list[PageData], list[PageData], list[PageData], list[PageData], list[PageData], list[PageData]]:
+        """Fetch the *landing page only* and return up to six previews.
 
-        Returns (css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages).
+        Returns (css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages, claude_pages).
         CSS returns up to 5 items for better validation; others return 1.
-        crawl4ai_pages / us_pages / listing_api_pages are populated only when enabled.
+        crawl4ai_pages / us_pages / listing_api_pages / claude_pages are populated only when enabled.
         This is intentionally lightweight — no pagination, no tab clicking,
         no scrolling — just the first page load.
         """
@@ -275,7 +285,7 @@ class ScraperAgent:
             html = await fetch_page(plan.url)
 
         if not html:
-            return [], [], [], []
+            return [], [], [], [], [], []
 
         # If CSS found 0 items and we used httpx, retry with Playwright
         preview_html = self._slice_html_for_preview(html, plan.target.item_container_selector)
@@ -414,11 +424,20 @@ class ScraperAgent:
                 log.warning("Listing API interception failed: %s", exc)
             log.info("Listing API interception finished in %.1fs (%d items)", _time.monotonic() - t0, len(listing_api_items))
 
+        # ── Run Claude Opus 4.6 extraction if enabled ───────────────────
+        claude_items: list[dict[str, str | None]] = []
+        if settings.use_claude_extraction and len(preview_html) >= 500:
+            t0 = _time.monotonic()
+            log.info("Claude extraction preview starting for %s", plan.url)
+            claude_items = await self._claude_extract_items(preview_html, plan.target)
+            claude_items = claude_items[:1]
+            log.info("Claude extraction preview finished in %.1fs (%d items)", _time.monotonic() - t0, len(claude_items))
+
         log.info(
             "Preview — CSS: %d items, Smart: %d items, Crawl4AI: %d items, "
-            "UniversalScraper: %d items, ListingAPI: %d items",
+            "UniversalScraper: %d items, ListingAPI: %d items, Claude: %d items",
             len(css_items), len(smart_items), len(crawl4ai_items),
-            len(us_items), len(listing_api_items),
+            len(us_items), len(listing_api_items), len(claude_items),
         )
 
         sd = extract_all_structured_data(html)
@@ -427,12 +446,13 @@ class ScraperAgent:
         crawl4ai_pages = [PageData(url=plan.url, items=crawl4ai_items, structured_data=sd)] if crawl4ai_items else []
         us_pages = [PageData(url=plan.url, items=us_items, structured_data=sd)] if us_items else []
         listing_api_pages = [PageData(url=plan.url, items=listing_api_items, structured_data=sd)] if listing_api_items else []
+        claude_pages = [PageData(url=plan.url, items=claude_items, structured_data=sd)] if claude_items else []
 
         # ── Share detail_link across methods ──────────────────────────
         # In preview each method has at most 1 item.  If any method
         # extracted a detail_link but others didn't, copy it over so all
         # methods can benefit from detail-page enrichment.
-        all_method_pages = [css_pages, smart_pages, crawl4ai_pages, us_pages]
+        all_method_pages = [css_pages, smart_pages, crawl4ai_pages, us_pages, claude_pages]
         donor_link: str | None = None
         for mp in all_method_pages:
             if mp and mp[0].items:
@@ -446,13 +466,14 @@ class ScraperAgent:
                     mp[0].items[0]["detail_link"] = donor_link
                     log.debug("Copied detail_link '%s' to %s preview item", donor_link,
                               "css" if mp is css_pages else "smart" if mp is smart_pages
-                              else "crawl4ai" if mp is crawl4ai_pages else "us")
+                              else "crawl4ai" if mp is crawl4ai_pages else "claude" if mp is claude_pages else "us")
 
         # ── Enrich all with detail pages (1 item each) ─────────────────
         shared_detail_htmls: dict[str, str] = {}  # cache across methods
         for label, method_pages in [
             ("css", css_pages), ("smart", smart_pages),
             ("crawl4ai", crawl4ai_pages), ("us", us_pages),
+            ("claude", claude_pages),
         ]:
             if not (method_pages and method_pages[0].items):
                 continue
@@ -468,7 +489,7 @@ class ScraperAgent:
                         shared_detail_htmls[url] = html_content
         # Listing API items already come as structured data — no detail enrichment needed
 
-        return css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages
+        return css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages, claude_pages
 
     async def scrape_detail_urls_only(
         self,
@@ -2234,7 +2255,15 @@ class ScraperAgent:
                         self._backfill_detail_links(html, smart_items, target)
                     log.info("SmartScraperGraph extraction: %d items", len(smart_items))
                     return smart_items
-                log.warning("SmartScraperGraph returned 0 items — falling back to CSS")
+                log.warning("SmartScraperGraph returned 0 items — trying Claude then CSS")
+                # Try Claude before falling back to CSS
+                if settings.use_claude_extraction:
+                    claude_items = await self._claude_extract_items(html, target)
+                    if claude_items:
+                        if target.detail_link_selector:
+                            self._backfill_detail_links(html, claude_items, target)
+                        log.info("Claude extraction: %d items (SMART_SCRAPER fallback)", len(claude_items))
+                        return claude_items
             return self._extract_items(html, target, detail_api_plan)
 
         if extraction_method == ExtractionMethod.CRAWL4AI:
@@ -2276,6 +2305,18 @@ class ScraperAgent:
                     return smart_items
             return self._extract_items(html, target, detail_api_plan)
 
+        if extraction_method == ExtractionMethod.CLAUDE:
+            # Claude-primary extraction: use Claude first, then CSS fallback
+            if settings.use_claude_extraction and len(html) >= 500:
+                claude_items = await self._claude_extract_items(html, target)
+                if claude_items:
+                    if target.detail_link_selector:
+                        self._backfill_detail_links(html, claude_items, target)
+                    log.info("Claude extraction: %d items", len(claude_items))
+                    return claude_items
+                log.warning("Claude returned 0 items — falling back to CSS")
+            return self._extract_items(html, target, detail_api_plan)
+
         # None / auto — original fallback logic
         css_items = self._extract_items(html, target, detail_api_plan)
 
@@ -2298,8 +2339,18 @@ class ScraperAgent:
                     self._backfill_detail_links(html, smart_items, target)
                 return smart_items
             log.warning(
-                "SmartScraperGraph returned 0 items — using CSS results (%d items)", len(css_items)
+                "SmartScraperGraph returned 0 items — trying Claude extraction"
             )
+
+        # Last-resort: Claude Opus 4.6 full-page extraction
+        if settings.use_claude_extraction and len(html) >= 500:
+            claude_items = await self._claude_extract_items(html, target)
+            if claude_items:
+                log.info("Claude extracted %d items (last-resort fallback)", len(claude_items))
+                if target.detail_link_selector:
+                    self._backfill_detail_links(html, claude_items, target)
+                return claude_items
+            log.warning("Claude extraction returned 0 items — using CSS results (%d items)", len(css_items))
 
         return css_items
 
@@ -2372,6 +2423,80 @@ class ScraperAgent:
 
         log.info("Chunked LLM extraction total: %d items from %d containers", len(all_items), len(containers))
         return all_items
+
+    async def _claude_extract_items(
+        self,
+        html: str,
+        target: ScrapingTarget,
+    ) -> list[dict[str, str | None]]:
+        """Last-resort extraction using Claude Opus 4.6 via Azure AI Foundry.
+
+        Sends the simplified HTML to Claude with a structured extraction prompt.
+        Claude's large context window and strong reasoning make it effective
+        at extracting data from pages where CSS selectors and SmartScraper fail.
+        """
+        from app.utils.llm import chat_completion_claude_with_meta
+        from app.utils.html import simplify_html
+        from app.prompts import load_prompt
+
+        html_simple = simplify_html(html, aggressive=True)
+        # Claude has a large context window but let's be reasonable
+        if len(html_simple) > 150_000:
+            html_simple = html_simple[:150_000] + "\n<!-- truncated -->"
+
+        fields = list(target.field_selectors.keys())
+        if target.detail_link_selector and "detail_link" not in fields:
+            fields.append("detail_link")
+
+        system_prompt = load_prompt("claude_extraction")
+        user_content = (
+            f"Extract all items from this listing page HTML.\n\n"
+            f"Expected fields: {', '.join(fields)}\n\n"
+            f"```html\n{html_simple}\n```"
+        )
+
+        try:
+            claude_resp = await chat_completion_claude_with_meta(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                max_tokens=16_000,
+                response_format={"type": "json_object"},
+            )
+            result = json.loads(claude_resp.get("content") or "{}")
+        except Exception as exc:
+            log.warning("Claude extraction failed: %s", exc)
+            return []
+
+        self._provider_stats["claude"] = {
+            "input_tokens": int(claude_resp.get("input_tokens") or 0),
+            "output_tokens": int(claude_resp.get("output_tokens") or 0),
+            "estimated_cost_usd": float(claude_resp.get("estimated_cost_usd") or 0.0),
+            "latency_ms": float(claude_resp.get("latency_ms") or 0.0),
+            "model": settings.azure_claude_deployment,
+        }
+
+        items = result.get("items", [])
+        if not isinstance(items, list):
+            return []
+
+        # Normalize to dict[str, str | None]
+        normalized: list[dict[str, str | None]] = []
+        for raw_item in items:
+            if not isinstance(raw_item, dict):
+                continue
+            record: dict[str, str | None] = {}
+            for k, v in raw_item.items():
+                record[k] = str(v) if v is not None else None
+            normalized.append(record)
+
+        log.info(
+            "Claude extraction: %d items, notes=%s",
+            len(normalized),
+            result.get("extraction_notes", ""),
+        )
+        return normalized
 
     def _backfill_detail_links(
         self,

@@ -39,7 +39,8 @@ ScraperAgent ──► executes plan, returns raw PageData
      │    ├── Crawl4AI fetching (if enabled)
      │    ├── CSS Selector extraction
      │    ├── ScrapeGraphAI extraction
-     │    ├── universal-scraper extraction (optional)
+   │    ├── universal-scraper extraction (optional)
+   │    ├── Claude extraction fallback (optional)
      │    ├── Detail page fetching (Crawl4AI, Playwright, or httpx)
      │    └── API interception
      │
@@ -51,7 +52,7 @@ ParserAgent ──► normalizes raw data into SellerLead records
 OutputAgent ──► quality pass (dedup), writes JSON + CSV
 ```
 
-The pipeline has a **preview checkpoint**: after planning, the system scrapes a single item using up to four extraction methods (CSS, ScrapeGraphAI, Crawl4AI, universal-scraper), parses it, and pauses for user review. Only after the user confirms does the full crawl proceed.
+The pipeline has a **preview checkpoint**: after planning, the system scrapes a single item using up to six extraction sources (CSS, ScrapeGraphAI, Crawl4AI, universal-scraper, listing API interception, Claude), parses them, and pauses for user review. Only after the user confirms does the full crawl proceed.
 
 ---
 
@@ -136,6 +137,10 @@ The `PlannerAgent` is the most critical stage. It analyses the target page's HTM
    - Scores each response to find the most likely detail API (filters noise: analytics, chat widgets, trackers)
    - Sends the captured API URL and response to GPT with the `planner_detail_api` prompt
    - Produces a `DetailApiPlan` with `api_url_template`, `id_selector`, `id_attribute`, `id_regex`
+
+9. **Vision fallback planning** (optional)
+   - If selector quality remains poor after retries (low container count, low hit ratio, weak content test), planner captures a page screenshot and sends screenshot + simplified HTML to GPT-4o.
+   - If vision plan validates better than text-only plan, it replaces the original plan.
 
 ### ScrapingPlan Schema (key fields)
 
@@ -258,6 +263,27 @@ For sites with a discovered JSON API endpoint:
 4. Converts JSON items to string-value dicts for downstream parsing
 
 ### 4.7 Item Extraction (`_extract_items`)
+
+### 4.8 Claude Fallback Extraction
+
+When CSS + Smart extraction fail (or when method `claude` is selected), scraper calls Claude Opus 4.6 through Azure AI Foundry's Anthropic Messages endpoint.
+
+Key behaviors:
+- Uses simplified HTML + expected field list.
+- Returns JSON records and extraction notes.
+- Captures provider metadata for telemetry: latency, input/output tokens, estimated cost.
+- Controlled by policy flags:
+   - `CLAUDE_FALLBACK_ONLY` (OpenAI-first default)
+   - `CLAUDE_MAX_RETRIES_PER_STAGE`
+   - circuit-breaker settings.
+
+### 4.9 Provider Health and Telemetry
+
+- Startup pings providers (OpenAI, Vision, Claude).
+- `/health` includes provider readiness and runtime circuit-breaker state.
+- Per-job provider telemetry is exposed via:
+   - `GET /api/v1/crawl/{job_id}/telemetry`
+   - includes fallback reasons, latency, and estimated token/cost metrics.
 
 The core CSS extraction logic:
 

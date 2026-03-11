@@ -36,6 +36,7 @@ Use these categories for triage and reporting:
 1. Add a smoke profile entry for the site in `test/fixtures/website_profiles.example.json`.
 2. Run smoke tests with `scripts/smoke_sites.py`.
 3. Inspect `diagnostics.counters` and `diagnostics.failures` for the job.
+4. Inspect provider telemetry and cost/fallback signals from `/api/v1/crawl/{job_id}/telemetry`.
 4. If failed, map the top issue to one taxonomy category.
 5. Apply generic fix in planner/scraper/parser path, not site-specific hardcoding.
 6. Re-run smoke profile and confirm improved status and counters.
@@ -71,12 +72,19 @@ Then classify root cause:
 - Repeated pagination empty pages -> `pagination_mismatch`.
 - Detail backlog on partial jobs -> `detail_enrichment`.
 - API/timeout responses -> `network_transient` or `anti_bot`.
+- Claude provider disabled or repeated provider errors -> `unknown` (include circuit-breaker context in details).
+
+Also check provider runtime health:
+- `GET /health` should be `ok` or intentionally `degraded` (if non-critical provider disabled).
+- If `claude` is degraded, verify breaker state and cooldown in health payload.
 
 ## Guardrails
 
 - Do not add direct host/domain conditionals in extraction logic unless approved exception.
 - Any patch for one site must improve at least one smoke profile that is not that site.
 - Add/adjust profile expectations only after validating behavior with a full run.
+- Keep `CLAUDE_FALLBACK_ONLY=true` for normal operation unless explicitly evaluating Claude-first behavior.
+- Keep `CLAUDE_MAX_RETRIES_PER_STAGE=1` to control cost blast radius on bad pages.
 
 ## Rollout Practice
 
@@ -93,6 +101,12 @@ For each report file:
 3. For `partial`, verify remaining detail pages and whether resume succeeds.
 4. Compare `method_switches` and `empty_pages` to prior report.
 5. Open a follow-up issue when trend worsens across two runs.
+
+Provider telemetry review:
+
+1. Check `provider_summary.estimated_total_cost_usd` for unexpected spikes.
+2. Verify `provider_events` contain fallback reasons for method switches.
+3. Confirm `claude_consecutive_errors` is stable and breaker is not repeatedly opening.
 
 ## Trend Guardrail Command
 

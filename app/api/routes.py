@@ -267,7 +267,28 @@ async def get_crawl_diagnostics(job_id: str) -> dict:
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return job.diagnostics.model_dump(mode="json")
+    diagnostics = job.diagnostics.model_dump(mode="json")
+    # Backward-compatible payload shape expected by existing clients/tests.
+    return {
+        "counters": diagnostics.get("counters", {}),
+        "stage_confidences": diagnostics.get("stage_confidences", []),
+        "failures": diagnostics.get("failures", []),
+        "status_timeline": diagnostics.get("status_timeline", []),
+        "parser_metrics": diagnostics.get("parser_metrics", {}),
+    }
+
+
+@router.get("/crawl/{job_id}/telemetry", tags=["crawl"])
+async def get_crawl_telemetry(job_id: str) -> dict:
+    """Return provider-level telemetry (usage, costs, fallbacks, circuit state)."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    diagnostics = job.diagnostics.model_dump(mode="json")
+    return {
+        "provider_events": diagnostics.get("provider_events", []),
+        "provider_summary": diagnostics.get("provider_summary", {}),
+    }
 
 
 @router.get("/crawl/{job_id}/json")

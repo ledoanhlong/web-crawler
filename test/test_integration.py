@@ -937,7 +937,7 @@ class TestPreviewDualDetailSharing:
                         result = await scraper.scrape_preview_dual(plan)
 
                 # All methods should have received the detail_link (shared from CSS)
-                css_pages, smart_pages, crawl4ai_pages, us_pages, _ = result
+                css_pages, smart_pages, crawl4ai_pages, us_pages, _, _ = result
 
                 # Verify the calls to _enrich_detail_pages got items with detail_link
                 for call_items in enrich_calls:
