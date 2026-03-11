@@ -47,6 +47,11 @@ log = get_logger(__name__)
 # Batch size for detail page fetching — checked between batches for cancel
 _DETAIL_BATCH_SIZE = 10
 
+# Per-page timeout (seconds) for both detail pages and sub-link pages.
+# Applied via asyncio.wait_for() to prevent a single stale server from
+# blocking the whole enrichment run.
+_PAGE_FETCH_TIMEOUT_S = 60.0
+
 
 @dataclass
 class EnrichResult:
@@ -275,7 +280,7 @@ class ScraperAgent:
             html = await fetch_page(plan.url)
 
         if not html:
-            return [], [], [], []
+            return [], [], [], [], []
 
         # If CSS found 0 items and we used httpx, retry with Playwright
         preview_html = self._slice_html_for_preview(html, plan.target.item_container_selector)
@@ -1394,13 +1399,21 @@ class ScraperAgent:
                             item["detail_link"] = link
                             log.debug("Using field '%s' as detail link: %s", key, link)
                             break
-                if link:
-                    if link.startswith("/"):
-                        link = base_origin + link
-                    elif not link.startswith("http"):
-                        link = urljoin(plan.url, link)
-                    item["detail_link"] = link
-                    all_detail_urls.append(link)
+                # Skip non-navigable values: fragment anchors (#…) and JavaScript
+                # pseudo-URLs would cause the listing page itself to be re-fetched as
+                # a "detail page", wasting a request and producing garbage enrichment.
+                # Use case-insensitive check for javascript: since browsers accept any case.
+                if not link or link.startswith("#") or link.lower().startswith("javascript:"):
+                    continue
+                if link.startswith("/"):
+                    link = base_origin + link
+                elif not link.startswith("http"):
+                    # Resolve relative path against the page where the item was found
+                    # (pd.url), NOT plan.url.  plan.url is the listing root and may be
+                    # a different path from the paginated page the item came from.
+                    link = urljoin(pd.url, link)
+                item["detail_link"] = link
+                all_detail_urls.append(link)
 
         if not all_detail_urls:
             log.debug(
@@ -1424,9 +1437,6 @@ class ScraperAgent:
         total_detail = len(unique_urls)
         log.info("Enriching %d detail page(s)", total_detail)
 
-        # Per-page timeout: 60 seconds per detail page to prevent hangs
-        DETAIL_PAGE_TIMEOUT_S = 60
-
         # Track fetched/remaining for resume
         fetched_urls: list[str] = []
         remaining_urls: list[str] = []
@@ -1449,15 +1459,15 @@ class ScraperAgent:
                     try:
                         html = await asyncio.wait_for(
                             fetch_page_js(browser, url),
-                            timeout=DETAIL_PAGE_TIMEOUT_S,
+                            timeout=_PAGE_FETCH_TIMEOUT_S,
                         )
                         log.info("Detail page %d/%d: %s", idx, total_detail, url)
                         await asyncio.sleep(settings.request_delay_ms / 1000)
                         return url, html
                     except asyncio.TimeoutError:
                         log.warning(
-                            "Detail page %d/%d timed out after %ds: %s",
-                            idx, total_detail, DETAIL_PAGE_TIMEOUT_S, url,
+                            "Detail page %d/%d timed out after %gs: %s",
+                            idx, total_detail, _PAGE_FETCH_TIMEOUT_S, url,
                         )
                     except Exception as exc:
                         log.warning("Failed detail page %d/%d %s: %s", idx, total_detail, url, exc)
@@ -1505,8 +1515,9 @@ class ScraperAgent:
                         "detail_url": f"(batch {batch_start // _DETAIL_BATCH_SIZE + 1})",
                     })
                 batch_htmls = await fetch_pages(batch)
-                detail_htmls.update(batch_htmls)
-                fetched_urls.extend(url for url in batch if url in batch_htmls)
+                # Only store successfully fetched pages (non-empty HTML)
+                detail_htmls.update({u: h for u, h in batch_htmls.items() if h})
+                fetched_urls.extend(url for url in batch if batch_htmls.get(url))
 
             log.info("Detail enrichment complete: fetched %d/%d pages", len(detail_htmls), total_detail)
 
@@ -1591,7 +1602,12 @@ class ScraperAgent:
             async with get_browser() as browser:
                 for url in unique_sub_urls:
                     try:
-                        sub_htmls[url] = await fetch_page_js(browser, url)
+                        sub_htmls[url] = await asyncio.wait_for(
+                            fetch_page_js(browser, url),
+                            timeout=_PAGE_FETCH_TIMEOUT_S,
+                        )
+                    except asyncio.TimeoutError:
+                        log.warning("Sub-link page timed out after %gs: %s", _PAGE_FETCH_TIMEOUT_S, url)
                     except Exception as exc:
                         log.warning("Failed sub-link page %s: %s", url, exc)
                     await asyncio.sleep(settings.request_delay_ms / 1000)
@@ -1710,6 +1726,7 @@ class ScraperAgent:
         those cookies automatically included.
         """
         results: dict[str, dict] = {}
+        api_call_timeout = float(settings.request_timeout_s)
         async with get_browser() as browser:
             page = await create_page(browser)
             try:
@@ -1720,25 +1737,30 @@ class ScraperAgent:
 
                 for api_url in api_urls:
                     try:
-                        data = await page.evaluate(
-                            """async (url) => {
-                                const resp = await fetch(url, {
-                                    credentials: "include",
-                                    headers: {
-                                        "Accept": "application/json, text/plain, */*",
-                                        "Referer": window.location.href
-                                    }
-                                });
-                                if (!resp.ok) return null;
-                                return await resp.json();
-                            }""",
-                            api_url,
+                        data = await asyncio.wait_for(
+                            page.evaluate(
+                                """async (url) => {
+                                    const resp = await fetch(url, {
+                                        credentials: "include",
+                                        headers: {
+                                            "Accept": "application/json, text/plain, */*",
+                                            "Referer": window.location.href
+                                        }
+                                    });
+                                    if (!resp.ok) return null;
+                                    return await resp.json();
+                                }""",
+                                api_url,
+                            ),
+                            timeout=api_call_timeout,
                         )
                         if data and isinstance(data, dict):
                             results[api_url] = data
                             log.debug("Browser-fetched API %s — %d keys", api_url, len(data))
                         else:
                             log.warning("Browser API fetch returned no data: %s", api_url)
+                    except asyncio.TimeoutError:
+                        log.warning("Browser API fetch timed out after %gs: %s", api_call_timeout, api_url)
                     except Exception as exc:
                         log.warning("Browser API fetch failed %s: %s", api_url, exc)
                     await asyncio.sleep(settings.request_delay_ms / 1000)
@@ -2077,6 +2099,14 @@ class ScraperAgent:
                             match = re.search(detail_api_plan.id_regex, str(raw_id))
                             if match:
                                 raw_id = match.group(1)
+                            else:
+                                # Regex provided but didn't match — don't use a garbage value
+                                # as an API ID since it would produce a broken URL.
+                                log.debug(
+                                    "id_regex '%s' did not match raw_id '%s' — skipping API ID",
+                                    detail_api_plan.id_regex, raw_id,
+                                )
+                                raw_id = None
                         record["_detail_api_id"] = str(raw_id) if raw_id else None
                 except Exception as exc:
                     log.warning("Invalid id_selector '%s': %s", detail_api_plan.id_selector, exc)
