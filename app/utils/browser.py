@@ -458,16 +458,26 @@ async def intercept_detail_api(
         else:
             await asyncio.sleep(3)
 
-        # Find the first item container
-        container = await page.query_selector(item_container_selector)
-        if not container:
-            log.warning("No item container found for selector: %s", item_container_selector)
+        # Find item containers and locate the detail button in one of them.
+        # query_selector only returns the FIRST matching element, which may be a
+        # featured/pinned row with a different DOM structure (no button).  Trying
+        # up to 5 containers ensures we reach a regular item.
+        containers = await page.query_selector_all(item_container_selector)
+        if not containers:
+            log.warning("No item containers found for selector: %s", item_container_selector)
             return None, None
 
-        # Find the detail button within it
-        button = await container.query_selector(detail_button_selector)
+        button = None
+        for container in containers[:5]:
+            button = await container.query_selector(detail_button_selector)
+            if button:
+                break
+
         if not button:
-            log.warning("No detail button found for selector: %s", detail_button_selector)
+            log.warning(
+                "No detail button found in any of %d container(s) for selector: %s",
+                len(containers[:5]), detail_button_selector,
+            )
             return None, None
 
         # Scroll button into view and let the page settle

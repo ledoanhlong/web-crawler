@@ -1087,3 +1087,108 @@ class TestDetailExtractionCssReality:
         )
         result = ParserAgent._extract_detail_fields_css(html, plan)
         assert "category: Electronics" in result
+
+
+# ===========================================================================
+# Bug C: intercept_detail_api — try multiple containers for the detail button
+# ===========================================================================
+
+class TestInterceptDetailApiMultiContainer:
+    """Regression test for Bug C: the JS detail button search must try multiple
+    item containers, not just the first one.
+
+    Sites sometimes have a 'featured' or 'pinned' first row with a different
+    DOM structure (no detail button).  The old code called query_selector()
+    and gave up if that first element lacked the button.  The fix uses
+    query_selector_all() and iterates up to 5 containers.
+    """
+
+    @pytest.mark.asyncio
+    async def test_button_found_in_second_container(self):
+        """If the first container has no detail button, the second is tried."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.utils.browser import intercept_detail_api
+
+        # Build fake Playwright objects ---
+        # container_no_btn: first container, has no button
+        container_no_btn = AsyncMock()
+        container_no_btn.query_selector = AsyncMock(return_value=None)
+
+        # container_with_btn: second container, has the button
+        fake_button = AsyncMock()
+        fake_button.scroll_into_view_if_needed = AsyncMock()
+        fake_button.evaluate = AsyncMock(return_value=None)  # JS click
+
+        container_with_btn = AsyncMock()
+        container_with_btn.query_selector = AsyncMock(return_value=fake_button)
+
+        # page mock ---
+        fake_page = AsyncMock()
+        fake_page.goto = AsyncMock()
+        fake_page.close = AsyncMock()
+        fake_page.evaluate = AsyncMock(return_value=None)
+        fake_page.wait_for_load_state = AsyncMock()
+
+        # First call returns two containers; second is the one with the button
+        fake_page.query_selector_all = AsyncMock(
+            return_value=[container_no_btn, container_with_btn]
+        )
+
+        # Captured responses — simulate one valid JSON API response
+        captured_responses: list[tuple[str, dict]] = []
+
+        def _on_fake(event_name, handler):
+            # Register the handler so we can call it manually
+            if event_name == "response":
+                fake_page._response_handler = handler
+
+        fake_page.on = MagicMock(side_effect=_on_fake)
+
+        with (
+            patch("app.utils.browser.create_page", new_callable=AsyncMock, return_value=fake_page),
+            patch("app.utils.browser.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            # Simulate a JSON response being captured before networkidle
+            async def _goto_side_effect(*_a, **_kw):
+                pass  # navigation does nothing special in the mock
+
+            fake_page.goto.side_effect = _goto_side_effect
+
+            # Run intercept; it must not bail out at the first (buttonless) container
+            api_url, api_body = await intercept_detail_api(
+                MagicMock(),  # browser (not used directly, create_page is patched)
+                "https://example.com/exhibitors",
+                ".exhibitor-card",
+                "button.view-details",
+            )
+
+        # The button in the SECOND container was clicked (evaluate was called)
+        fake_button.scroll_into_view_if_needed.assert_called_once()
+        fake_button.evaluate.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_containers_returns_none(self):
+        """Returns (None, None) when no containers match at all."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.utils.browser import intercept_detail_api
+
+        fake_page = AsyncMock()
+        fake_page.goto = AsyncMock()
+        fake_page.close = AsyncMock()
+        fake_page.query_selector_all = AsyncMock(return_value=[])
+        fake_page.on = MagicMock()
+
+        with (
+            patch("app.utils.browser.create_page", new_callable=AsyncMock, return_value=fake_page),
+            patch("app.utils.browser.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await intercept_detail_api(
+                MagicMock(),
+                "https://example.com/exhibitors",
+                ".missing-selector",
+                "button.view-details",
+            )
+
+        assert result == (None, None)
