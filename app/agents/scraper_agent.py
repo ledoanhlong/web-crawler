@@ -275,7 +275,7 @@ class ScraperAgent:
             html = await fetch_page(plan.url)
 
         if not html:
-            return [], [], [], []
+            return [], [], [], [], []
 
         # If CSS found 0 items and we used httpx, retry with Playwright
         preview_html = self._slice_html_for_preview(html, plan.target.item_container_selector)
@@ -1505,8 +1505,9 @@ class ScraperAgent:
                         "detail_url": f"(batch {batch_start // _DETAIL_BATCH_SIZE + 1})",
                     })
                 batch_htmls = await fetch_pages(batch)
-                detail_htmls.update(batch_htmls)
-                fetched_urls.extend(url for url in batch if url in batch_htmls)
+                # Only store successfully fetched pages (non-empty HTML)
+                detail_htmls.update({u: h for u, h in batch_htmls.items() if h})
+                fetched_urls.extend(url for url in batch if batch_htmls.get(url))
 
             log.info("Detail enrichment complete: fetched %d/%d pages", len(detail_htmls), total_detail)
 
@@ -2077,6 +2078,14 @@ class ScraperAgent:
                             match = re.search(detail_api_plan.id_regex, str(raw_id))
                             if match:
                                 raw_id = match.group(1)
+                            else:
+                                # Regex provided but didn't match — don't use a garbage value
+                                # as an API ID since it would produce a broken URL.
+                                log.debug(
+                                    "id_regex '%s' did not match raw_id '%s' — skipping API ID",
+                                    detail_api_plan.id_regex, raw_id,
+                                )
+                                raw_id = None
                         record["_detail_api_id"] = str(raw_id) if raw_id else None
                 except Exception as exc:
                     log.warning("Invalid id_selector '%s': %s", detail_api_plan.id_selector, exc)

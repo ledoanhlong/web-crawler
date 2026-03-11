@@ -13,7 +13,6 @@ from app.models.schemas import DetailApiPlan, ScrapingTarget
 
 from .conftest import SAMPLE_EMPTY_HTML, SAMPLE_LISTING_HTML
 
-
 class TestExtractItems:
     """Test the CSS selector item extraction logic."""
 
@@ -129,7 +128,12 @@ class TestExtractItems:
         assert items[0]["phone"] is None
 
     def test_api_id_no_match(self, sample_target: ScrapingTarget):
-        """When regex doesn't match, _detail_api_id is None."""
+        """When regex doesn't match, _detail_api_id is None (not the raw attribute value).
+
+        Setting _detail_api_id to None prevents constructing a broken API URL
+        by substituting a raw unmatched attribute (e.g. '/hallplan?actionItem=101')
+        into the API URL template placeholder.
+        """
         detail_api = DetailApiPlan(
             api_url_template="https://example.com/api/{id}",
             id_selector="a.hall-map",
@@ -141,9 +145,9 @@ class TestExtractItems:
             SAMPLE_LISTING_HTML, sample_target, detail_api
         )
 
-        # ID should still be the raw href since regex didn't match
-        # (the regex check only replaces if it matches)
-        assert items[0].get("_detail_api_id") is not None
+        # When regex is provided but doesn't match, the ID is None to avoid
+        # substituting a garbage value into the API URL template.
+        assert items[0].get("_detail_api_id") is None
 
     def test_detail_link_selector_empty(self):
         """Empty detail_link_selector is handled without error."""
@@ -195,3 +199,100 @@ class TestResolvePageUrls:
         urls = self.scraper._resolve_page_urls(sample_plan)
         assert len(urls) == 3
         assert urls[0] == "https://example.com/exhibitors?page=1"
+
+
+class TestDetailEnrichmentFiltering:
+    """Tests for _enrich_detail_pages detail HTML filtering (Bug #2 fix)."""
+
+    def setup_method(self):
+        self.scraper = ScraperAgent()
+
+    @pytest.mark.asyncio
+    async def test_failed_fetches_excluded_from_detail_htmls(self, sample_plan):
+        """Empty HTML strings from failed fetches must not be stored in detail_pages.
+
+        Regression test for Bug #2: fetch_pages() returns "" for failed URLs,
+        which the old code stored verbatim.  After the fix, only non-empty HTML
+        is merged into detail_pages and fetched_urls.
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from app.models.schemas import PageData
+
+        good_url = "https://example.com/exhibitors/acme-corp"
+        bad_url = "https://example.com/exhibitors/beta-industries"
+
+        items = [
+            {"name": "Acme Corp", "detail_link": good_url},
+            {"name": "Beta Industries", "detail_link": bad_url},
+        ]
+        pages = [PageData(url="https://example.com/exhibitors", items=items)]
+
+        # Simulate fetch_pages returning "" for the bad URL (network failure)
+        mock_batch_htmls = {
+            good_url: "<html><body><p>Acme Corp Detail</p></body></html>",
+            bad_url: "",  # failed fetch
+        }
+
+        with patch("app.agents.scraper_agent.fetch_pages", new_callable=AsyncMock, return_value=mock_batch_htmls):
+            enrich_result = await self.scraper._enrich_detail_pages(pages, sample_plan)
+
+        result_pages = enrich_result.pages
+        all_detail_pages: dict[str, str] = {}
+        for pd in result_pages:
+            all_detail_pages.update(pd.detail_pages)
+
+        # Only the successfully fetched URL should be in detail_pages
+        assert good_url in all_detail_pages
+        assert all_detail_pages[good_url]  # non-empty
+        assert bad_url not in all_detail_pages, (
+            f"Failed fetch (empty HTML) must not appear in detail_pages; "
+            f"found {bad_url!r} with html={all_detail_pages.get(bad_url)!r}"
+        )
+
+        # fetched_urls should only include the successfully fetched URL
+        assert good_url in enrich_result.fetched_urls
+        assert bad_url not in enrich_result.fetched_urls
+
+    def test_api_id_regex_no_match_returns_none(self, sample_target: ScrapingTarget):
+        """Confirms the API ID is None when the regex doesn't match the attribute value.
+
+        This is a regression test for Bug #3: previously the raw (unmatched)
+        attribute value was stored, which would produce a broken API URL like
+        https://example.com/api//hallplan?actionItem=101/profile.
+        """
+        detail_api = DetailApiPlan(
+            api_url_template="https://example.com/api/{id}/profile",
+            id_selector="a.hall-map",
+            id_attribute="href",
+            id_regex=r"badpattern=(\d+)",  # deliberately won't match
+        )
+
+        items = self.scraper._extract_items(
+            SAMPLE_LISTING_HTML, sample_target, detail_api
+        )
+
+        # All items should have _detail_api_id == None (regex didn't match)
+        for item in items:
+            assert item.get("_detail_api_id") is None, (
+                f"Expected None but got {item.get('_detail_api_id')!r}. "
+                "A non-matching regex must not produce a garbage API ID."
+            )
+
+    def test_api_id_regex_match_returns_captured_group(self, sample_target: ScrapingTarget):
+        """When the regex matches, only the capture group value is stored as the ID."""
+        detail_api = DetailApiPlan(
+            api_url_template="https://example.com/api/{id}/profile",
+            id_selector="a.hall-map",
+            id_attribute="href",
+            id_regex=r"actionItem=(\d+)",  # matches correctly
+        )
+
+        items = self.scraper._extract_items(
+            SAMPLE_LISTING_HTML, sample_target, detail_api
+        )
+
+        # The regex capture group should be the clean numeric ID
+        assert items[0]["_detail_api_id"] == "101"
+        assert items[1]["_detail_api_id"] == "102"
+        assert items[2]["_detail_api_id"] == "103"
