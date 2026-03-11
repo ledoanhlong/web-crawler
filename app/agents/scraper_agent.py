@@ -2098,7 +2098,17 @@ class ScraperAgent:
                             match = re.search(detail_api_plan.id_regex, str(raw_id))
                             if match:
                                 raw_id = match.group(1)
-                        record["_detail_api_id"] = str(raw_id) if raw_id else None
+                        raw_id_str = str(raw_id).strip() if raw_id else ""
+                        # Guard: if raw_id looks like a full URL/href (contains ? or &),
+                        # it means the regex didn't extract the ID properly — skip it
+                        if raw_id_str and ("?" in raw_id_str or "&" in raw_id_str or raw_id_str.startswith("/")):
+                            log.warning(
+                                "Extracted _detail_api_id looks like a raw href ('%s'), skipping — "
+                                "id_regex may be missing or wrong",
+                                raw_id_str[:80],
+                            )
+                            raw_id_str = ""
+                        record["_detail_api_id"] = raw_id_str or None
                 except Exception as exc:
                     log.warning("Invalid id_selector '%s': %s", detail_api_plan.id_selector, exc)
 
@@ -2464,7 +2474,14 @@ class ScraperAgent:
                 max_tokens=16_000,
                 response_format={"type": "json_object"},
             )
-            result = json.loads(claude_resp.get("content") or "{}")
+            raw_content = (claude_resp.get("content") or "").strip()
+            # Strip markdown code fences if Claude wrapped the JSON
+            if raw_content.startswith("```"):
+                raw_content = re.sub(r"^```(?:json)?\s*\n?", "", raw_content)
+                raw_content = re.sub(r"\n?```\s*$", "", raw_content)
+            if not raw_content:
+                raw_content = "{}"
+            result = json.loads(raw_content)
         except Exception as exc:
             log.warning("Claude extraction failed: %s", exc)
             return []

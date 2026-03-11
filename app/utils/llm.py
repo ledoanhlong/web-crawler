@@ -378,6 +378,12 @@ async def chat_completion_claude_with_meta(
                 if isinstance(part, dict) and part.get("type") == "text":
                     text_parts.append(str(part.get("text") or ""))
             content = "\n".join(p for p in text_parts if p).strip()
+            if not content:
+                log.warning(
+                    "Claude returned empty text content; stop_reason=%s, raw_parts=%d",
+                    data.get("stop_reason", "unknown"),
+                    len(parts),
+                )
 
             usage = data.get("usage") or {}
             input_tokens = int(usage.get("input_tokens") or 0)

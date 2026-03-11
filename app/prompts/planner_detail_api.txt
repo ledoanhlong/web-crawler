@@ -36,5 +36,7 @@ Important notes:
 - The id_regex must use standard Python regex syntax. Use \\d for digits, \\. for literal dots, etc.
 - If the ID appears in multiple places, prefer the most direct/reliable source (e.g. a data attribute over a class name).
 - If a compound ID like "event2026.3043124" appears in the URL, determine whether the whole compound ID is needed or just part of it. Check the item HTML to see what form the ID takes there.
+- CRITICAL: When using id_attribute="href", you MUST also provide an id_regex that extracts just the ID portion from the URL. Never use the raw href value as-is — it contains path segments and query parameters that will corrupt the API URL template. For example, if the href is "/floorplan?actionItem=3043124&_event=beauty2026" and the API URL contains "beauty2026.3043124", you must build a regex to extract those parts.
+- Prefer data attributes (data-id, data-entity-id, etc.) over href as they are cleaner sources for IDs.
 
 Return ONLY valid JSON. No markdown, no explanation.

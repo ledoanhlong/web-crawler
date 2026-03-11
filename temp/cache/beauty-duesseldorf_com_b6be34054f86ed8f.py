@@ -1,7 +1,7 @@
 # Cached extraction code
 # URL: https://www.beauty-duesseldorf.com/vis/v1/en/directory/a
 # Structural Hash: b6be34054f86ed8f5a2905049b75408d6965f632e2c7804e5d5a1f6dc298da64
-# Generated at: 2026-03-11T20:08:55.030247
+# Generated at: 2026-03-11T23:56:47.803504
 
 from bs4 import BeautifulSoup
 import re
@@ -11,205 +11,187 @@ def extract_data(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     extracted_data = []
 
-    def safe_text(el):
+    def safe_get_text(el):
         try:
-            if not el:
-                return ""
-            return " ".join(el.get_text(" ", strip=True).split())
+            return el.get_text(" ", strip=True)
         except Exception:
-            return ""
+            return None
 
-    def safe_attr(el, attr):
+    def safe_get_attr(el, attr):
         try:
-            if not el:
-                return ""
-            return (el.get(attr) or "").strip()
+            val = el.get(attr)
+            return val.strip() if isinstance(val, str) else val
         except Exception:
-            return ""
+            return None
 
-    def normalize_booth(text):
-        try:
-            if not text:
-                return ""
-            t = " ".join(text.split())
-            # common patterns: "Booth: 123", "Stand 4-123", "Booth 12A"
-            m = re.search(r'\b(?:booth|stand)\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\-\/\s]*)', t, re.I)
-            return m.group(1).strip() if m else ""
-        except Exception:
-            return ""
-
-    def split_location(location_text):
-        try:
-            if not location_text:
-                return ("", "")
-            # heuristics: "City, Country" or "City - Country"
-            parts = [p.strip() for p in re.split(r"\s*(?:,|\s-\s|\s\|\s)\s*", location_text) if p.strip()]
-            if len(parts) >= 2:
-                return (parts[0], parts[-1])
-            return ("", parts[0] if parts else "")
-        except Exception:
-            return ("", "")
-
-    def default_record():
+    def make_record():
         return {
-            "name": "",
-            "type": "",
-            "location_text": "",
-            "city": "",
-            "country": "",
-            "booth": "",
-            "booth_map_link": "",
-            "logo_img": "",
-            "details_button": ""
+            "name": None,
+            "listing_type": None,
+            "location_text": None,
+            "hall_stand": None,
+            "hall_map_url": None,
+            "logo_img": None,
+            "details_button": None,
         }
 
     try:
-        # The provided HTML is a minimal shell; real content likely rendered in #finder-app.
-        # Try to locate any repeated "card/list item" patterns that may appear in full HTML.
-        candidate_selectors = [
-            "[data-testid*='exhibitor']",
-            "[class*='exhibitor']",
-            "[class*='company']",
-            "[class*='profile']",
-            "[class*='card']",
-            "article",
-            "li",
-            "div"
-        ]
+        # The provided HTML sample shows a JS app mount point; full data likely renders client-side.
+        # Still attempt robust extraction for server-rendered/fallback content in full HTML.
 
-        items = []
+        container = None
+        try:
+            container = soup.select_one("#finder-app") or soup.select_one("main#main") or soup.body
+        except Exception as e:
+            print(f"Error locating container: {e}")
+            container = soup
+
+        # Find likely "card"/"listing" elements broadly (scales to many items)
+        candidates = []
+        try:
+            candidates = container.select(
+                "article, li, div[class*='card'], div[class*='listing'], div[class*='result'], div[class*='exhibitor']"
+            )
+        except Exception as e:
+            print(f"Error selecting candidate elements: {e}")
+            candidates = []
+
+        # If overly broad selection yields nothing, fallback to elements that look like records
+        if not candidates:
+            try:
+                candidates = container.find_all(["article", "li", "div"], recursive=True)
+            except Exception as e:
+                print(f"Error in fallback candidates: {e}")
+                candidates = []
+
+        # Heuristic: keep only elements that contain at least one likely field marker
+        filtered = []
+        for el in candidates:
+            try:
+                if el.select_one("a[href*='detail'], a[href*='exhib'], a[href*='profile'], button, h1, h2, h3, img"):
+                    filtered.append(el)
+            except Exception:
+                continue
+
+        # Deduplicate by object id and favor smaller "card-like" nodes
         seen = set()
-
-        for sel in candidate_selectors:
+        items = []
+        for el in filtered:
             try:
-                for el in soup.select(sel):
-                    # filter to likely records: has a name-like element or a details link/button
-                    has_name = bool(el.select_one("h1,h2,h3,h4,[class*='name'],[class*='title'],a[href*='detail'],a[href*='profile']"))
-                    has_logo = bool(el.select_one("img[src],[style*='background-image']"))
-                    has_details = bool(el.select_one("a[href],button"))
-                    if not (has_name or has_logo or has_details):
-                        continue
+                if id(el) in seen:
+                    continue
+                seen.add(id(el))
+                items.append(el)
+            except Exception:
+                continue
 
-                    key = (el.name, safe_attr(el, "id"), " ".join(el.get("class", []))[:200], str(el)[:200])
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    items.append(el)
+        for item in items:
+            record = make_record()
+
+            # name
+            try:
+                name_el = (
+                    item.select_one("[data-testid*='name'], [data-test*='name'], [class*='name']")
+                    or item.select_one("h1, h2, h3")
+                    or item.select_one("a[title]")
+                )
+                txt = safe_get_text(name_el)
+                if not txt and name_el and name_el.name == "a":
+                    txt = safe_get_attr(name_el, "title")
+                record["name"] = txt
             except Exception as e:
-                print(f"Selector scan error ({sel}): {e}")
+                print(f"Error extracting name: {e}")
 
-        # If nothing found, return empty list consistently
-        if not items:
-            return extracted_data
-
-        for el in items:
-            record = default_record()
-
+            # listing_type
             try:
-                # name
-                try:
-                    name_el = el.select_one(
-                        "h1,h2,h3,h4,"
-                        "[class*='name'],[class*='Name'],"
-                        "[class*='title'],[class*='Title'],"
-                        "a[href*='detail'],a[href*='profile']"
-                    )
-                    record["name"] = safe_text(name_el)
-                except Exception as e:
-                    print(f"Name extraction error: {e}")
+                lt_el = (
+                    item.select_one("[data-testid*='type'], [data-test*='type'], [class*='type'], [class*='category']")
+                    or item.find(string=re.compile(r"\b(Sponsor|Exhibitor|Partner|Vendor|Presenter|Speaker)\b", re.I))
+                )
+                if hasattr(lt_el, "get_text"):
+                    record["listing_type"] = safe_get_text(lt_el)
+                elif isinstance(lt_el, str):
+                    record["listing_type"] = lt_el.strip()
+            except Exception as e:
+                print(f"Error extracting listing_type: {e}")
 
-                # type (category/industry)
-                try:
-                    type_el = el.select_one(
-                        "[class*='type'],[class*='Type'],"
-                        "[class*='category'],[class*='Category'],"
-                        "[class*='industry'],[class*='Industry'],"
-                        "[data-testid*='type'],[data-testid*='category']"
-                    )
-                    record["type"] = safe_text(type_el)
-                except Exception as e:
-                    print(f"Type extraction error: {e}")
+            # location_text
+            try:
+                loc_el = (
+                    item.select_one("[data-testid*='location'], [data-test*='location'], [class*='location'], [class*='address']")
+                    or item.find(string=re.compile(r"\bHall\b|\bStand\b|\bBooth\b|\bPavilion\b", re.I))
+                )
+                if hasattr(loc_el, "get_text"):
+                    record["location_text"] = safe_get_text(loc_el)
+                elif isinstance(loc_el, str):
+                    record["location_text"] = loc_el.strip()
+            except Exception as e:
+                print(f"Error extracting location_text: {e}")
 
-                # location_text
-                try:
-                    loc_el = el.select_one(
-                        "[class*='location'],[class*='Location'],"
-                        "[class*='address'],[class*='Address'],"
-                        "[data-testid*='location'],[data-testid*='address']"
-                    )
-                    record["location_text"] = safe_text(loc_el)
-                except Exception as e:
-                    print(f"Location extraction error: {e}")
+            # hall_stand (try explicit hall/stand/booth fields, else parse from location_text)
+            try:
+                hs_el = (
+                    item.select_one("[data-testid*='stand'], [data-test*='stand'], [class*='stand'], [class*='booth']")
+                    or item.find(string=re.compile(r"\b(stand|booth)\b", re.I))
+                )
+                hs = None
+                if hasattr(hs_el, "get_text"):
+                    hs = safe_get_text(hs_el)
+                elif isinstance(hs_el, str):
+                    hs = hs_el.strip()
 
-                # city/country from location_text
-                try:
-                    city, country = split_location(record["location_text"])
-                    record["city"] = city
-                    record["country"] = country
-                except Exception as e:
-                    print(f"City/Country parsing error: {e}")
-
-                # booth + booth_map_link
-                try:
-                    booth_el = None
-                    for cand in el.select(
-                        "[class*='booth'],[class*='Booth'],"
-                        "[class*='stand'],[class*='Stand'],"
-                        "[data-testid*='booth'],[data-testid*='stand'],"
-                        "a[href*='booth'],a[href*='stand'],a[href*='map'],a[href*='floor']"
-                    ):
-                        txt = safe_text(cand)
-                        href = safe_attr(cand, "href")
-                        if re.search(r"\b(?:booth|stand)\b", txt, re.I) or href:
-                            booth_el = cand
-                            break
-
-                    booth_text = safe_text(booth_el)
-                    record["booth"] = normalize_booth(booth_text) or booth_text
-
-                    # map link: prefer explicit map/floor href nearby
-                    map_link = ""
-                    try:
-                        map_a = el.select_one("a[href*='map'],a[href*='floor'],a[href*='booth'],a[href*='stand']")
-                        map_link = safe_attr(map_a, "href")
-                    except Exception as e:
-                        print(f"Booth map link extraction error: {e}")
-                    record["booth_map_link"] = map_link
-                except Exception as e:
-                    print(f"Booth extraction error: {e}")
-
-                # logo_img
-                try:
-                    img = el.select_one("img[src],img[data-src],img[srcset]")
-                    if img:
-                        record["logo_img"] = safe_attr(img, "src") or safe_attr(img, "data-src") or safe_attr(img, "srcset")
+                if not hs and record.get("location_text"):
+                    m = re.search(r"\b(?:Hall\s*[-:]?\s*)?([A-Z0-9]+)\b.*?\b(?:Stand|Booth)\s*[-:]?\s*([A-Z0-9\-]+)\b", record["location_text"], re.I)
+                    if m:
+                        hs = f"Hall {m.group(1)} Stand {m.group(2)}"
                     else:
-                        # background-image fallback
-                        try:
-                            bg_el = el.select_one("[style*='background-image']")
-                            style = safe_attr(bg_el, "style")
-                            m = re.search(r'background-image\s*:\s*url\((["\']?)(.*?)\1\)', style, re.I)
-                            record["logo_img"] = m.group(2).strip() if m else ""
-                        except Exception as e:
-                            print(f"Logo background-image extraction error: {e}")
-                except Exception as e:
-                    print(f"Logo extraction error: {e}")
+                        m2 = re.search(r"\b(?:Stand|Booth)\s*[-:]?\s*([A-Z0-9\-]+)\b", record["location_text"], re.I)
+                        if m2:
+                            hs = m2.group(0)
 
-                # details_button (link or button to details)
-                try:
-                    details = ""
-                    a = el.select_one("a[href*='detail'],a[href*='profile'],a[href],button[onclick],button")
-                    if a:
-                        href = safe_attr(a, "href")
-                        details = href if href else safe_text(a)
-                    record["details_button"] = details
-                except Exception as e:
-                    print(f"Details button extraction error: {e}")
-
+                record["hall_stand"] = hs
             except Exception as e:
-                print(f"Record extraction error: {e}")
+                print(f"Error extracting hall_stand: {e}")
 
-            extracted_data.append(record)
+            # hall_map_url
+            try:
+                map_el = item.select_one("a[href*='map'], a[href*='hall'], a[href*='floorplan'], a[aria-label*='map' i]")
+                record["hall_map_url"] = safe_get_attr(map_el, "href")
+            except Exception as e:
+                print(f"Error extracting hall_map_url: {e}")
+
+            # logo_img
+            try:
+                img_el = (
+                    item.select_one("img[class*='logo'], img[data-testid*='logo'], img[alt*='logo' i]")
+                    or item.select_one("img")
+                )
+                record["logo_img"] = safe_get_attr(img_el, "src") or safe_get_attr(img_el, "data-src")
+            except Exception as e:
+                print(f"Error extracting logo_img: {e}")
+
+            # details_button
+            try:
+                det_el = (
+                    item.select_one("a[href*='detail'], a[href*='exhib'], a[href*='profile'], a[aria-label*='details' i], a[class*='detail']")
+                    or item.select_one("button[aria-label*='details' i], button[class*='detail']")
+                )
+                if det_el:
+                    if det_el.name == "a":
+                        record["details_button"] = safe_get_attr(det_el, "href")
+                    else:
+                        # buttons may rely on JS; return label/text as fallback
+                        record["details_button"] = safe_get_attr(det_el, "data-href") or safe_get_text(det_el)
+            except Exception as e:
+                print(f"Error extracting details_button: {e}")
+
+            # Keep only plausible records; but always safe/consistent fields
+            try:
+                # Minimal plausibility: name or details link or logo
+                if record["name"] or record["details_button"] or record["logo_img"]:
+                    extracted_data.append(record)
+            except Exception as e:
+                print(f"Error appending record: {e}")
 
         return extracted_data
 

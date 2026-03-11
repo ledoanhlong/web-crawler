@@ -487,6 +487,18 @@ _NOISE_URL_FRAGMENTS = {
     "gtag", "gtm", "hotjar", "sentry", "newrelic", "datadog",
 }
 
+# Third-party domains whose JSON responses should never be considered listing APIs
+_THIRD_PARTY_NOISE_DOMAINS = {
+    "usercentrics.eu", "cookiebot.com", "onetrust.com", "trustarc.com",
+    "google-analytics.com", "googletagmanager.com", "facebook.com",
+    "facebook.net", "doubleclick.net", "googleapis.com", "gstatic.com",
+    "cloudflare.com", "cdn-cgi", "sentry.io", "hotjar.com",
+    "newrelic.com", "nr-data.net", "segment.io", "segment.com",
+    "intercom.io", "zendesk.com", "crisp.chat", "tawk.to",
+    "hubspot.com", "marketo.com", "pardot.com", "salesforce.com",
+    "amplitude.com", "mixpanel.com", "heap.io", "fullstory.com",
+}
+
 # Keys in JSON response that suggest seller/company detail data
 _DETAIL_DATA_KEYS = {
     "name", "address", "phone", "email", "website", "description",
@@ -689,10 +701,14 @@ def _find_items_list(body: Any) -> tuple[list[dict], str | None]:
     return [], None
 
 
-def _score_listing_api_response(api_url: str, body: Any) -> tuple[int, list[dict], str | None]:
+def _score_listing_api_response(
+    api_url: str, body: Any, *, page_domain: str = "",
+) -> tuple[int, list[dict], str | None]:
     """Score a JSON response on how likely it is to be a listing API.
 
     Returns ``(score, items_list, json_path)``.  Negative score = noise.
+    *page_domain* is the domain of the page being scraped — responses from
+    different domains are heavily penalized.
     """
     url_lower = api_url.lower()
 
@@ -700,6 +716,25 @@ def _score_listing_api_response(api_url: str, body: Any) -> tuple[int, list[dict
     for frag in _NOISE_URL_FRAGMENTS:
         if frag in url_lower:
             return -1000, [], None
+
+    # Penalize known third-party tracking/consent domains
+    try:
+        from urllib.parse import urlparse as _urlparse
+        api_domain = _urlparse(api_url).hostname or ""
+    except Exception:
+        api_domain = ""
+    for noise_domain in _THIRD_PARTY_NOISE_DOMAINS:
+        if api_domain.endswith(noise_domain):
+            return -1000, [], None
+
+    # Penalize cross-domain responses (third-party widgets/SDKs)
+    if page_domain and api_domain:
+        page_root = ".".join(page_domain.rsplit(".", 2)[-2:])
+        api_root = ".".join(api_domain.rsplit(".", 2)[-2:])
+        if page_root != api_root:
+            # Cross-domain — heavy penalty (but not outright rejection
+            # in case there's a legitimate separate API domain)
+            return -500, [], None
 
     items, json_path = _find_items_list(body)
     if not items:
@@ -786,11 +821,15 @@ async def intercept_listing_api(
         if not captured:
             return None, None, None
 
+        # Extract the page domain for same-origin filtering
+        from urllib.parse import urlparse as _urlparse
+        _page_domain = _urlparse(url).hostname or ""
+
         # Score all captured responses
         scored = [
             (u, items, path, score)
             for u, body in captured
-            for score, items, path in [_score_listing_api_response(u, body)]
+            for score, items, path in [_score_listing_api_response(u, body, page_domain=_page_domain)]
         ]
         scored.sort(key=lambda x: x[3], reverse=True)
 

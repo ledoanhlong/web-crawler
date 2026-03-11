@@ -88,19 +88,44 @@ async def universal_scraper_extract(
 
     # Normalize result into list[dict]
     items: list[dict] = []
+    found_wrapper_key = False
     if isinstance(result, list):
         items = [r for r in result if isinstance(r, dict)]
     elif isinstance(result, dict):
         # Check for common wrapper keys
         for key in ("items", "data", "results", "records"):
             if key in result and isinstance(result[key], list):
+                found_wrapper_key = True
                 items = [r for r in result[key] if isinstance(r, dict)]
                 break
-        if not items:
+        if not items and not found_wrapper_key:
             items = [result]
+        elif not items and found_wrapper_key:
+            log.info(
+                "universal-scraper returned wrapper with empty data for %s "
+                "(keys: %s), treating as no results",
+                url, ", ".join(result.keys()),
+            )
 
-    log.info("universal-scraper extract OK for %s: %d items", url, len(items))
-    return items if items else None
+    # Sanitize: ensure all values are str | None for PageData compatibility
+    sanitized: list[dict] = []
+    for item in items:
+        clean: dict[str, str | None] = {}
+        for k, v in item.items():
+            if v is None:
+                clean[k] = None
+            elif isinstance(v, str):
+                clean[k] = v
+            elif isinstance(v, (list, dict)):
+                # Skip complex values (metadata artifacts)
+                continue
+            else:
+                clean[k] = str(v)
+        if clean:
+            sanitized.append(clean)
+
+    log.info("universal-scraper extract OK for %s: %d items", url, len(sanitized))
+    return sanitized if sanitized else None
 
 
 # ---------------------------------------------------------------------------
