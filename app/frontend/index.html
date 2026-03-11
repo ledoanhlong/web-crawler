@@ -405,7 +405,8 @@ tr:hover td{background:rgba(108,92,231,.04)}
 /* ═══════════════════════════════════════════════════════════════════
    Lead Scraper – Frontend
    ═══════════════════════════════════════════════════════════════════ */
-const API = window.location.origin + '/api/v1';
+const _apiBase = document.querySelector('meta[name="api-base-url"]')?.content;
+const API = (_apiBase ? _apiBase.replace(/\/$/, '') : window.location.origin) + '/api/v1';
 
 const STAGES = ['pending','planning','plan_review','scraping','preview','parsing','output','completed'];
 const STAGE_LABELS = {pending:'Queued',planning:'Analyzing',plan_review:'Plan Review',scraping:'Collecting',preview:'Review',parsing:'Processing',output:'Saving',completed:'Done',partial:'Partial',failed:'Failed'};

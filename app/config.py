@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     reliability_quality_min_score: float = 0.0
     reliability_quality_enforce: bool = False
 
+    # CORS / frontend
+    allowed_origins: list[str] = ["*"]
+    frontend_url: str = ""
+
     # Logging
     log_level: str = "INFO"
 
