@@ -693,6 +693,14 @@ class CrawlJob(BaseModel):
         exclude=True,
         description="Structural hints from a template, used internally by the planner.",
     )
+    suggest_script_creator: bool = Field(
+        default=False,
+        description="Whether the system suggests generating a script due to page complexity.",
+    )
+    script_creator_reason: str | None = Field(
+        default=None,
+        description="Explanation of why script_creator is being suggested.",
+    )
     # Resume / partial-result tracking
     scraped_detail_urls: list[str] = Field(
         default_factory=list,

@@ -192,7 +192,7 @@ export FRONTEND_URL="https://my-crawler.vercel.app"
 | `AZURE_VISION_API_KEY` | `""` | Vision API key |
 | `AZURE_VISION_API_VERSION` | `2025-04-01-preview` | Vision API version |
 | `AZURE_VISION_DEPLOYMENT` | `gpt-4o` | Vision deployment name |
-| `USE_VISION_PLANNING` | `true` | Enables screenshot-based planner fallback |
+| `USE_VISION_PLANNING` | `true` | Enables screenshot-based planning (runs in parallel with HTML analysis, results merged) |
 | `AZURE_CLAUDE_ENDPOINT` | `""` | Azure AI Foundry Claude endpoint (root URL or full `/anthropic/v1/messages`) |
 | `AZURE_CLAUDE_API_KEY` | `""` | Claude API key |
 | `AZURE_CLAUDE_DEPLOYMENT` | `claude-opus-4-6` | Claude model deployment name |
@@ -304,7 +304,7 @@ Common issues:
 `/health` now includes provider readiness. `degraded` means at least one provider failed check.
 
 Common causes:
-- Vision provider not configured but `USE_VISION_PLANNING=true`
+- Vision provider not configured but `USE_VISION_PLANNING=true` (vision runs in parallel with HTML planning — both are needed)
 - Claude auth/endpoint issue
 - Claude circuit breaker open after repeated runtime failures
 

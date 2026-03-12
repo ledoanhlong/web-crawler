@@ -387,42 +387,68 @@ def _build_script_config(library: str) -> dict:
     return config
 
 
-def _run_script_creator(prompt: str, url: str, library: str) -> str:
-    """Run ScriptCreatorGraph synchronously."""
-    from scrapegraphai.graphs import ScriptCreatorGraph
-
-    graph = ScriptCreatorGraph(
-        prompt=prompt,
-        source=url,
-        config=_build_script_config(library),
-    )
-    return graph.run()
-
-
 async def generate_scraper_script(
     url: str,
     prompt: str,
     library: str = "beautifulsoup4",
 ) -> str:
-    """Generate a Python scraping script for a single URL.
+    """Generate a Python scraping script for a single URL using Claude Opus 4.6.
 
-    The generated script uses the specified library (beautifulsoup4, scrapy, etc.)
-    to extract data described by the prompt.
+    Fetches a sample of the page HTML and asks Claude to produce a complete,
+    runnable script using the specified library (beautifulsoup4, scrapy, etc.).
     """
-    log.info("ScriptCreatorGraph: generating script for %s (library=%s)", url, library)
+    import httpx
+    from app.utils.llm import chat_completion_claude
+
+    log.info("Generating scraper script with Claude Opus 4.6 for %s (library=%s)", url, library)
+
+    # Fetch a sample of the page for structural context
+    html_sample = "(could not fetch page HTML)"
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            html_sample = resp.text[:_MAX_HTML_CHARS]
+    except Exception as exc:
+        log.warning("Could not fetch page HTML for script generation: %s", exc)
+
+    system = (
+        f"You are an expert Python web scraping engineer. "
+        f"Generate a complete, runnable Python script using {library} "
+        f"that scrapes data from the provided URL. "
+        "The script must: handle errors gracefully, include all necessary imports, "
+        "print the extracted records as a JSON array, and include inline comments. "
+        "Return ONLY the Python script with no explanations outside the code."
+    )
+    user_msg = (
+        f"URL: {url}\n\n"
+        f"Data to extract: {prompt}\n\n"
+        f"Page HTML sample:\n{html_sample}"
+    )
+
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(_run_script_creator, prompt, url, library),
+            chat_completion_claude(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_msg},
+                ],
+                max_tokens=8_000,
+                temperature=0.1,
+            ),
             timeout=300,
         )
     except asyncio.TimeoutError:
-        log.error("ScriptCreatorGraph timed out after 300s")
-        raise TimeoutError("ScriptCreatorGraph timed out after 300s")
+        log.error("Script generation timed out after 300s")
+        raise TimeoutError("Script generation timed out after 300s")
     except Exception as exc:
-        log.error("ScriptCreatorGraph failed: %s", exc)
+        log.error("Script generation failed: %s", exc)
         raise
-    log.info("ScriptCreatorGraph: script generated (%d chars)", len(result))
-    return result
+
+    # Strip markdown code fences if the model wrapped the script in them
+    script = re.sub(r"^```(?:python)?\n?", "", result.strip())
+    script = re.sub(r"\n?```$", "", script)
+    log.info("Script generated (%d chars)", len(script))
+    return script
 
 
 # ---------------------------------------------------------------------------

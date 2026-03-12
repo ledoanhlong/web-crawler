@@ -32,7 +32,7 @@ User Request
 RouterAgent ──► selects strategy (full_pipeline / smart_scraper / script_creator)
      │
      ▼ (if full_pipeline)
-PlannerAgent ──► analyses HTML, produces ScrapingPlan
+PlannerAgent ──► runs HTML analysis + vision screenshot in parallel → merges into ScrapingPlan
      │
      ▼
 ScraperAgent ──► executes plan, returns raw PageData
@@ -69,7 +69,26 @@ The `RouterAgent` receives the user's URL(s) and prompt, then decides which scra
 | `full_pipeline` | Listing pages with pagination, detail pages | Full multi-agent pipeline with preview workflow |
 | `smart_scraper` | Single page, simple extraction | Direct ScrapeGraphAI extraction (no CSS planning) |
 | `smart_scraper_multi` | Multiple URLs, similar structure | ScrapeGraphAI across multiple URLs with merged results |
-| `script_creator` | Complex pages, reusable scripts | Generates a Python script, optionally auto-executes |
+| `script_creator` | Complex pages, reusable scripts | Generates a Python script using Claude Opus 4.6, optionally auto-executes |
+
+### script_creator Selection
+
+`script_creator` is selected in two ways:
+
+1. **User intent** — the LLM router detects keywords like "script", "code", or "reusable" in the user's prompt.
+2. **Complexity suggestion at preview** — after the preview scrape, the orchestrator automatically sets `suggest_script_creator=true` on the job if complexity signals are poor:
+   - No extraction method found any items on the page
+   - CSS selectors matched fewer than 3 item containers
+   - Fewer than 30% of field selectors found data
+   - Only one method worked but the extracted record has fewer than 2 core contact fields
+
+   When suggested, the frontend surfaces the option to the user without them needing to know the strategy exists. The `script_creator_reason` field on the job contains a plain-language explanation.
+
+The `script_creator` strategy is never selected by the rule-based fallback (LLM failure path).
+
+### script_creator Implementation
+
+Uses Claude Opus 4.6 via Azure AI Foundry (`chat_completion_claude`). The function fetches a sample of the page HTML and sends it alongside the user's prompt to Claude, which generates a complete, runnable Python script. Markdown code fences in the response are stripped automatically.
 
 ### Fallback Routing
 
@@ -138,9 +157,17 @@ The `PlannerAgent` is the most critical stage. It analyses the target page's HTM
    - Sends the captured API URL and response to GPT with the `planner_detail_api` prompt
    - Produces a `DetailApiPlan` with `api_url_template`, `id_selector`, `id_attribute`, `id_regex`
 
-9. **Vision fallback planning** (optional)
-   - If selector quality remains poor after retries (low container count, low hit ratio, weak content test), planner captures a page screenshot and sends screenshot + simplified HTML to GPT-4o.
-   - If vision plan validates better than text-only plan, it replaces the original plan.
+9. **Parallel vision planning** (when `USE_VISION_PLANNING=true`)
+   - Vision planning now runs **in parallel** with HTML-based planning via `asyncio.gather`, not as a fallback.
+   - While the HTML planner derives precise CSS selectors from the raw DOM, the vision planner (`_plan_with_vision`) captures a full-page screenshot and sends it alongside simplified HTML to GPT-4o, gaining structural understanding of the rendered layout: where data is visually positioned, how pagination controls look, and how to navigate to detail pages.
+   - After both complete, `_merge_plans()` combines the results with the HTML plan as the authoritative base for CSS selectors, and the vision plan filling in what static analysis cannot see:
+     - **Pagination strategy and selector** — visually obvious controls (next button, load-more, A-Z tabs) that may be invisible in minified HTML
+     - **`requires_javascript`** — detected from the rendered screenshot even if the raw HTML looks static
+     - **`detail_link_selector` / `detail_button_selector`** — navigation elements that only appear after rendering
+     - **Additional fields** — data visible in the screenshot but not derivable from the raw DOM
+     - **`wait_selector`** — elements to wait for before scraping
+   - Selector metrics are recomputed on the merged plan after the merge.
+   - If vision planning fails for any reason it is treated as non-critical — the HTML plan is used as-is and a warning is logged.
 
 ### ScrapingPlan Schema (key fields)
 

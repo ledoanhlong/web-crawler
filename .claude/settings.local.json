@@ -5,7 +5,8 @@
       "Bash(python -c \"from app.config import settings; print\\(f''max_sub_links_per_detail: {settings.max_sub_links_per_detail}''\\)\")",
       "Bash(python -c \":*)",
       "WebFetch(domain:www.beauty-duesseldorf.com)",
-      "Bash(python -c \"from app.main import app; print\\(''App loaded OK''\\)\")"
+      "Bash(python -c \"from app.main import app; print\\(''App loaded OK''\\)\")",
+      "Bash(find /c/Users/LongLe/Downloads/web-crawler -type f -name *script_creator* -o -name *smart_scraper*)"
     ]
   }
 }

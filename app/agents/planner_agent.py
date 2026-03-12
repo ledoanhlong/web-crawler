@@ -15,6 +15,7 @@ Flow
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from urllib.parse import urljoin, urlparse
@@ -402,32 +403,24 @@ class PlannerAgent:
             return 1.0
         return fields_with_content / total_field_checks
 
-    async def plan(
+    async def _plan_from_html(
         self,
         url: str,
+        html_raw: str,
         *,
+        detail_raw: str = "",
         detail_page_url: str | None = None,
-        fields_wanted: str | None = None,
         item_description: str | None = None,
         site_notes: str | None = None,
+        fields_wanted: str | None = None,
         template_hints: TemplateHints | None = None,
         pagination_type: str | None = None,
-    ) -> ScrapingPlan:
-        log.info("Planning scrape for %s", url)
+        heuristic_needs_js: bool = False,
+    ) -> ScrapingPlan | None:
+        """Run the HTML-based LLM planning pipeline.
 
-        # --- 1. Fetch the listing page ---
-        html_raw, heuristic_needs_js = await _fetch_html(url)
-
-        # --- 2. Optionally fetch the detail page ---
-        detail_raw = ""
-        if detail_page_url:
-            log.info("Fetching user-provided detail page: %s", detail_page_url)
-            try:
-                detail_raw, _ = await _fetch_html(detail_page_url)
-            except Exception as exc:
-                log.warning("Failed to fetch detail page %s: %s", detail_page_url, exc)
-
-        # --- 3. Build the prompt (retry with aggressive sanitization on content filter) ---
+        Returns a validated ScrapingPlan, or None if the LLM returned no data.
+        """
         plan_data: dict | None = None
         for attempt, aggressive in enumerate([False, True]):
             html_simple = simplify_html(html_raw, aggressive=aggressive)
@@ -466,14 +459,10 @@ class PlannerAgent:
                 raise
 
         if not plan_data:
-            raise ValueError(
-                "Planning failed: LLM returned no data after all attempts. "
-                "The page content may have triggered a content filter."
-            )
+            return None
 
         log.info("Received scraping plan from LLM")
 
-        # --- 4. Parse into ScrapingPlan ---
         plan_data["url"] = url
         plan_data = _sanitize_plan_data(plan_data)
 
@@ -494,51 +483,147 @@ class PlannerAgent:
                     llm_pagination, pagination_type,
                 )
             plan_data["pagination"] = pagination_type
-            # For 'none' (single page) and 'infinite_scroll', pre-resolved
-            # pagination_urls from the LLM are irrelevant — clear them to
-            # avoid scraping non-existent pages.
             if pagination_type in ("none", "infinite_scroll", "load_more_button"):
                 plan_data["pagination_urls"] = []
 
         plan = ScrapingPlan.model_validate(plan_data)
-
-        # --- 4b. Validate CSS selectors against the actual HTML ---
         plan = await self._validate_selectors(plan, html_raw, fields_wanted)
+        return plan
 
-        # --- 4b-vision. If selectors still perform poorly, try vision-based planning ---
+    @staticmethod
+    def _merge_plans(html_plan: ScrapingPlan, vision_plan: ScrapingPlan) -> ScrapingPlan:
+        """Combine HTML-based and vision-based plans, taking the best of both.
+
+        The HTML plan provides precise CSS selectors derived from the raw DOM.
+        The vision plan provides structural understanding of the rendered layout:
+        pagination controls, navigation to detail pages, JS requirements, and
+        data locations that are invisible in the raw HTML.
+        """
+        merged = html_plan.model_copy(deep=True)
+
+        # Vision may detect JS rendering that static HTML analysis missed
+        if vision_plan.requires_javascript:
+            merged.requires_javascript = True
+
+        # Use vision's pagination if HTML analysis found none
+        if vision_plan.pagination.value != "none" and html_plan.pagination.value == "none":
+            merged.pagination = vision_plan.pagination
+            if vision_plan.pagination_selector and not merged.pagination_selector:
+                merged.pagination_selector = vision_plan.pagination_selector
+
+        # Vision may spot alphabet tabs, load-more, or next-button controls
+        if hasattr(vision_plan, "alphabet_tab_selector") and vision_plan.alphabet_tab_selector:
+            if not getattr(merged, "alphabet_tab_selector", None):
+                merged.alphabet_tab_selector = vision_plan.alphabet_tab_selector
+
+        # Vision may find navigation to detail pages that HTML analysis missed
+        if vision_plan.target.detail_link_selector and not merged.target.detail_link_selector:
+            merged.target.detail_link_selector = vision_plan.target.detail_link_selector
+        if vision_plan.target.detail_button_selector and not merged.target.detail_button_selector:
+            merged.target.detail_button_selector = vision_plan.target.detail_button_selector
+
+        # Add fields the vision plan identified that HTML analysis missed
+        for field, selector in vision_plan.target.field_selectors.items():
+            if field not in merged.target.field_selectors and selector:
+                merged.target.field_selectors[field] = selector
+                vision_attr = (vision_plan.target.field_attributes or {}).get(field)
+                if vision_attr:
+                    if merged.target.field_attributes is None:
+                        merged.target.field_attributes = {}
+                    merged.target.field_attributes[field] = vision_attr
+
+        # Carry over wait_selector if HTML analysis missed it
+        if vision_plan.wait_selector and not merged.wait_selector:
+            merged.wait_selector = vision_plan.wait_selector
+
+        added_fields = [
+            f for f in vision_plan.target.field_selectors
+            if f not in html_plan.target.field_selectors
+        ]
+        merged.notes += (
+            f"\n[Vision merged: pagination={vision_plan.pagination.value}, "
+            f"js={vision_plan.requires_javascript}, "
+            f"fields_added={added_fields}]"
+        )
+        return merged
+
+    async def plan(
+        self,
+        url: str,
+        *,
+        detail_page_url: str | None = None,
+        fields_wanted: str | None = None,
+        item_description: str | None = None,
+        site_notes: str | None = None,
+        template_hints: TemplateHints | None = None,
+        pagination_type: str | None = None,
+    ) -> ScrapingPlan:
+        log.info("Planning scrape for %s", url)
+
+        # --- 1. Fetch the listing page ---
+        html_raw, heuristic_needs_js = await _fetch_html(url)
+
+        # --- 2. Optionally fetch the detail page ---
+        detail_raw = ""
+        if detail_page_url:
+            log.info("Fetching user-provided detail page: %s", detail_page_url)
+            try:
+                detail_raw, _ = await _fetch_html(detail_page_url)
+            except Exception as exc:
+                log.warning("Failed to fetch detail page %s: %s", detail_page_url, exc)
+
+        # --- 3. Run HTML-based and vision-based planning in parallel ---
+        # Both analyses start immediately: HTML planning processes the DOM for
+        # precise CSS selectors while vision planning takes a screenshot and
+        # reasons about the rendered layout (pagination controls, navigation,
+        # data location). The results are merged to get the full picture.
+        gather_coros: list = [
+            self._plan_from_html(
+                url, html_raw,
+                detail_raw=detail_raw,
+                detail_page_url=detail_page_url,
+                item_description=item_description,
+                site_notes=site_notes,
+                fields_wanted=fields_wanted,
+                template_hints=template_hints,
+                pagination_type=pagination_type,
+                heuristic_needs_js=heuristic_needs_js,
+            ),
+        ]
         if settings.use_vision_planning:
-            metrics = plan.selector_metrics or {}
-            container_count = int(metrics.get("container_count", 0))
-            hit_ratio = float(metrics.get("field_hit_ratio", 0.0))
-            content_score = self._content_test_selectors(
-                plan,
-                BeautifulSoup(html_raw, "lxml").select(plan.target.item_container_selector)
-                if container_count > 0 else [],
+            gather_coros.append(
+                self._plan_with_vision(url, html_raw, fields_wanted=fields_wanted)
             )
-            if container_count < _MIN_LISTING_CONTAINERS or hit_ratio < 0.2 or content_score < 0.3:
-                log.info(
-                    "Selector quality poor (containers=%d, hit_ratio=%.2f, content=%.2f) — "
-                    "attempting vision-based planning for %s",
-                    container_count, hit_ratio, content_score, url,
-                )
-                vision_plan = await self._plan_with_vision(
-                    url, html_raw, fields_wanted=fields_wanted,
-                    wait_selector=plan.wait_selector,
-                )
-                if vision_plan:
-                    # Validate the vision-derived plan
-                    vision_plan = await self._validate_selectors(vision_plan, html_raw, fields_wanted)
-                    v_metrics = vision_plan.selector_metrics or {}
-                    v_containers = int(v_metrics.get("container_count", 0))
-                    v_ratio = float(v_metrics.get("field_hit_ratio", 0.0))
-                    if v_containers > container_count or v_ratio > hit_ratio:
-                        log.info(
-                            "Vision plan improved results: containers %d→%d, ratio %.2f→%.2f",
-                            container_count, v_containers, hit_ratio, v_ratio,
-                        )
-                        plan = vision_plan
-                    else:
-                        log.info("Vision plan did not improve results — keeping original")
+            log.info("[%s] Running HTML and vision planning in parallel", url)
+
+        results = await asyncio.gather(*gather_coros, return_exceptions=True)
+
+        html_result = results[0]
+        vision_result = results[1] if len(results) > 1 else None
+
+        if isinstance(html_result, Exception):
+            raise html_result
+        if html_result is None:
+            raise ValueError(
+                "Planning failed: LLM returned no data after all attempts. "
+                "The page content may have triggered a content filter."
+            )
+
+        plan: ScrapingPlan = html_result
+
+        # --- 4. Merge HTML and vision insights ---
+        if isinstance(vision_result, ScrapingPlan):
+            plan = self._merge_plans(plan, vision_result)
+            soup = BeautifulSoup(html_raw, "lxml")
+            plan.selector_metrics = self._compute_selector_metrics(plan, soup)
+            log.info(
+                "Merged vision insights: pagination=%s, js=%s, detail_link=%s",
+                plan.pagination.value,
+                plan.requires_javascript,
+                plan.target.detail_link_selector,
+            )
+        elif isinstance(vision_result, Exception):
+            log.warning("Vision planning failed (non-critical): %s", vision_result)
 
         # --- 4c. If the plan says JS is required but we fetched with httpx,
         #         the CSS selectors were derived from the wrong DOM.

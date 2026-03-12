@@ -561,6 +561,47 @@ class Orchestrator:
                     details={"url": job.request.url},
                 )
 
+            # ---- Suggest script_creator if page complexity signals are poor ----
+            complexity_reasons: list[str] = []
+
+            if len(candidates) == 0:
+                complexity_reasons.append("no extraction method could find items on this page")
+
+            if job.plan:
+                metrics = job.plan.selector_metrics or {}
+                container_count = metrics.get("container_count", -1)
+                field_hit_ratio = metrics.get("field_hit_ratio", -1)
+                if 0 <= container_count < 3:
+                    complexity_reasons.append(
+                        f"CSS selectors matched only {container_count} item containers"
+                    )
+                if 0 <= field_hit_ratio < 0.3:
+                    complexity_reasons.append(
+                        f"only {field_hit_ratio:.0%} of field selectors found data"
+                    )
+
+            if len(candidates) == 1 and job.preview_record:
+                core_fields = {"name", "email", "phone", "website", "address", "city", "country"}
+                record_dict = job.preview_record.model_dump(exclude_none=True)
+                filled = sum(1 for f in core_fields if record_dict.get(f))
+                if filled < 2:
+                    complexity_reasons.append(
+                        "the extracted record contains very little contact data"
+                    )
+
+            if complexity_reasons:
+                job.suggest_script_creator = True
+                job.script_creator_reason = (
+                    "This page appears complex: "
+                    + "; ".join(complexity_reasons)
+                    + ". A generated script may extract data more reliably."
+                )
+                log.info(
+                    "[%s] Suggesting script_creator: %s",
+                    job.id,
+                    job.script_creator_reason,
+                )
+
             # ---- Pause for user validation ----
             self._set_status(job, CrawlStatus.PREVIEW, "await_user_confirmation")
             log.info("[%s] Preview ready — waiting for user confirmation", job.id)
