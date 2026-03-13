@@ -14,6 +14,10 @@
 #   AZURE_OPENAI_ENDPOINT       – required
 #   AZURE_OPENAI_API_KEY        – required
 #   FRONTEND_URL                – your Vercel URL  (e.g. https://my-crawler.vercel.app)
+#
+# Optional Vision / Claude vars are forwarded when set:
+#   AZURE_VISION_ENDPOINT, AZURE_VISION_API_KEY, AZURE_VISION_DEPLOYMENT
+#   AZURE_CLAUDE_ENDPOINT, AZURE_CLAUDE_API_KEY, AZURE_CLAUDE_DEPLOYMENT
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -67,13 +71,44 @@ az containerapp env create \
   --location "$LOCATION" \
   --output none 2>/dev/null || true
 
-# ── 5. Build allowed-origins list ────────────────────────────────────
-ALLOWED_ORIGINS="http://localhost:8000,http://localhost:3000"
+# ── 5. Build allowed-origins list (JSON array for pydantic-settings) ─
 if [ -n "$FRONTEND_URL" ]; then
-  ALLOWED_ORIGINS="${ALLOWED_ORIGINS},${FRONTEND_URL}"
+  ALLOWED_ORIGINS="[\"http://localhost:8000\",\"${FRONTEND_URL}\"]"
+else
+  ALLOWED_ORIGINS="[\"*\"]"
 fi
 
-# ── 6. Deploy container app ─────────────────────────────────────────
+# ── 6. Build env-vars list ───────────────────────────────────────────
+# Required vars
+ENV_VARS=(
+  "AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}"
+  "AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}"
+  "AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2025-04-01-preview}"
+  "AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-gpt-5.2}"
+  "ALLOWED_ORIGINS=${ALLOWED_ORIGINS}"
+  "FRONTEND_URL=${FRONTEND_URL}"
+  "PLAYWRIGHT_HEADLESS=true"
+  "USE_SCRAPY=false"
+  "LOG_LEVEL=INFO"
+)
+
+# Vision vars (forwarded only when set)
+[ -n "${AZURE_VISION_ENDPOINT:-}" ]   && ENV_VARS+=("AZURE_VISION_ENDPOINT=${AZURE_VISION_ENDPOINT}")
+[ -n "${AZURE_VISION_API_KEY:-}" ]    && ENV_VARS+=("AZURE_VISION_API_KEY=${AZURE_VISION_API_KEY}")
+[ -n "${AZURE_VISION_API_VERSION:-}" ] && ENV_VARS+=("AZURE_VISION_API_VERSION=${AZURE_VISION_API_VERSION}")
+[ -n "${AZURE_VISION_DEPLOYMENT:-}" ] && ENV_VARS+=("AZURE_VISION_DEPLOYMENT=${AZURE_VISION_DEPLOYMENT}")
+[ -n "${USE_VISION_PLANNING:-}" ]     && ENV_VARS+=("USE_VISION_PLANNING=${USE_VISION_PLANNING}")
+
+# Claude vars (forwarded only when set)
+[ -n "${AZURE_CLAUDE_ENDPOINT:-}" ]   && ENV_VARS+=("AZURE_CLAUDE_ENDPOINT=${AZURE_CLAUDE_ENDPOINT}")
+[ -n "${AZURE_CLAUDE_API_KEY:-}" ]    && ENV_VARS+=("AZURE_CLAUDE_API_KEY=${AZURE_CLAUDE_API_KEY}")
+[ -n "${AZURE_CLAUDE_DEPLOYMENT:-}" ] && ENV_VARS+=("AZURE_CLAUDE_DEPLOYMENT=${AZURE_CLAUDE_DEPLOYMENT}")
+[ -n "${USE_CLAUDE_EXTRACTION:-}" ]   && ENV_VARS+=("USE_CLAUDE_EXTRACTION=${USE_CLAUDE_EXTRACTION}")
+[ -n "${USE_SCRIPT_EXTRACTION:-}" ]   && ENV_VARS+=("USE_SCRIPT_EXTRACTION=${USE_SCRIPT_EXTRACTION}")
+[ -n "${CLAUDE_FALLBACK_ONLY:-}" ]    && ENV_VARS+=("CLAUDE_FALLBACK_ONLY=${CLAUDE_FALLBACK_ONLY}")
+[ -n "${CLAUDE_CIRCUIT_BREAKER_ENABLED:-}" ] && ENV_VARS+=("CLAUDE_CIRCUIT_BREAKER_ENABLED=${CLAUDE_CIRCUIT_BREAKER_ENABLED}")
+
+# ── 7. Deploy container app ─────────────────────────────────────────
 echo "→ Deploying container app: $CONTAINER_APP_NAME"
 az containerapp create \
   --name "$CONTAINER_APP_NAME" \
@@ -89,19 +124,10 @@ az containerapp create \
   --max-replicas 2 \
   --cpu 2 \
   --memory 4Gi \
-  --env-vars \
-    "AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}" \
-    "AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}" \
-    "AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2025-04-01-preview}" \
-    "AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-gpt-5.2}" \
-    "ALLOWED_ORIGINS=${ALLOWED_ORIGINS}" \
-    "FRONTEND_URL=${FRONTEND_URL}" \
-    "PLAYWRIGHT_HEADLESS=true" \
-    "USE_SCRAPY=false" \
-    "LOG_LEVEL=INFO" \
+  --env-vars "${ENV_VARS[@]}" \
   --output none
 
-# ── 7. Get the app URL ──────────────────────────────────────────────
+# ── 8. Get the app URL ──────────────────────────────────────────────
 APP_URL=$(az containerapp show \
   --name "$CONTAINER_APP_NAME" \
   --resource-group "$RESOURCE_GROUP" \

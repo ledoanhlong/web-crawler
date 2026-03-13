@@ -37,10 +37,11 @@ Use these categories for triage and reporting:
 2. Run smoke tests with `scripts/smoke_sites.py`.
 3. Inspect `diagnostics.counters` and `diagnostics.failures` for the job.
 4. Inspect provider telemetry and cost/fallback signals from `/api/v1/crawl/{job_id}/telemetry`.
-4. If failed, map the top issue to one taxonomy category.
-5. Apply generic fix in planner/scraper/parser path, not site-specific hardcoding.
-6. Re-run smoke profile and confirm improved status and counters.
-7. Commit both code and updated profile expectations if behavior changed intentionally.
+5. Inspect the preview summary log line (`Preview — CSS: ..., Smart: ..., Crawl4AI: ...`) because the UI only shows methods that produced a non-empty sample record.
+6. If failed, map the top issue to one taxonomy category.
+7. Apply a generic fix in planner/scraper/parser path, not site-specific hardcoding.
+8. Re-run smoke profile and confirm improved status and counters.
+9. Commit both code and updated profile expectations if behavior changed intentionally.
 
 Smoke profile fields for gating:
 
@@ -62,6 +63,7 @@ When a site fails, collect:
 - URL and profile name.
 - Final job status.
 - Preview recommendation and selected method.
+- Preview summary from logs if the UI showed only a subset of methods.
 - `diagnostics.counters` snapshot.
 - Top 3 latest failure events from `diagnostics.failures`.
 - `quality_report` summary (if output exists).
@@ -69,14 +71,17 @@ When a site fails, collect:
 Then classify root cause:
 
 - Mostly empty pages with selector failures -> `selector_mismatch`.
+- Structured source exists but CSS/Smart are empty -> usually still `selector_mismatch` or `rendering`, not a preview UI bug.
 - Repeated pagination empty pages -> `pagination_mismatch`.
 - Detail backlog on partial jobs -> `detail_enrichment`.
 - API/timeout responses -> `network_transient` or `anti_bot`.
+- universal-scraper token-limit/provider 4xx failures -> treat as provider/runtime evidence, then classify by the underlying page issue (`rendering`, `selector_mismatch`, or `unknown` if inconclusive).
 - Claude provider disabled or repeated provider errors -> `unknown` (include circuit-breaker context in details).
 
 Also check provider runtime health:
 - `GET /health` should be `ok` or intentionally `degraded` (if non-critical provider disabled).
 - If `claude` is degraded, verify breaker state and cooldown in health payload.
+- If a job vanished after restart, check `OUTPUT_DIR/job_store` before assuming data loss. Active jobs are snapshotted and recovered only when the filesystem itself persists across restarts.
 
 ## Guardrails
 

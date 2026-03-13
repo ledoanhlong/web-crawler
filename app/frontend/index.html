@@ -22,10 +22,14 @@ button{cursor:pointer;font-family:inherit}
 /* ── Layout ───────────────────────────────────────────────────────── */
 .app{max-width:960px;margin:0 auto;padding:28px 20px 60px}
 
-header{text-align:center;margin-bottom:32px;padding-bottom:20px;border-bottom:1px solid var(--border)}
+header{text-align:center;margin-bottom:32px;padding-bottom:20px;border-bottom:1px solid var(--border);position:relative}
 header .logo{width:48px;height:48px;background:var(--accent);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;margin-bottom:10px}
 header h1{font-size:1.5rem;font-weight:700;letter-spacing:-.02em}
 header p{font-size:.88rem;color:var(--text2);margin-top:4px;max-width:440px;margin-left:auto;margin-right:auto}
+.header-actions{position:absolute;top:0;right:0}
+.operator-toggle{padding:8px 12px;font-size:.76rem;opacity:.72}
+.operator-toggle:hover{opacity:1}
+.operator-toggle.active{opacity:1;color:var(--blue);border-color:rgba(116,185,255,.4);background:rgba(116,185,255,.08)}
 
 /* ── Card ─────────────────────────────────────────────────────────── */
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;box-shadow:var(--shadow);margin-bottom:24px}
@@ -191,6 +195,20 @@ header p{font-size:.88rem;color:var(--text2);margin-top:4px;max-width:440px;marg
 .method-btn{padding:8px 18px;border:2px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text2);font-size:.84rem;font-weight:600;transition:all .15s}
 .method-btn:hover{border-color:var(--accent);color:var(--text)}
 .method-btn.selected{border-color:var(--accent);background:rgba(108,92,231,.12);color:var(--accent2)}
+.review-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px}
+.summary-card{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px}
+.summary-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:6px;font-weight:600}
+.summary-value{font-size:.86rem;color:var(--text);line-height:1.45}
+.summary-note{padding:12px 14px;background:rgba(116,185,255,.06);border:1px solid rgba(116,185,255,.18);border-radius:10px;font-size:.83rem;color:var(--text);margin-bottom:14px}
+.coverage-banner{padding:12px 14px;background:rgba(0,184,148,.08);border:1px solid rgba(0,184,148,.22);border-radius:10px;font-size:.84rem;color:var(--text);margin-bottom:14px;line-height:1.45}
+.coverage-banner strong{color:var(--green)}
+.feedback-helper{font-size:.78rem;color:var(--text2);margin:-4px 0 12px;line-height:1.45}
+.option-meta{font-size:.78rem;color:var(--text2);margin:-2px 0 10px;line-height:1.45}
+.operator-panel{margin-top:14px;padding:14px;background:rgba(108,92,231,.05);border:1px solid rgba(108,92,231,.16);border-radius:10px}
+.operator-panel summary{cursor:pointer;font-size:.82rem;color:var(--accent2);font-weight:600;list-style:none}
+.operator-panel summary::-webkit-details-marker{display:none}
+.operator-panel[open] summary{margin-bottom:12px}
+body:not(.operator-mode) .operator-only{display:none!important}
 
 @media(max-width:640px){
   .dual-preview{grid-template-columns:1fr}
@@ -218,6 +236,7 @@ tr:hover td{background:rgba(108,92,231,.04)}
 /* ── Responsive ───────────────────────────────────────────────────── */
 @media(max-width:640px){
   .app{padding:16px 12px 40px}
+  .header-actions{position:static;margin-top:14px;display:flex;justify-content:center}
   .adv-row{flex-direction:column}
   .pipeline{gap:0}
   .pipe-step{padding:5px 8px;font-size:.7rem}
@@ -234,6 +253,9 @@ tr:hover td{background:rgba(108,92,231,.04)}
 <div class="app">
   <!-- ── Header ──────────────────────────────────────────────────── -->
   <header>
+    <div class="header-actions">
+      <button class="btn btn-sm btn-outline operator-toggle" id="operatorToggle" type="button" title="Show technical troubleshooting tools">Operator tools</button>
+    </div>
     <div class="logo">
       <svg width="26" height="26" viewBox="0 0 36 36" fill="none"><path d="M10 18c0-4.4 3.6-8 8-8m0 16c4.4 0 8-3.6 8-8" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="18" cy="18" r="3" fill="#fff"/><path d="M18 10v-3m0 22v-3m8-8h3M7 18h3" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
     </div>
@@ -350,15 +372,15 @@ tr:hover td{background:rgba(108,92,231,.04)}
     <!-- ── Advanced Settings (collapsed) ──────────────────────── -->
     <div class="adv-toggle" id="advToggle">
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-      More options
+      Optional hints
     </div>
     <div class="adv-panel" id="advPanel">
       <div class="field" style="margin-bottom:14px">
         <label for="crawlDetailUrl">Example detail page URL</label>
-        <input type="url" id="crawlDetailUrl" placeholder="Paste a single company's detail/profile page URL (optional)">
-        <div class="hint">If each company has its own page with more info, paste one example here so we can extract more data.</div>
+        <input type="url" id="crawlDetailUrl" placeholder="Paste one example company/profile page URL">
+        <div class="hint">Helpful when each company has its own page with contact details.</div>
       </div>
-      <div class="adv-row">
+      <div class="adv-row operator-only">
         <div class="field">
           <label for="crawlMaxItems">Max results</label>
           <input type="number" id="crawlMaxItems" placeholder="All" min="1">
@@ -374,6 +396,7 @@ tr:hover td{background:rgba(108,92,231,.04)}
           </div>
         </div>
       </div>
+      <div class="hint operator-only" style="margin-top:10px">Operator tools are intended for troubleshooting and short test runs.</div>
     </div>
 
     <!-- ── Submit ─────────────────────────────────────────────── -->
@@ -409,7 +432,7 @@ const _apiBase = document.querySelector('meta[name="api-base-url"]')?.content;
 const API = (_apiBase ? _apiBase.replace(/\/$/, '') : window.location.origin) + '/api/v1';
 
 const STAGES = ['pending','planning','plan_review','scraping','preview','parsing','output','completed'];
-const STAGE_LABELS = {pending:'Queued',planning:'Analyzing',plan_review:'Plan Review',scraping:'Collecting',preview:'Review',parsing:'Processing',output:'Saving',completed:'Done',partial:'Partial',failed:'Failed'};
+const STAGE_LABELS = {pending:'Queued',planning:'Scanning',plan_review:'Check Setup',scraping:'Collecting',preview:'Check Sample',parsing:'Cleaning',output:'Preparing',completed:'Done',partial:'Partial',failed:'Failed'};
 const STAGE_ICONS = {
   pending:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
   planning:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>',
@@ -429,6 +452,8 @@ const PREVIEW_FIELDS = ['name','country','city','address','postal_code','website
 let jobs = {};
 let expandedJobId = null;
 let pollingTimers = {};
+let operatorMode = ['1','true','yes'].includes(new URLSearchParams(window.location.search).get('debug') || '')
+  || window.localStorage.getItem('lead_scraper_operator_mode') === '1';
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 function esc(s){ if(!s) return ''; const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
@@ -439,6 +464,113 @@ function timeAgo(iso){
   if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago';
 }
 function prettyLabel(key){ return key.replace(/_/g,' ').replace(/\b\w/g,l=>l.toUpperCase()); }
+function hasMeaningfulValue(value){
+  if(value === null || value === undefined) return false;
+  if(Array.isArray(value)) return value.some(hasMeaningfulValue);
+  if(typeof value === 'object') return Object.values(value).some(hasMeaningfulValue);
+  if(typeof value === 'string') return value.trim().length > 0;
+  return Boolean(value);
+}
+function formatPreviewValue(value){
+  let v = value;
+  if(Array.isArray(v)) v = v.length ? v.join(', ') : null;
+  if(typeof v === 'object' && v !== null) v = Object.entries(v).map(([k,val])=>`${k}: ${val}`).join(', ') || null;
+  return v;
+}
+function getPreviewCoverage(record){
+  const fields = ['name','website','email','phone','country','city','description'];
+  const present = [];
+  const missing = [];
+  fields.forEach(field => {
+    if(hasMeaningfulValue(record ? record[field] : null)) present.push(field);
+    else missing.push(field);
+  });
+  return { present, missing, total: fields.length };
+}
+function renderPreviewFields(record){
+  let html = `<div class="preview-fields">`;
+  PREVIEW_FIELDS.forEach(f=>{
+    const v = formatPreviewValue(record ? record[f] : null);
+    const hasVal = typeof v === 'string' ? v.trim().length > 0 : hasMeaningfulValue(v);
+    html += `<div class="preview-field">
+      <div class="preview-field-label">${esc(prettyLabel(f))}</div>
+      <div class="preview-field-value ${hasVal?'':'empty'}">${hasVal?esc(String(v)):'-'}</div>
+    </div>`;
+  });
+  html += `</div>`;
+  return html;
+}
+function renderCoverageBanner(record, intro){
+  const coverage = getPreviewCoverage(record || {});
+  const missing = coverage.missing.length
+    ? `Missing ${coverage.missing.slice(0, 3).map(prettyLabel).join(', ')}${coverage.missing.length > 3 ? '...' : ''}.`
+    : 'No obvious gaps in the key fields.';
+  return `<div class="coverage-banner"><strong>${esc(intro)}</strong> ${coverage.present.length}/${coverage.total} key fields found. ${esc(missing)}</div>`;
+}
+function describeMethodLabel(key){
+  return {
+    css:'CSS selectors',
+    smart_scraper:'AI (Smart)',
+    universal_scraper:'AI (Universal)',
+    crawl4ai:'Crawl4AI',
+    listing_api:'Structured source',
+    claude:'Claude AI',
+    script:'Generated script',
+  }[key] || prettyLabel(key);
+}
+function summarizeOption(record){
+  const coverage = getPreviewCoverage(record || {});
+  const highlights = coverage.present.slice(0, 3).map(prettyLabel).join(', ');
+  return `${coverage.present.length}/${coverage.total} key fields found${highlights ? `: ${highlights}` : ''}`;
+}
+function describePagination(pagination){
+  return {
+    none:'Single page',
+    next_button:'Next button',
+    page_numbers:'Page numbers',
+    infinite_scroll:'Infinite scroll',
+    load_more_button:'Load-more button',
+    alphabet_tabs:'A-Z tabs or categories',
+    api_endpoint:'Structured source or API',
+  }[pagination] || prettyLabel(pagination || 'auto');
+}
+function describeListingSource(plan){
+  if(plan.listing_api_plan){
+    return plan.listing_api_plan.source_kind === 'embedded_html'
+      ? 'We found structured data already embedded on the page.'
+      : 'We found structured data loading in the background.';
+  }
+  if(plan.pagination === 'none'){
+    return 'We will read the visible listing page directly.';
+  }
+  return `We will move through the directory using ${describePagination(plan.pagination).toLowerCase()}.`;
+}
+function describeDetailSource(plan){
+  if(plan.detail_api_plan) return 'Extra company details load in the background when a company is opened.';
+  if(plan.detail_page_plan || (plan.target && plan.target.detail_link_selector)) return 'Extra company details appear on each company page.';
+  return 'Most fields appear to be on the main listing page.';
+}
+function describeProgressStage(stage){
+  return {
+    preview_scrape:'Preparing the sample',
+    scraping_pages:'Collecting listing pages',
+    enriching_details:'Collecting company details',
+    parsing:'Cleaning the results',
+    output:'Preparing the export',
+    method_fallback:'Trying a deeper fallback',
+  }[stage] || prettyLabel(stage || 'working');
+}
+function setOperatorMode(enabled){
+  operatorMode = !!enabled;
+  window.localStorage.setItem('lead_scraper_operator_mode', operatorMode ? '1' : '0');
+  document.body.classList.toggle('operator-mode', operatorMode);
+  const btn = document.getElementById('operatorToggle');
+  if(btn){
+    btn.classList.toggle('active', operatorMode);
+    btn.textContent = operatorMode ? 'Operator tools on' : 'Operator tools';
+  }
+  render();
+}
 
 /* ── API ──────────────────────────────────────────────────────────── */
 async function apiPost(path,body){
@@ -481,6 +613,13 @@ function getSelectedFields(){
 document.getElementById('advToggle').addEventListener('click', function(){
   this.classList.toggle('open');
   document.getElementById('advPanel').classList.toggle('open');
+});
+document.getElementById('operatorToggle').addEventListener('click', ()=>setOperatorMode(!operatorMode));
+window.addEventListener('keydown', (event) => {
+  if(event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'd'){
+    event.preventDefault();
+    setOperatorMode(!operatorMode);
+  }
 });
 
 /* ── Tool result helpers ─────────────────────────────────────────── */
@@ -662,6 +801,21 @@ function render(){
     });
   });
 
+  container.querySelectorAll('.preview-feedback-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const id = btn.dataset.jobId;
+      const isDual = btn.dataset.dual === 'true';
+      const feedbackEl = document.getElementById('feedback-'+id);
+      const feedback = feedbackEl ? feedbackEl.value.trim() : '';
+      const methodEl = document.getElementById('method-'+id);
+      const extractionMethod = isDual && methodEl ? methodEl.value : null;
+      const guidedFeedback = feedback || 'Prioritize missing contact details, website, phone, email, and description during the full scrape.';
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Retrying with deeper extraction...';
+      confirmPreview(id, true, guidedFeedback, extractionMethod);
+    });
+  });
+
   container.querySelectorAll('.preview-abort-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const id = btn.dataset.jobId;
@@ -700,7 +854,7 @@ function render(){
         jobs[j.id] = j;
         render();
         startPolling(id);
-      }catch(err){ alert('Failed: '+err.message); btn.disabled=false; btn.textContent='Approve Plan & Preview'; }
+      }catch(err){ alert('Failed: '+err.message); btn.disabled=false; btn.textContent='Preview sample'; }
     });
   });
 
@@ -716,7 +870,7 @@ function render(){
         jobs[j.id] = j;
         render();
         startPolling(id);
-      }catch(err){ alert('Failed: '+err.message); btn.disabled=false; btn.textContent='Re-analyze'; }
+      }catch(err){ alert('Failed: '+err.message); btn.disabled=false; btn.textContent='Try again'; }
     });
   });
 
@@ -755,14 +909,17 @@ function renderJobCard(j){
   const expanded = expandedJobId===j.id;
   const isTest = j.request.test_single;
   const maxItems = j.request.max_items;
-  return `<div class="job-card ${expanded?'expanded':''}" data-id="${j.id}">
-    <div class="job-top">
-      <span class="badge badge-${j.status}"><span class="dot"></span>${STAGE_LABELS[j.status]}</span>
-      ${isTest ? '<span class="job-mode">Test</span>' : ''}
-      ${maxItems ? '<span class="job-mode" style="background:rgba(253,203,110,.12);color:var(--yellow)">Max '+maxItems+'</span>' : ''}
+  const platformBadges = operatorMode ? `
       ${j.platform_info && j.platform_info.cms ? '<span class="platform-badge">'+esc(j.platform_info.cms)+'</span>' : ''}
       ${j.platform_info && j.platform_info.ecommerce ? '<span class="platform-badge" style="background:rgba(0,184,148,.1);color:var(--green)">'+esc(j.platform_info.ecommerce)+'</span>' : ''}
       ${j.platform_info && j.platform_info.js_framework ? '<span class="platform-badge" style="background:rgba(108,92,231,.1);color:var(--accent2)">'+esc(j.platform_info.js_framework)+'</span>' : ''}
+  ` : '';
+  return `<div class="job-card ${expanded?'expanded':''}" data-id="${j.id}">
+    <div class="job-top">
+      <span class="badge badge-${j.status}"><span class="dot"></span>${STAGE_LABELS[j.status]}</span>
+      ${operatorMode && isTest ? '<span class="job-mode">Test</span>' : ''}
+      ${operatorMode && maxItems ? '<span class="job-mode" style="background:rgba(253,203,110,.12);color:var(--yellow)">Max '+maxItems+'</span>' : ''}
+      ${platformBadges}
       <span class="job-url" title="${esc(j.request.url)}">${esc(j.request.url)}</span>
       <span class="job-time" title="${j.created_at}">${timeAgo(j.created_at)}</span>
     </div>
@@ -795,7 +952,7 @@ function renderJobDetail(j){
 
   if(isPlanReview && j.plan){
     body += renderPlanReviewCard(j);
-  } else if(isPreview && (j.preview_record_css || j.preview_record_smart || j.preview_record_universal_scraper || j.preview_record_crawl4ai || j.preview_record_listing_api)){
+  } else if(isPreview && (j.preview_record_css || j.preview_record_smart || j.preview_record_universal_scraper || j.preview_record_crawl4ai || j.preview_record_listing_api || j.preview_record_claude || j.preview_record_script)){
     body += renderDualPreviewCard(j);
   } else if(isPreview && j.preview_record){
     body += renderPreviewCard(j);
@@ -826,13 +983,21 @@ function renderJobDetail(j){
       || (j.diagnostics.status_timeline && j.diagnostics.status_timeline.length)
       || (j.diagnostics.counters)
     );
-    body += `<div class="tabs">`;
-    if(hasRecords) body += `<button class="tab active" data-panel="tab-data-${j.id}">Results</button>`;
-    if(hasQuality) body += `<button class="tab" data-panel="tab-quality-${j.id}">Quality</button>`;
-    if(hasDiagnostics) body += `<button class="tab" data-panel="tab-diagnostics-${j.id}">Diagnostics</button>`;
-    if(hasRecords) body += `<button class="tab" data-panel="tab-json-${j.id}">Raw Data</button>`;
-    if(hasPlan) body += `<button class="tab ${hasRecords?'':'active'}" data-panel="tab-plan-${j.id}">Details</button>`;
-    body += `</div>`;
+    const showResultsTab = !!hasRecords;
+    const showQualityTab = !!hasQuality;
+    const showDiagnosticsTab = operatorMode && !!hasDiagnostics;
+    const showJsonTab = operatorMode && !!hasRecords;
+    const showPlanTab = operatorMode && !!hasPlan;
+
+    if(showResultsTab || showQualityTab || showDiagnosticsTab || showJsonTab || showPlanTab){
+      body += `<div class="tabs">`;
+      if(showResultsTab) body += `<button class="tab active" data-panel="tab-data-${j.id}">Results</button>`;
+      if(showQualityTab) body += `<button class="tab" data-panel="tab-quality-${j.id}">Coverage</button>`;
+      if(showDiagnosticsTab) body += `<button class="tab" data-panel="tab-diagnostics-${j.id}">Diagnostics</button>`;
+      if(showJsonTab) body += `<button class="tab" data-panel="tab-json-${j.id}">Raw Data</button>`;
+      if(showPlanTab) body += `<button class="tab ${hasRecords?'':'active'}" data-panel="tab-plan-${j.id}">Details</button>`;
+      body += `</div>`;
+    }
 
     if(hasRecords){
       const recs = j.result.records;
@@ -848,7 +1013,7 @@ function renderJobDetail(j){
         <span class="record-count">${recs.length} compan${recs.length!==1?'ies':'y'} found</span>
         ${hasQuality ? renderQualityBadge(j.quality_report) : ''}
         ${canDownload?`<div class="dl-btns">
-          <a href="${API}/crawl/${j.id}/json" class="btn btn-sm btn-outline" download>Download JSON</a>
+          ${operatorMode ? `<a href="${API}/crawl/${j.id}/json" class="btn btn-sm btn-outline" download>Download JSON</a>` : ''}
           <a href="${API}/crawl/${j.id}/csv" class="btn btn-sm btn-green" download>Download CSV</a>
         </div>`:''}
       </div>`;
@@ -860,17 +1025,17 @@ function renderJobDetail(j){
       body += `<div class="tab-panel" id="tab-quality-${j.id}">${renderQualityCard(j.quality_report)}</div>`;
     }
 
-    if(hasDiagnostics){
+    if(operatorMode && hasDiagnostics){
       body += `<div class="tab-panel" id="tab-diagnostics-${j.id}">${renderDiagnosticsCard(j.diagnostics)}</div>`;
     }
 
-    if(hasRecords){
+    if(operatorMode && hasRecords){
       body += `<div class="tab-panel" id="tab-json-${j.id}">
         <div class="plan-box"><pre>${esc(JSON.stringify(j.result.records.slice(0,20),null,2))}${j.result.records.length>20?'\n... ('+(j.result.records.length-20)+' more)':''}</pre></div>
       </div>`;
     }
 
-    if(hasPlan){
+    if(operatorMode && hasPlan){
       body += `<div class="tab-panel ${hasRecords?'':'active'}" id="tab-plan-${j.id}">
         <div class="plan-box"><pre>${esc(JSON.stringify(j.plan,null,2))}</pre></div>
       </div>`;
@@ -887,12 +1052,12 @@ function renderJobDetail(j){
             <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:3px;transition:width .3s"></div>
           </div>`;
       } else if(p.stage === 'scraping_pages'){
-        const method = p.method ? ` (${esc(p.method)})` : '';
+        const method = operatorMode && p.method ? ` (${esc(p.method)})` : '';
         progressHtml = `<span class="spinner" style="margin-right:8px"></span>
           Scraping pages${method}: <strong>${esc(String(p.pages_processed||0))}</strong> processed,
           <strong>${esc(String(p.total_items||0))}</strong> items found`;
       } else if(p.stage){
-        progressHtml = `<span class="spinner" style="margin-right:8px"></span>${esc(p.stage)}...`;
+        progressHtml = `<span class="spinner" style="margin-right:8px"></span>${esc(describeProgressStage(p.stage))}...`;
       }
     }
     body += `<div style="text-align:center;padding:24px;color:var(--text2);font-size:.88rem">${progressHtml}</div>`;
@@ -1034,6 +1199,8 @@ function renderDualPreviewCard(j){
   const usRec = j.preview_record_universal_scraper;
   const c4Rec = j.preview_record_crawl4ai;
   const laRec = j.preview_record_listing_api;
+  const claudeRec = j.preview_record_claude;
+  const scriptRec = j.preview_record_script;
   const recMethod = j.preview_recommended_method;
 
   // Build list of available methods
@@ -1042,7 +1209,9 @@ function renderDualPreviewCard(j){
   if(smartRec) methods.push({key:'smart_scraper', label:'AI (Smart)', rec:smartRec});
   if(usRec) methods.push({key:'universal_scraper', label:'AI (Universal)', rec:usRec});
   if(c4Rec) methods.push({key:'crawl4ai', label:'Crawl4AI', rec:c4Rec});
-  if(laRec) methods.push({key:'listing_api', label:'Listing API', rec:laRec});
+  if(laRec) methods.push({key:'listing_api', label:'Structured Source', rec:laRec});
+  if(claudeRec) methods.push({key:'claude', label:'Claude AI', rec:claudeRec});
+  if(scriptRec) methods.push({key:'script', label:'Generated Script', rec:scriptRec});
   const methodLabels = methods.map((_,i)=>'Method '+ String.fromCharCode(65+i));
 
   const methodCount = methods.length;
@@ -1126,6 +1295,250 @@ function renderDualPreviewCard(j){
   html += `<div class="preview-actions">
     <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}" data-dual="true">${isTest?'Looks good — Save':'Looks good — Scrape all'}</button>
     ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Something missing? Describe it here...">'}
+    <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Cancel</button>
+  </div>
+  </div>`;
+  return html;
+}
+
+function renderPlanReviewCard(j){
+  const plan = j.plan;
+  const paginationOptions = ['none','next_button','page_numbers','infinite_scroll','load_more_button','alphabet_tabs','api_endpoint'];
+  const paginationLabels = {none:'Single page',next_button:'Next button',page_numbers:'Page numbers',infinite_scroll:'Infinite scroll',load_more_button:'Load-more button',alphabet_tabs:'A-Z tabs',api_endpoint:'Structured source or API'};
+  const totalItems = plan.total_items_hint
+    ? `${plan.total_items_hint} item${plan.total_items_hint === 1 ? '' : 's'} visible in the sample`
+    : 'No total count was visible in the sample';
+  const renderMode = plan.requires_javascript
+    ? 'This site needs browser rendering before the list appears.'
+    : 'This page looks readable without browser rendering.';
+
+  let html = `<div class="preview-box" style="border-color:var(--accent2)">
+    <h3 style="color:var(--accent2)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      Review the setup before we scrape
+    </h3>
+    <p class="preview-subtitle">This is our best guess about how to collect the directory. If it sounds right, preview one sample. If not, describe what is wrong in plain English.</p>
+    <div class="review-summary-grid">
+      <div class="summary-card">
+        <div class="summary-label">How we will collect the list</div>
+        <div class="summary-value">${esc(describeListingSource(plan))}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Where extra details come from</div>
+        <div class="summary-value">${esc(describeDetailSource(plan))}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Pagination</div>
+        <div class="summary-value">${esc(describePagination(plan.pagination))}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Page loading</div>
+        <div class="summary-value">${esc(renderMode)}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Estimated size</div>
+        <div class="summary-value">${esc(totalItems)}</div>
+      </div>
+    </div>`;
+
+  if(plan.notes){
+    html += `<div class="summary-note"><strong>What we are watching:</strong> ${esc(plan.notes)}</div>`;
+  }
+
+  if(operatorMode){
+    html += `<details class="operator-panel" open>
+      <summary>Operator tools</summary>
+      <div class="plan-review-grid" id="plan-form-${j.id}">
+        <div class="plan-review-field">
+          <label>Pagination</label>
+          <select data-field="pagination">
+            ${paginationOptions.map(o=>`<option value="${o}" ${plan.pagination===o?'selected':''}>${esc(paginationLabels[o]||o)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="plan-review-field">
+          <label>JavaScript Rendering</label>
+          <select data-field="requires_javascript">
+            <option value="true" ${plan.requires_javascript?'selected':''}>Yes (browser)</option>
+            <option value="false" ${!plan.requires_javascript?'selected':''}>No (static HTML)</option>
+          </select>
+        </div>
+        <div class="plan-review-field">
+          <label>Item Container Selector</label>
+          <input type="text" data-field="item_container_selector" value="${esc((plan.target && plan.target.item_container_selector) || '')}" placeholder="e.g. .exhibitor-card">
+        </div>
+        <div class="plan-review-field">
+          <label>Detail Link Selector</label>
+          <input type="text" data-field="detail_link_selector" value="${esc((plan.target && plan.target.detail_link_selector) || '')}" placeholder="e.g. a.detail-link">
+        </div>
+        <div class="plan-review-field">
+          <label>Pagination Selector</label>
+          <input type="text" data-field="pagination_selector" value="${esc(plan.pagination_selector||'')}" readonly>
+        </div>
+        <div class="plan-review-field">
+          <label>Total Items (estimate)</label>
+          <input type="text" data-field="total_items_hint" value="${plan.total_items_hint || '-'}" readonly>
+        </div>
+      </div>`;
+
+    if(plan.target && plan.target.field_selectors && Object.keys(plan.target.field_selectors).length){
+      html += `<div class="plan-selectors-box">
+        <h4 style="margin:0 0 8px;font-size:.82rem;color:var(--text2)">Detected field selectors</h4>
+        <div class="plan-review-grid">`;
+      Object.entries(plan.target.field_selectors).forEach(([field, selector])=>{
+        html += `<div class="plan-review-field">
+          <label>${esc(prettyLabel(field))}</label>
+          <code style="font-size:.78rem;color:var(--accent);background:var(--surface2);padding:4px 8px;border-radius:6px">${esc(selector)}</code>
+        </div>`;
+      });
+      html += `</div></div>`;
+    }
+
+    if(j.platform_info){
+      const pi = j.platform_info;
+      const chips = [];
+      if(pi.cms) chips.push(pi.cms);
+      if(pi.ecommerce) chips.push(pi.ecommerce);
+      if(pi.js_framework) chips.push(pi.js_framework);
+      if(chips.length){
+        html += `<div style="margin:8px 0;font-size:.82rem;color:var(--text2)">
+          <strong>Detected platform:</strong> ${chips.map(c=>'<span class="platform-badge">'+esc(c)+'</span>').join(' ')}
+        </div>`;
+      }
+    }
+
+    html += `</details>`;
+  }
+
+  html += `<div class="feedback-helper">Examples: "emails are on the company page", "this uses A-Z tabs", or "descriptions are inside a popup".</div>
+    <div class="preview-actions" style="flex-wrap:wrap;gap:8px">
+      <button class="btn btn-green plan-approve-btn" data-job-id="${j.id}">Preview sample</button>
+      <input type="text" class="feedback-input" id="reanalyze-feedback-${j.id}" placeholder="What is wrong or missing?" style="flex:1;min-width:200px">
+      <button class="btn btn-outline plan-reanalyze-btn" data-job-id="${j.id}">Try again</button>
+      <button class="btn btn-sm btn-red plan-abort-btn" data-job-id="${j.id}">Cancel</button>
+    </div>
+  </div>`;
+  return html;
+}
+
+function renderPreviewCard(j){
+  const r = j.preview_record;
+  const isTest = j.request.test_single;
+  let html = `<div class="preview-box">
+    <h3>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Sample result
+    </h3>
+    <p class="preview-subtitle">${isTest
+      ? 'Review this sample and save it if it matches what you need.'
+      : 'This sample shows what the full export will look like.'}</p>
+    ${renderCoverageBanner(r, isTest ? 'Test sample ready.' : 'This sample looks usable.')}
+    ${renderPreviewFields(r)}
+    ${isTest ? '' : '<div class="feedback-helper">If something is missing, leave a note and we will use it before the full scrape starts.</div>'}
+    <div class="preview-actions">
+      <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}">${isTest?'Looks good - save':'Looks good - scrape all'}</button>
+      ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Example: missing website and phone">'}
+      ${isTest?'':'<button class="btn btn-outline preview-feedback-btn" data-job-id="'+j.id+'">Missing fields - try deeper extraction</button>'}
+      <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Cancel</button>
+    </div>
+  </div>`;
+  return html;
+}
+
+function renderDualPreviewCard(j){
+  const isTest = j.request.test_single;
+  const cssRec = j.preview_record_css;
+  const smartRec = j.preview_record_smart;
+  const usRec = j.preview_record_universal_scraper;
+  const c4Rec = j.preview_record_crawl4ai;
+  const laRec = j.preview_record_listing_api;
+  const claudeRec = j.preview_record_claude;
+  const scriptRec = j.preview_record_script;
+  const recMethod = j.preview_recommended_method;
+
+  const methods = [];
+  if(cssRec) methods.push({key:'css', label:'CSS Selectors', rec:cssRec});
+  if(smartRec) methods.push({key:'smart_scraper', label:'AI (Smart)', rec:smartRec});
+  if(usRec) methods.push({key:'universal_scraper', label:'AI (Universal)', rec:usRec});
+  if(c4Rec) methods.push({key:'crawl4ai', label:'Crawl4AI', rec:c4Rec});
+  if(laRec) methods.push({key:'listing_api', label:'Structured Source', rec:laRec});
+  if(claudeRec) methods.push({key:'claude', label:'Claude AI', rec:claudeRec});
+  if(scriptRec) methods.push({key:'script', label:'Generated Script', rec:scriptRec});
+
+  const methodCount = methods.length;
+  const subtitle = methodCount > 2
+    ? (isTest
+        ? `We found ${methodCount} possible samples. Pick the one that looks most complete.`
+        : `We found ${methodCount} possible samples. Choose the one that looks best and we will use it for the full scrape.`)
+    : (isTest
+        ? 'We found two possible samples. Pick the one that looks more complete.'
+        : 'We found two possible samples. Choose the one that looks better for the full scrape.');
+
+  let html = `<div class="preview-box">
+    <h3>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Compare sample results
+    </h3>
+    <p class="preview-subtitle">${subtitle}</p>`;
+
+  const recommendedIndex = methods.findIndex(m => m.key === recMethod);
+  if(recommendedIndex >= 0){
+    const recommendedLetter = String.fromCharCode(65 + recommendedIndex);
+    html += `<div class="recommendation-box">
+      <strong>Our suggestion:</strong> Option ${recommendedLetter} looks the most complete on this sample.
+    </div>`;
+  }
+  if(operatorMode && j.preview_recommendation){
+    html += `<div class="summary-note"><strong>Operator note:</strong> ${esc(j.preview_recommendation)}</div>`;
+  }
+
+  html += `<div class="dual-preview">`;
+  methods.forEach((m, idx) => {
+    const isRec = recMethod === m.key;
+    const letter = String.fromCharCode(65 + idx);
+    html += `<div class="preview-col ${isRec?'recommended':''}">
+      <h4>Option ${letter}${operatorMode ? ' <span style="font-weight:400;font-size:.78rem;color:var(--text2)">('+esc(describeMethodLabel(m.key))+')</span>' : ''} ${isRec?'<span class="rec-badge">Suggested</span>':''}</h4>
+      <div class="option-meta">${esc(summarizeOption(m.rec))}</div>
+      ${renderPreviewFields(m.rec)}
+    </div>`;
+  });
+  html += `</div>`;
+
+  const defaultMethod = recMethod || (methods.length ? methods[0].key : 'css');
+  html += `<div class="method-select">
+    <span style="font-size:.82rem;color:var(--text2);align-self:center;margin-right:4px">Use this sample:</span>`;
+  methods.forEach((m, idx) => {
+    const letter = String.fromCharCode(65 + idx);
+    html += `<button class="method-btn ${defaultMethod===m.key?'selected':''}" data-method="${m.key}" data-job-id="${j.id}">Option ${letter}${operatorMode ? ' - ' + esc(describeMethodLabel(m.key)) : ''}</button>`;
+  });
+  html += `</div>
+    <input type="hidden" id="method-${j.id}" value="${defaultMethod}">`;
+
+  if(j.preview_items && j.preview_items.length > 1){
+    const items = j.preview_items;
+    const cols = ['name','city','country','website','email','phone'].filter(c=>items.some(it=>it[c]));
+    html += `<div style="margin:14px 0 16px">
+      <h4 style="font-size:.85rem;color:var(--text2);margin:0 0 8px">
+        Preview: ${items.length} sample items from the first page
+      </h4>
+      <div style="overflow-x:auto;border-radius:8px;border:1px solid var(--border)">
+        <table class="data-table" style="margin:0;font-size:.8rem">
+          <thead><tr>${cols.map(c=>`<th>${esc(prettyLabel(c))}</th>`).join('')}</tr></thead>
+          <tbody>${items.map(it=>`<tr>${cols.map(c=>{
+            let v=it[c]||'';
+            if(Array.isArray(v)) v=v.join(', ');
+            if(typeof v==='object'&&v!==null) v=JSON.stringify(v);
+            return `<td>${v?esc(String(v)):'<span style="color:var(--text2)">-</span>'}</td>`;
+          }).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }
+
+  html += `${isTest ? '' : '<div class="feedback-helper">If the best-looking sample still misses contact details, leave a note and continue with deeper extraction.</div>'}
+  <div class="preview-actions">
+    <button class="btn btn-green preview-confirm-btn" data-job-id="${j.id}" data-test-single="${isTest}" data-dual="true">${isTest?'Looks good - save':'Looks good - scrape all'}</button>
+    ${isTest?'':'<input type="text" class="feedback-input" id="feedback-'+j.id+'" placeholder="Example: description and website are missing">'}
+    ${isTest?'':'<button class="btn btn-outline preview-feedback-btn" data-job-id="'+j.id+'" data-dual="true">Missing fields - try deeper extraction</button>'}
     <button class="btn btn-sm btn-red preview-abort-btn" data-job-id="${j.id}">Cancel</button>
   </div>
   </div>`;
@@ -1270,6 +1683,7 @@ function renderTable(records){
 
 /* ── Refresh & Init ──────────────────────────────────────────────── */
 document.getElementById('refreshBtn').addEventListener('click', loadJobs);
+setOperatorMode(operatorMode);
 loadJobs();
 highlightSteps();
 </script>

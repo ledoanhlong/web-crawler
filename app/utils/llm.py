@@ -12,6 +12,7 @@ import asyncio
 import base64
 import json
 import random
+import re
 import time
 from typing import Any
 
@@ -430,7 +431,12 @@ async def chat_completion_claude_json(
     )
     if not raw or not raw.strip():
         raise ValueError("Claude model returned empty response")
-    return json.loads(raw)
+    text = raw.strip()
+    # Strip markdown fences Claude often wraps JSON in
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*\n?", "", text)
+        text = re.sub(r"\n?```\s*$", "", text)
+    return json.loads(text)
 
 
 async def ping_openai_default() -> dict[str, Any]:

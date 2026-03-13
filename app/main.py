@@ -1,19 +1,37 @@
 """FastAPI application entry point."""
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
-from app.api.routes import router
+from app.api.routes import _jobs, router
 from app.config import settings
+from app.services.job_store import job_store
 from app.services.provider_health import get_provider_health_snapshot, refresh_provider_health
 from app.utils.logging import get_logger
 
 _FRONTEND_DIR = Path(__file__).parent / "frontend"
 
 log = get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    from app.utils.http import close_shared_client
+
+    try:
+        job_store.load_into(_jobs)
+        job_store.recover_interrupted_jobs(_jobs)
+        try:
+            await refresh_provider_health()
+        except Exception as exc:
+            log.warning("Provider health startup check failed: %s", exc)
+        yield
+    finally:
+        await close_shared_client()
 
 app = FastAPI(
     title="Web Crawler AI Agent",
@@ -22,6 +40,7 @@ app = FastAPI(
         "information from marketplaces, trade fairs, and directories."
     ),
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -33,21 +52,6 @@ app.add_middleware(
 )
 
 app.include_router(router)
-
-
-@app.on_event("shutdown")
-async def _shutdown() -> None:
-    from app.utils.http import close_shared_client
-    await close_shared_client()
-
-
-@app.on_event("startup")
-async def _startup() -> None:
-    # Warm provider health state so /health immediately reports endpoint reachability.
-    try:
-        await refresh_provider_health()
-    except Exception as exc:
-        log.warning("Provider health startup check failed: %s", exc)
 
 
 @app.get("/health")
@@ -63,9 +67,13 @@ async def health() -> dict:
 
 
 @app.get("/", include_in_schema=False)
-async def serve_frontend() -> FileResponse:
-    """Serve the single-page frontend UI."""
-    return FileResponse(_FRONTEND_DIR / "index.html", media_type="text/html")
+async def serve_frontend() -> Response:
+    """Serve the single-page frontend UI (no-cache to avoid stale JS)."""
+    return FileResponse(
+        _FRONTEND_DIR / "index.html",
+        media_type="text/html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 if __name__ == "__main__":

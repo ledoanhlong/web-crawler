@@ -5,6 +5,7 @@ import ipaddress
 import socket
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from urllib.parse import urlparse
 
@@ -92,9 +93,24 @@ class DetailPagePlan(BaseModel):
 
 
 class ListingApiPlan(BaseModel):
-    """Describes a discovered listing API that returns items as JSON."""
+    """Describes a structured listing source (API or embedded HTML JSON)."""
 
-    api_url: str = Field(description="The URL that returned the listing JSON.")
+    source_kind: Literal["api", "embedded_html"] = Field(
+        default="api",
+        description="Where the structured listing data comes from.",
+    )
+    html_selector: str | None = Field(
+        default=None,
+        description="CSS selector for the HTML element that carries embedded JSON.",
+    )
+    html_attribute: str | None = Field(
+        default=None,
+        description="HTML attribute containing embedded JSON. Null means use element text content.",
+    )
+
+    api_url: str = Field(
+        description="The URL of the structured source. For embedded HTML JSON, this is the page URL.",
+    )
     items_json_path: str | None = Field(
         default=None,
         description="Dot-path to the items array inside the response (e.g. 'data.results').",
@@ -107,6 +123,29 @@ class ListingApiPlan(BaseModel):
         default=None,
         description="Total number of items returned by the API.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Exploration report (output of interactive browsing)
+# ---------------------------------------------------------------------------
+class ExplorationAction(BaseModel):
+    """A single action taken during vision-guided page exploration."""
+    step: int
+    action_type: str = ""     # "click", "scroll", "navigate", "done"
+    target: str = ""          # CSS selector or URL
+    description: str = ""     # what was done
+    observation: str = ""     # what was learned
+
+
+class ExplorationReport(BaseModel):
+    """Compiled findings from interactive page browsing."""
+    actions: list[ExplorationAction] = Field(default_factory=list)
+    page_structure_notes: str = ""
+    pagination_notes: str = ""
+    hidden_content_notes: str = ""
+    detail_page_notes: str = ""
+    final_html: str = ""
+    screenshots_taken: int = 0
 
 
 class DetailApiPlan(BaseModel):
@@ -127,7 +166,10 @@ class DetailApiPlan(BaseModel):
     )
     id_regex: str | None = Field(
         default=None,
-        description="Optional regex with one capture group to extract the ID from the attribute value.",
+        description=(
+            "Optional regex with capture group(s) to extract the ID from the attribute value. "
+            "Multiple capture groups are joined with '.' to form compound IDs."
+        ),
     )
     sample_response: dict | None = Field(
         default=None,
@@ -325,6 +367,8 @@ class SellerLead(BaseModel):
         default=None,
         description="Name of the marketplace, directory, or platform this lead was found on.",
     )
+    booth: str | None = Field(default=None, description="Booth/stand number at a trade fair.")
+    hall: str | None = Field(default=None, description="Hall number at a trade fair.")
     logo_url: str | None = None
     social_media: dict[str, str] = Field(default_factory=dict)
     raw_extra: dict[str, str] = Field(
@@ -344,6 +388,7 @@ class ExtractionMethod(str, enum.Enum):
     UNIVERSAL_SCRAPER = "universal_scraper"
     LISTING_API = "listing_api"
     CLAUDE = "claude"
+    SCRIPT = "script"
 
 
 class CrawlStatus(str, enum.Enum):
@@ -646,6 +691,10 @@ class CrawlJob(BaseModel):
         default=None,
         description="Preview record extracted via Claude Opus 4.6 (complex site fallback).",
     )
+    preview_record_script: SellerLead | None = Field(
+        default=None,
+        description="Preview record extracted via generated BS4 script (Claude Opus 4.6).",
+    )
     preview_recommendation: str | None = Field(
         default=None,
         description="LLM explanation of which extraction method is better.",
@@ -734,7 +783,7 @@ class ScriptCreatorRequest(BaseModel):
         description="Python library for the generated script (beautifulsoup4, scrapy, etc.).",
     )
     auto_execute: bool = Field(
-        default=True,
+        default=False,
         description="Automatically execute the generated script and return results.",
     )
 
@@ -747,7 +796,7 @@ class ScriptCreatorMultiRequest(BaseModel):
         description="Python library for the generated script (beautifulsoup4, scrapy, etc.).",
     )
     auto_execute: bool = Field(
-        default=True,
+        default=False,
         description="Automatically execute the generated script and return results.",
     )
 

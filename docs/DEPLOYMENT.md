@@ -27,99 +27,133 @@ This project is deployed as two separate services:
 
 ## Prerequisites
 
-| Tool | Version | Purpose |
-|------|---------|---------|
-| [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | >= 2.60 | Create Azure resources |
-| [Docker](https://docs.docker.com/get-docker/) | >= 24 | Build & push container image |
-| [Node.js](https://nodejs.org/) | >= 18 | Vercel frontend build script |
-| [Vercel CLI](https://vercel.com/docs/cli) (optional) | latest | Deploy frontend from terminal |
-| Azure subscription | — | Container Apps + ACR hosting |
-| Vercel account | — | Frontend hosting (free tier works) |
+| Tool | Purpose |
+|------|---------|
+| Azure subscription | Container Apps + ACR hosting |
+| [Docker Desktop](https://docs.docker.com/get-docker/) | Build container image locally before pushing |
+| Vercel account | Frontend hosting (free tier works) |
+| GitHub repo | Required for Vercel auto-deploy; optional for Azure |
+
+> **Note:** This guide uses the **Azure Portal** (web UI) for all Azure steps. No Azure CLI is needed. A CLI-based script (`deploy/azure-deploy.sh`) is also available if you prefer.
 
 ---
 
-## Step 1 — Deploy the Backend on Azure
+## Step 1 — Deploy the Backend via Azure Portal
 
-### 1.1 Set environment variables
+### 1.1 Push your code to GitHub
 
-```bash
-# Required — Azure OpenAI credentials
-export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_API_KEY="your-api-key-here"
-
-# Optional — override defaults
-export AZURE_OPENAI_API_VERSION="2025-04-01-preview"
-export AZURE_OPENAI_DEPLOYMENT="gpt-5.2"
-
-# Optional — Vision provider (GPT-4o)
-export AZURE_VISION_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_VISION_API_KEY="your-api-key-here"
-export AZURE_VISION_DEPLOYMENT="gpt-4o"
-export USE_VISION_PLANNING="true"
-
-# Optional — Claude provider (Azure AI Foundry Anthropic endpoint)
-export AZURE_CLAUDE_ENDPOINT="https://your-claude-deployment.services.ai.azure.com/"
-export AZURE_CLAUDE_API_KEY="your-claude-api-key-here"
-export AZURE_CLAUDE_DEPLOYMENT="claude-opus-4-6"
-export USE_CLAUDE_EXTRACTION="true"
-
-# Optional — Claude circuit breaker + cost-control policy
-export CLAUDE_CIRCUIT_BREAKER_ENABLED="true"
-export CLAUDE_CIRCUIT_BREAKER_MAX_ERRORS="3"
-export CLAUDE_CIRCUIT_BREAKER_COOLDOWN_S="600"
-export CLAUDE_FALLBACK_ONLY="true"
-export CLAUDE_MAX_RETRIES_PER_STAGE="1"
-
-# Optional — Azure resource naming
-export AZURE_RESOURCE_GROUP="web-crawler-rg"
-export AZURE_LOCATION="eastus"
-export AZURE_ACR_NAME="webcrawleracr"
-export AZURE_CONTAINER_APP_NAME="web-crawler-api"
-```
-
-### 1.2 Log in to Azure
+Vercel (Step 2) requires a GitHub repo, and Azure Container Registry can pull images built from GitHub Actions or pushed manually. Make sure your repo is pushed:
 
 ```bash
-az login
+git add -A
+git commit -m "prepare for deployment"
+git push origin main
 ```
 
-### 1.3 Run the deployment script
+> **Security:** The `.env` file is in `.gitignore` and `.dockerignore` — your API keys will NOT be uploaded to GitHub or baked into the Docker image.
+
+### 1.2 Create a Resource Group
+
+1. Go to [Azure Portal](https://portal.azure.com)
+2. Search for **"Resource groups"** in the top search bar
+3. Click **+ Create**
+4. Set **Resource group name** to `web-crawler-rg`
+5. Set **Region** to your preferred region (e.g. `East US`)
+6. Click **Review + create** → **Create**
+
+### 1.3 Create an Azure Container Registry (ACR)
+
+1. Search for **"Container registries"** in the portal
+2. Click **+ Create**
+3. Set:
+   - **Resource group:** `web-crawler-rg`
+   - **Registry name:** a globally unique name like `webcrawleracr` (lowercase, no dashes)
+   - **Location:** same region as the resource group
+   - **SKU:** `Basic`
+4. Click **Review + create** → **Create**
+5. Once created, go to the registry → **Settings** → **Access keys**
+6. Enable **Admin user**
+7. Note down: **Login server**, **Username**, and **Password** — you'll need these
+
+### 1.4 Build and push the Docker image
+
+On your local machine, build and push:
 
 ```bash
-chmod +x deploy/azure-deploy.sh
-./deploy/azure-deploy.sh
+# Log in to your ACR (replace with your values from step 1.3)
+docker login <your-acr>.azurecr.io -u <username> -p <password>
+
+# Build the image
+docker build -t <your-acr>.azurecr.io/web-crawler-api:latest .
+
+# Push to ACR
+docker push <your-acr>.azurecr.io/web-crawler-api:latest
 ```
 
-This script will:
-1. Create a resource group
-2. Create an Azure Container Registry (ACR)
-3. Build the Docker image and push it to ACR
-4. Create a Container Apps environment
-5. Deploy the container with all environment variables
-6. Print the backend URL (e.g. `https://web-crawler-api.nicedesert-abc123.eastus.azurecontainerapps.io`)
+### 1.5 Create a Container Apps Environment
 
-### 1.4 Verify
+1. Search for **"Container Apps Environments"** in the portal
+2. Click **+ Create**
+3. Set:
+   - **Resource group:** `web-crawler-rg`
+   - **Name:** `web-crawler-env`
+   - **Region:** same region
+   - **Plan type:** `Consumption only`
+4. Click **Review + create** → **Create**
 
-```bash
-curl https://<your-backend-url>/health
-# → {"status":"ok|degraded","providers":{...}}
+### 1.6 Create the Container App
 
-# Optional: provider-level per-job telemetry after a crawl
-curl https://<your-backend-url>/api/v1/crawl/<job-id>/telemetry
-```
+1. Search for **"Container Apps"** in the portal
+2. Click **+ Create**
+3. **Basics** tab:
+   - **Resource group:** `web-crawler-rg`
+   - **Container app name:** `web-crawler-api`
+   - **Container Apps Environment:** `web-crawler-env`
+4. **Container** tab:
+   - Uncheck **"Use quickstart image"**
+   - **Image source:** `Azure Container Registry`
+   - **Registry:** your ACR from step 1.3
+   - **Image:** `web-crawler-api`
+   - **Tag:** `latest`
+   - **CPU:** `2` cores
+   - **Memory:** `4` GB
+5. **Environment variables** — add each of these (click **+ Add**):
 
-### Container Resources
+   | Name | Value |
+   |------|-------|
+   | `AZURE_OPENAI_ENDPOINT` | `https://your-resource.openai.azure.com/` |
+   | `AZURE_OPENAI_API_KEY` | your key |
+   | `AZURE_OPENAI_API_VERSION` | `2025-04-01-preview` |
+   | `AZURE_OPENAI_DEPLOYMENT` | `gpt-5.2` |
+   | `AZURE_VISION_ENDPOINT` | your vision endpoint |
+   | `AZURE_VISION_API_KEY` | your vision key |
+   | `AZURE_VISION_DEPLOYMENT` | `gpt-4o` |
+   | `USE_VISION_PLANNING` | `true` |
+   | `AZURE_CLAUDE_ENDPOINT` | your Claude endpoint |
+   | `AZURE_CLAUDE_API_KEY` | your Claude key |
+   | `AZURE_CLAUDE_DEPLOYMENT` | `claude-opus-4-6` |
+   | `USE_CLAUDE_EXTRACTION` | `true` |
+   | `CLAUDE_FALLBACK_ONLY` | `true` |
+   | `CLAUDE_CIRCUIT_BREAKER_ENABLED` | `true` |
+   | `ALLOWED_ORIGINS` | `["*"]` (update after Vercel deploy) |
+   | `PLAYWRIGHT_HEADLESS` | `true` |
+   | `LOG_LEVEL` | `INFO` |
 
-The deployment script configures:
+6. **Ingress** tab:
+   - **Ingress:** `Enabled`
+   - **Ingress traffic:** `Accepting traffic from anywhere`
+   - **Ingress type:** `HTTP`
+   - **Target port:** `8000`
+7. **Scaling** tab:
+   - **Min replicas:** `0` (scales to zero when idle)
+   - **Max replicas:** `2`
+8. Click **Review + create** → **Create**
 
-| Setting | Value | Notes |
-|---------|-------|-------|
-| CPU | 2 cores | Playwright + LLM calls need headroom |
-| Memory | 4 GB | Chromium uses ~300MB per instance |
-| Min replicas | 0 | Scales to zero when idle (saves cost) |
-| Max replicas | 2 | Handles concurrent crawl jobs |
-| Ingress | External | Public HTTPS endpoint |
-| Port | 8000 | Uvicorn default |
+### 1.7 Get your backend URL
+
+1. Once deployed, go to your Container App in the portal
+2. On the **Overview** page, find the **Application Url** (e.g. `https://web-crawler-api.nicedesert-abc123.eastus.azurecontainerapps.io`)
+3. Open `https://<your-backend-url>/health` in a browser to verify
 
 ---
 
@@ -151,25 +185,20 @@ Click **Deploy** — Vercel runs `node inject-api-url.js`, which:
 
 Open your Vercel URL (e.g. `https://my-crawler.vercel.app`) — you should see the Lead Scraper UI. Submit a test crawl to confirm it reaches the backend.
 
+The default UI is sales-facing and hides selector-level controls. Use the `Operator tools` toggle in the header when you need raw method names, diagnostics, selector edits, or JSON troubleshooting.
+
 ---
 
 ## Step 3 — Connect Frontend ↔ Backend (CORS)
 
 After both are deployed, update the backend's CORS settings so it accepts requests from your Vercel domain.
 
-### Option A: Re-run the deploy script with `FRONTEND_URL`
+1. Go to Azure Portal → Container Apps → your app → **Containers** → **Environment variables**
+2. Update `ALLOWED_ORIGINS` to: `["https://my-crawler.vercel.app","http://localhost:8000"]`
+3. Add `FRONTEND_URL` = `https://my-crawler.vercel.app`
+4. Click **Save** (triggers a new revision / restart)
 
-```bash
-export FRONTEND_URL="https://my-crawler.vercel.app"
-./deploy/azure-deploy.sh
-```
-
-### Option B: Update the env var directly in Azure Portal
-
-1. Go to Azure Portal → Container Apps → your app → Settings → Environment variables
-2. Set `ALLOWED_ORIGINS` to: `["https://my-crawler.vercel.app","http://localhost:8000"]`
-3. Set `FRONTEND_URL` to: `https://my-crawler.vercel.app`
-4. Click **Save** (triggers a restart)
+> **Important:** `ALLOWED_ORIGINS` must be a JSON array, not comma-separated. E.g. `["https://a.com","https://b.com"]`
 
 ---
 
@@ -197,6 +226,8 @@ export FRONTEND_URL="https://my-crawler.vercel.app"
 | `AZURE_CLAUDE_API_KEY` | `""` | Claude API key |
 | `AZURE_CLAUDE_DEPLOYMENT` | `claude-opus-4-6` | Claude model deployment name |
 | `USE_CLAUDE_EXTRACTION` | `true` | Enables Claude extraction fallback |
+| `USE_SCRIPT_EXTRACTION` | `true` | Enables generated-script extraction in preview/full crawl |
+| `ALLOW_GENERATED_SCRIPT_EXECUTION` | `false` | Standalone script endpoints only auto-run generated code when this is true |
 | `CLAUDE_CIRCUIT_BREAKER_ENABLED` | `true` | Temporarily disables Claude after repeated failures |
 | `CLAUDE_CIRCUIT_BREAKER_MAX_ERRORS` | `3` | Consecutive Claude errors before breaker opens |
 | `CLAUDE_CIRCUIT_BREAKER_COOLDOWN_S` | `600` | Breaker cooldown window |
@@ -206,7 +237,7 @@ export FRONTEND_URL="https://my-crawler.vercel.app"
 | `OPENAI_OUTPUT_COST_PER_MTOK` | `10.0` | Cost estimate output tokens per 1M (USD) |
 | `CLAUDE_INPUT_COST_PER_MTOK` | `15.0` | Cost estimate input tokens per 1M (USD) |
 | `CLAUDE_OUTPUT_COST_PER_MTOK` | `75.0` | Cost estimate output tokens per 1M (USD) |
-| `ALLOWED_ORIGINS` | `["*"]` | CORS allowed origins (JSON list) |
+| `ALLOWED_ORIGINS` | `["*"]` | CORS allowed origins (**JSON array**, not comma-separated) |
 | `FRONTEND_URL` | `""` | Vercel frontend URL |
 | `OUTPUT_DIR` | `./output` | Results storage directory |
 | `MAX_JOB_DURATION_S` | `7200` | Max crawl duration (seconds) |
@@ -216,6 +247,8 @@ export FRONTEND_URL="https://my-crawler.vercel.app"
 | `USE_SCRAPY` | `false` | Enable Scrapy subprocess |
 | `USE_CRAWL4AI` | `false` | Enable Crawl4AI markdown extractor |
 | `USE_UNIVERSAL_SCRAPER` | `false` | Enable AI-powered BS4 code generation |
+| `USE_LISTING_API_INTERCEPTION` | `true` | Allow preview/full crawl to intercept listing APIs when structured data is loaded in the background |
+| `USE_INNER_TEXT_FALLBACK` | `true` | Allow markdown/HTML extraction to fall back to rendered `innerText` on shadow-DOM or SPA shells |
 | `MAX_CONCURRENT_REQUESTS` | `5` | HTTP concurrency limit |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
 
@@ -233,16 +266,11 @@ export FRONTEND_URL="https://my-crawler.vercel.app"
 
 ```bash
 # Rebuild and push
-IMAGE_TAG="v1.1" ./deploy/azure-deploy.sh
+docker build -t <your-acr>.azurecr.io/web-crawler-api:v1.1 .
+docker push <your-acr>.azurecr.io/web-crawler-api:v1.1
 ```
 
-Or update the container image directly:
-```bash
-az containerapp update \
-  --name web-crawler-api \
-  --resource-group web-crawler-rg \
-  --image webcrawleracr.azurecr.io/web-crawler-api:v1.1
-```
+Then in Azure Portal → Container Apps → your app → **Revisions** → **Create new revision** → update the image tag to `v1.1`.
 
 ### Frontend — auto-deploys on push
 
@@ -286,18 +314,13 @@ When no `VITE_API_BASE_URL` is set, the frontend falls back to `window.location.
 
 ### Backend container won't start
 
-Check container logs:
-```bash
-az containerapp logs show \
-  --name web-crawler-api \
-  --resource-group web-crawler-rg \
-  --follow
-```
+In Azure Portal → Container Apps → your app → **Monitoring** → **Log stream** to see live container logs.
 
 Common issues:
-- Missing `AZURE_OPENAI_ENDPOINT` or `AZURE_OPENAI_API_KEY` — container crashes on startup
+- Missing `AZURE_OPENAI_ENDPOINT` or `AZURE_OPENAI_API_KEY` — container crashes on startup with a `ValidationError`
 - Playwright browser not installed — ensure `playwright install chromium` runs in Dockerfile
 - Claude endpoint mismatch — use Azure AI Foundry endpoint (root URL or full `/anthropic/v1/messages`)
+- `ALLOWED_ORIGINS` set as comma-separated instead of JSON array — causes `ValidationError`
 
 ### `/health` returns `degraded`
 
@@ -316,17 +339,17 @@ Use:
 
 1. Open browser DevTools → Console — look for CORS errors
 2. Verify `VITE_API_BASE_URL` was set in Vercel before deploying
-3. Check that `ALLOWED_ORIGINS` on the backend includes your Vercel URL
-4. Test the backend directly: `curl https://<backend-url>/health`
-5. If jobs complete but quality is low, inspect provider telemetry: `curl https://<backend-url>/api/v1/crawl/<job-id>/telemetry`
+3. Check that `ALLOWED_ORIGINS` on the backend includes your Vercel URL (must be JSON array)
+4. Test the backend directly: open `https://<backend-url>/health` in a browser
+5. If jobs complete but quality is low, inspect provider telemetry: `GET /api/v1/crawl/<job-id>/telemetry`
 
 ### Crawl jobs disappear after container restart
 
-This is expected — job state is held in memory. The container scales to zero after idle timeout, losing all active jobs. For production use with persistent jobs, consider adding a database for job state (future enhancement).
+Jobs are snapshotted to `OUTPUT_DIR/job_store`, so a process restart on the same persistent filesystem can recover jobs. Container scale-to-zero without a mounted volume still loses job state. For production durability, mount an Azure Files volume or use a database-backed job store.
 
 ### Container runs out of memory
 
 Playwright + Chromium uses ~300MB. With 4GB allocated, you can run ~3 concurrent browser instances. If you hit OOM:
 - Reduce `MAX_CONCURRENT_REQUESTS`
-- Increase container memory via Azure Portal
+- Increase container memory via Azure Portal → Container App → Scale
 - Use a remote browser service (`PLAYWRIGHT_WS_ENDPOINT`)

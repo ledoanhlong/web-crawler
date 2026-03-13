@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import random
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +17,59 @@ from app.config import settings
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+
+def _register_async_response_listener(
+    page: Page,
+    handler: Callable[[Any], Awaitable[None]],
+) -> tuple[set[asyncio.Task[None]], Callable[[Any], None]]:
+    """Bridge Playwright event callbacks to scheduled asyncio tasks.
+
+    Playwright event emitters do not await async callbacks. Scheduling the work
+    explicitly avoids lost captures and coroutine-never-awaited warnings.
+    """
+    pending: set[asyncio.Task[None]] = set()
+
+    def _listener(response: Any) -> None:
+        task = asyncio.create_task(handler(response))
+        pending.add(task)
+
+        def _cleanup(done: asyncio.Task[None]) -> None:
+            pending.discard(done)
+            try:
+                done.result()
+            except Exception as exc:
+                log.debug("Response listener task failed: %s", exc)
+
+        task.add_done_callback(_cleanup)
+
+    maybe_awaitable = page.on("response", _listener)
+    if inspect.isawaitable(maybe_awaitable):
+        task = asyncio.create_task(maybe_awaitable)  # pragma: no cover - real Playwright is sync
+        pending.add(task)
+
+        def _cleanup_registration(done: asyncio.Task[None]) -> None:
+            pending.discard(done)
+            try:
+                done.result()
+            except Exception as exc:
+                log.debug("Response listener registration failed: %s", exc)
+
+        task.add_done_callback(_cleanup_registration)
+    return pending, _listener
+
+
+async def _drain_pending_tasks(pending: set[asyncio.Task[None]]) -> None:
+    """Wait for currently scheduled response-handler tasks to finish."""
+    if not pending:
+        return
+    await asyncio.gather(*list(pending), return_exceptions=True)
+
+
+async def _await_if_needed(value: object) -> None:
+    """Await a Playwright/mock return value when it is awaitable."""
+    if inspect.isawaitable(value):
+        await value
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +597,32 @@ def _score_api_response(api_url: str, body: dict) -> int:
     return detail_hits * 10 + url_bonus + len(body)
 
 
+def _pick_best_detail_api(captured: list[tuple[str, dict]]) -> tuple[str | None, dict | None]:
+    """Pick the best-scoring detail API response from captured JSON bodies."""
+    if not captured:
+        return None, None
+
+    scored = [(url, body, _score_api_response(url, body)) for url, body in captured]
+    scored.sort(key=lambda item: item[2], reverse=True)
+
+    for url, _, score in scored:
+        log.debug("  API candidate: score=%d url=%s", score, url[:120])
+
+    best_url, best_body, best_score = scored[0]
+    if best_score < 0:
+        log.warning(
+            "All %d captured APIs look like noise (best score=%d: %s)",
+            len(scored), best_score, best_url[:120],
+        )
+        return None, None
+
+    log.info(
+        "Captured detail API: %s (score=%d, %d keys)",
+        best_url, best_score, len(best_body),
+    )
+    return best_url, best_body
+
+
 async def intercept_detail_api(
     browser: Browser,
     url: str,
@@ -576,8 +657,10 @@ async def intercept_detail_api(
         except Exception as exc:
             log.debug("Failed to parse JSON from %s: %s", response.url[:100], exc)
 
+    pending_tasks: set[asyncio.Task[None]] = set()
+    listener: Callable[[Any], None] | None = None
     try:
-        page.on("response", _on_response)
+        pending_tasks, listener = _register_async_response_listener(page, _on_response)
         await page.goto(url, wait_until="commit", timeout=120_000)
 
         if wait_selector:
@@ -587,6 +670,8 @@ async def intercept_detail_api(
                 log.warning("wait_for_selector timed out for '%s' in intercept_detail_api — continuing", wait_selector)
         else:
             await asyncio.sleep(3)
+
+        await _drain_pending_tasks(pending_tasks)
 
         # Find the first item container
         container = await page.query_selector(item_container_selector)
@@ -618,6 +703,7 @@ async def intercept_detail_api(
             pass  # Timeout is fine — some pages keep connections open
         # Extra buffer for late API calls
         await asyncio.sleep(2)
+        await _drain_pending_tasks(pending_tasks)
 
         log.debug(
             "Captured %d JSON responses after click: %s",
@@ -629,28 +715,80 @@ async def intercept_detail_api(
             log.warning("No JSON API response captured after clicking detail button")
             return None, None
 
-        # Score all captured responses and pick the best
-        scored = [(u, b, _score_api_response(u, b)) for u, b in captured]
-        scored.sort(key=lambda x: x[2], reverse=True)
+        return _pick_best_detail_api(captured)
+    finally:
+        if listener is not None:
+            try:
+                await _await_if_needed(page.remove_listener("response", listener))
+            except Exception:
+                pass
+        await page.close()
 
-        for u, _, s in scored:
-            log.debug("  API candidate: score=%d url=%s", s, u[:120])
 
-        best_url, best_body, best_score = scored[0]
+async def intercept_detail_api_from_detail_url(
+    browser: Browser,
+    detail_url: str,
+    *,
+    wait_selector: str | None = None,
+    timeout_ms: int = 15_000,
+) -> tuple[str | None, dict | None]:
+    """Navigate to a detail URL and capture the JSON API it triggers."""
+    page = await create_page(browser)
+    captured: list[tuple[str, dict]] = []
 
-        if best_score < 0:
-            log.warning(
-                "All %d captured APIs look like noise (best score=%d: %s)",
-                len(scored), best_score, best_url[:120],
-            )
+    async def _on_response(response):  # type: ignore[no-untyped-def]
+        content_type = response.headers.get("content-type", "")
+        if "json" not in content_type:
+            return
+        try:
+            body = await response.json()
+            if isinstance(body, dict):
+                captured.append((response.url, body))
+            elif isinstance(body, list) and body and isinstance(body[0], dict):
+                captured.append((response.url, {"_items": body}))
+        except Exception as exc:
+            log.debug("Failed to parse JSON from %s: %s", response.url[:100], exc)
+
+    pending_tasks: set[asyncio.Task[None]] = set()
+    listener: Callable[[Any], None] | None = None
+    try:
+        pending_tasks, listener = _register_async_response_listener(page, _on_response)
+        await page.goto(detail_url, wait_until="commit", timeout=120_000)
+
+        if wait_selector:
+            try:
+                await page.wait_for_selector(wait_selector, timeout=15_000)
+            except Exception:
+                log.warning(
+                    "wait_for_selector timed out for '%s' in detail-url interception",
+                    wait_selector,
+                )
+        else:
+            await asyncio.sleep(3)
+
+        try:
+            await page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+        await _drain_pending_tasks(pending_tasks)
+
+        log.debug(
+            "Captured %d JSON responses during detail navigation: %s",
+            len(captured),
+            [url[:100] for url, _ in captured],
+        )
+        if not captured:
+            log.warning("No JSON API response captured while loading detail URL: %s", detail_url)
             return None, None
 
-        log.info(
-            "Captured detail API: %s (score=%d, %d keys)",
-            best_url, best_score, len(best_body),
-        )
-        return best_url, best_body
+        return _pick_best_detail_api(captured)
     finally:
+        if listener is not None:
+            try:
+                await _await_if_needed(page.remove_listener("response", listener))
+            except Exception:
+                pass
         await page.close()
 
 
@@ -794,8 +932,10 @@ async def intercept_listing_api(
         except Exception:
             pass
 
+    pending_tasks: set[asyncio.Task[None]] = set()
+    listener: Callable[[Any], None] | None = None
     try:
-        page.on("response", _on_response)
+        pending_tasks, listener = _register_async_response_listener(page, _on_response)
         await page.goto(url, wait_until="commit", timeout=120_000)
 
         if wait_selector:
@@ -812,6 +952,7 @@ async def intercept_listing_api(
         except Exception:
             pass
         await asyncio.sleep(2)  # extra buffer for late API calls
+        await _drain_pending_tasks(pending_tasks)
 
         log.debug(
             "Listing API interception: captured %d JSON responses from %s",
@@ -851,6 +992,11 @@ async def intercept_listing_api(
         )
         return best_url, best_items, best_path
     finally:
+        if listener is not None:
+            try:
+                await _await_if_needed(page.remove_listener("response", listener))
+            except Exception:
+                pass
         await page.close()
 
 

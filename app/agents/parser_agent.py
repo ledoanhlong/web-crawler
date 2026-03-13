@@ -15,10 +15,37 @@ from app.config import settings
 from app.models.schemas import SellerLead, PageData, ScrapingPlan
 from app.prompts import load_prompt
 from app.utils.html import simplify_html
-from app.utils.llm import chat_completion_json
+from app.utils.llm import (
+    chat_completion_claude_json,
+    chat_completion_json as openai_chat_completion_json,
+)
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+
+async def chat_completion_json(
+    messages: list[dict[str, str]],
+    *,
+    temperature: float = 0.1,
+    max_tokens: int = 16_000,
+) -> object:
+    """Use OpenAI for parsing first, with Claude as a fallback."""
+    try:
+        return await openai_chat_completion_json(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    except Exception as openai_exc:
+        if not settings.use_claude_extraction:
+            raise
+        log.warning("OpenAI parser call failed, trying Claude fallback: %s", openai_exc)
+        return await chat_completion_claude_json(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
 # Target max characters of JSON sent per LLM batch call.
 # With ~4 chars/token and a 128k-token context, this leaves plenty of room.
@@ -34,6 +61,56 @@ _API_SKIP_KEYS = frozenset({
 
 # Max characters kept for description / free-text fields in the API response
 _MAX_TEXT_CHARS = 1500
+_GENERIC_DETAIL_FIELDS = [
+    "name",
+    "country",
+    "city",
+    "address",
+    "postal_code",
+    "email",
+    "phone",
+    "website",
+    "description",
+    "product_categories",
+    "brands",
+    "logo_url",
+    "store_url",
+    "social_media",
+    "industry",
+]
+_DETAIL_JUNK_PREFIXES = (
+    "meta_",
+    "og_",
+    "canonical_",
+    "cookie_",
+    "portal_",
+    "map_",
+    "legend_",
+    "search_",
+    "menu_",
+    "attribution_",
+)
+_DETAIL_JUNK_KEYWORDS = (
+    "cookie",
+    "consent",
+    "gdpr",
+    "privacy",
+    "tracking",
+    "analytics",
+)
+_STRUCTURED_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "name": ("values.name", "company_name", "exhibitor_name"),
+    "email": ("contact.email", "values.email", "email_address", "e_mail"),
+    "phone": ("contact.phone", "contact.telephone", "telephone", "phone_number"),
+    "website": ("website_url", "values.website", "contact.website", "company_website", "url"),
+    "description": ("values.description", "profile.description", "summary", "about", "bio", "text"),
+    "address": ("contact.address", "values.address", "street_address"),
+    "city": ("address.city", "contact.city", "values.city"),
+    "country": ("address.country", "contact.country", "values.country"),
+    "postal_code": ("address.postal_code", "address.zip", "contact.postal_code", "values.postal_code"),
+    "booth": ("values.booth", "stand", "stand_number"),
+    "hall": ("values.hall", "hall_number"),
+}
 
 
 def _compact_api_response(data: dict) -> dict:
@@ -60,6 +137,84 @@ def _compact_api_response(data: dict) -> dict:
 
 class ParserAgent:
     """Normalize raw page data into SellerLead records."""
+
+    @staticmethod
+    def _is_blank(value: object) -> bool:
+        return value is None or (isinstance(value, str) and not value.strip())
+
+    @staticmethod
+    def _is_junk_detail_field_name(field_name: str) -> bool:
+        name = field_name.lower()
+        if name.startswith(_DETAIL_JUNK_PREFIXES):
+            return True
+        return any(keyword in name for keyword in _DETAIL_JUNK_KEYWORDS)
+
+    @classmethod
+    def _detail_field_config(
+        cls,
+        plan: ScrapingPlan,
+        *,
+        filter_junk: bool = False,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Pick detail selectors, preferring detail_page_plan over legacy fields."""
+        if plan.detail_page_plan and plan.detail_page_plan.field_selectors:
+            selectors = dict(plan.detail_page_plan.field_selectors)
+            attributes = dict(plan.detail_page_plan.field_attributes)
+        else:
+            selectors = dict(plan.detail_page_fields or {})
+            attributes = dict(plan.detail_page_field_attributes or {})
+
+        if filter_junk and selectors:
+            selectors = {
+                field: selector
+                for field, selector in selectors.items()
+                if not cls._is_junk_detail_field_name(field)
+            }
+            attributes = {
+                field: attr
+                for field, attr in attributes.items()
+                if field in selectors
+            }
+        return selectors, attributes
+
+    @classmethod
+    def _detail_fields_for_ai(cls, plan: ScrapingPlan) -> list[str]:
+        selectors, _ = cls._detail_field_config(plan)
+        if not selectors:
+            return list(_GENERIC_DETAIL_FIELDS)
+
+        field_names = list(selectors.keys())
+        junk_hits = sum(1 for field in field_names if cls._is_junk_detail_field_name(field))
+        useful_fields = [field for field in field_names if not cls._is_junk_detail_field_name(field)]
+        if not useful_fields or junk_hits > (len(field_names) / 2):
+            log.warning(
+                "detail field plan looks like metadata/map noise (%d/%d junk) - using generic fields",
+                junk_hits,
+                len(field_names),
+            )
+            return list(_GENERIC_DETAIL_FIELDS)
+        return field_names
+
+    @classmethod
+    def _promote_structured_fields(cls, item: dict) -> dict:
+        """Copy common flattened structured fields into canonical field names."""
+        promoted = dict(item)
+        lower_key_map = {str(key).lower(): key for key in promoted.keys()}
+
+        for canonical, aliases in _STRUCTURED_FIELD_ALIASES.items():
+            if not cls._is_blank(promoted.get(canonical)):
+                continue
+            for alias in aliases:
+                source_key = lower_key_map.get(alias.lower())
+                if source_key is None:
+                    continue
+                value = promoted.get(source_key)
+                if cls._is_blank(value):
+                    continue
+                promoted[canonical] = value
+                break
+
+        return promoted
 
     async def parse(
         self,
@@ -134,7 +289,7 @@ class ParserAgent:
         matched_detail = 0
         matched_api = 0
         for item in items:
-            entry: dict = {**item}
+            entry: dict = self._promote_structured_fields(item)
             detail_link = item.get("detail_link")
             if detail_link and detail_link in detail_texts:
                 entry["_detail_page_data"] = detail_texts[detail_link]
@@ -213,6 +368,15 @@ class ParserAgent:
         records: list[SellerLead] = []
         for raw in raw_records:
             raw["source_url"] = source_url
+            # LLMs often return null for collection fields — coerce to empty defaults
+            if raw.get("product_categories") is None:
+                raw["product_categories"] = []
+            if raw.get("brands") is None:
+                raw["brands"] = []
+            if raw.get("social_media") is None:
+                raw["social_media"] = {}
+            if raw.get("raw_extra") is None:
+                raw["raw_extra"] = {}
             try:
                 records.append(SellerLead.model_validate(raw))
             except Exception as exc:
@@ -231,15 +395,10 @@ class ParserAgent:
         soup = BeautifulSoup(html, "lxml")
         parts: list[str] = []
 
-        # Prefer detail_page_plan (new-style), fall back to legacy fields
-        field_selectors = {}
-        field_attributes = {}
-        if plan.detail_page_plan and plan.detail_page_plan.field_selectors:
-            field_selectors = plan.detail_page_plan.field_selectors
-            field_attributes = plan.detail_page_plan.field_attributes
-        elif plan.detail_page_fields:
-            field_selectors = plan.detail_page_fields
-            field_attributes = plan.detail_page_field_attributes or {}
+        field_selectors, field_attributes = ParserAgent._detail_field_config(
+            plan,
+            filter_junk=True,
+        )
 
         for field, selector in field_selectors.items():
             if not selector or not selector.strip():
@@ -258,6 +417,12 @@ class ParserAgent:
     async def _extract_detail_fields_smart(html: str, plan: ScrapingPlan) -> str:
         """Extract fields from a detail page using LLM-based extraction."""
         from app.utils.smart_scraper import smart_extract_detail
+
+        fields = ParserAgent._detail_fields_for_ai(plan)
+        detail = await smart_extract_detail(html, fields)
+        if detail:
+            return "\n".join(f"{k}: {v}" for k, v in detail.items() if v)
+        return ""
 
         _GENERIC_FIELDS = [
             "name", "country", "city", "address", "postal_code",
@@ -298,13 +463,7 @@ class ParserAgent:
         if url and settings.use_universal_scraper and settings.use_universal_scraper_for_extraction:
             from app.utils.universal_scraper import universal_scraper_extract_detail
 
-            fields = list(plan.detail_page_fields.keys()) if plan.detail_page_fields else [
-                "name", "country", "city", "address", "postal_code",
-                "email", "phone", "website", "description",
-                "product_categories", "brands", "logo_url",
-                "store_url", "social_media",
-                "industry",
-            ]
+            fields = self._detail_fields_for_ai(plan)
             us_result = await universal_scraper_extract_detail(url, fields=fields)
             if us_result:
                 result_str = "\n".join(f"{k}: {v}" for k, v in us_result.items() if v)

@@ -18,6 +18,7 @@ from app.models.schemas import (
     FailureCategory,
     FailureEvent,
     JobDiagnostics,
+    ListingApiPlan,
     PageData,
     PaginationStrategy,
     PipelineStage,
@@ -165,6 +166,28 @@ class TestScrapingPlan:
         assert plan.detail_api_plan is None
         assert plan.wait_selector is None
         assert plan.notes == ""
+
+    def test_plan_with_embedded_structured_source(self):
+        plan = ScrapingPlan(
+            url="https://example.com",
+            requires_javascript=False,
+            pagination=PaginationStrategy.NONE,
+            target=ScrapingTarget(
+                item_container_selector=".item",
+                field_selectors={"name": "h3"},
+            ),
+            listing_api_plan=ListingApiPlan(
+                source_kind="embedded_html",
+                api_url="https://example.com",
+                html_selector="custom-directory[data-info]",
+                html_attribute="data-info",
+                items_json_path="results",
+                total_count=42,
+            ),
+        )
+        assert plan.listing_api_plan is not None
+        assert plan.listing_api_plan.source_kind == "embedded_html"
+        assert plan.listing_api_plan.html_selector == "custom-directory[data-info]"
 
 
 class TestSellerLead:

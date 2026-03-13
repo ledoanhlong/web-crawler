@@ -15,11 +15,18 @@ class Settings(BaseSettings):
     azure_vision_deployment: str = "gpt-4o"
     use_vision_planning: bool = True   # screenshot fallback when CSS selectors fail
 
+    # Interactive exploration browsing (vision-guided page analysis)
+    use_exploration_browsing: bool = False  # opt-in: LLM-guided interactive page exploration
+    exploration_max_steps: int = 5          # max vision-guided actions per exploration
+    exploration_auto_for_js: bool = True    # auto-enable exploration for JS-heavy sites
+
     # Azure AI Foundry — Claude Opus 4.6 (complex site extraction)
     azure_claude_endpoint: str = ""
     azure_claude_api_key: str = ""
     azure_claude_deployment: str = "claude-opus-4-6"
     use_claude_extraction: bool = True  # full-page LLM fallback for hard sites
+    use_script_extraction: bool = True  # generate BS4 extraction scripts with Claude
+    allow_generated_script_execution: bool = False
     # Claude circuit breaker
     claude_circuit_breaker_enabled: bool = True
     claude_circuit_breaker_max_errors: int = 3

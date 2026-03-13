@@ -28,7 +28,15 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.config import settings
-from app.models.schemas import DetailApiPlan, ExtractionMethod, PageData, PaginationStrategy, ScrapingPlan, ScrapingTarget
+from app.models.schemas import (
+    DetailApiPlan,
+    ExtractionMethod,
+    ListingApiPlan,
+    PageData,
+    PaginationStrategy,
+    ScrapingPlan,
+    ScrapingTarget,
+)
 from app.utils.browser import (
     click_all_tabs,
     click_load_more,
@@ -40,12 +48,135 @@ from app.utils.browser import (
 )
 from app.utils.http import fetch_page, fetch_pages
 from app.utils.logging import get_logger
+from app.utils.structured_source import (
+    detect_embedded_structured_source,
+    extract_structured_items_from_html,
+)
 from app.utils.structured_data import extract_all_structured_data
 
 log = get_logger(__name__)
 
 # Batch size for detail page fetching — checked between batches for cancel
 _DETAIL_BATCH_SIZE = 10
+_DETAIL_SHELL_URL_MARKERS = (
+    "floorplan",
+    "hallplan",
+    "hall-map",
+    "hall_map",
+    "showexhibitor",
+)
+_DETAIL_SHELL_FIELD_MARKERS = (
+    "hall_map",
+    "floorplan",
+    "map",
+    "legend",
+)
+
+
+def _flatten_api_item(raw: dict) -> dict[str, str | None]:
+    """Flatten a nested API response dict into a single-level string-value dict.
+
+    Nested dicts are expanded with dot-notation keys so the parser LLM can
+    see every leaf value directly::
+
+        {"contact": {"email": "x@y.com"}}  →  {"contact.email": "x@y.com"}
+
+    Lists are JSON-serialized.  Primitives are stringified normally.
+    """
+    flat: dict[str, str | None] = {}
+
+    def _walk(d: dict, prefix: str = "") -> None:
+        for k, v in d.items():
+            key = f"{prefix}.{k}" if prefix else k
+            if v is None:
+                flat[key] = None
+            elif isinstance(v, dict):
+                _walk(v, key)
+            elif isinstance(v, list):
+                flat[key] = json.dumps(v, ensure_ascii=False)
+            else:
+                flat[key] = str(v)
+
+    _walk(raw)
+    return flat
+
+
+def _extract_id_from_href(href: str) -> str | None:
+    """Try to extract an API-usable ID from a URL/href with query parameters.
+
+    Common patterns on trade-fair / directory sites:
+      /floorplan?action=showExhibitor&actionItem=3043124&_event=beauty2026
+      → compound ID "beauty2026.3043124"
+
+    Returns the extracted ID string, or None if no ID could be extracted.
+    """
+    from urllib.parse import urlparse, parse_qs
+
+    parsed = urlparse(href)
+    params = parse_qs(parsed.query)
+
+    # Flatten single-value params
+    flat: dict[str, str] = {}
+    for k, v in params.items():
+        if v:
+            flat[k] = v[0]
+
+    # Known compound ID pattern: _event + actionItem (common in Messe sites)
+    event = flat.get("_event") or flat.get("event")
+    action_item = flat.get("actionItem") or flat.get("action_item")
+    if event and action_item:
+        return f"{event}.{action_item}"
+
+    # Known single-ID patterns
+    for key in ("id", "entityId", "entity_id", "exhibitorId", "exhibitor_id",
+                "sellerId", "seller_id", "companyId", "company_id", "uid",
+                "actionItem", "itemId", "item_id"):
+        if key in flat:
+            return flat[key]
+
+    # Last resort: look for path segments that look like IDs
+    # e.g. /exhibitors/12345/profile → 12345
+    segments = [s for s in parsed.path.split("/") if s]
+    for seg in reversed(segments):
+        if re.match(r"^[\w.-]+\d+[\w.-]*$", seg) and len(seg) <= 40:
+            return seg
+
+    return None
+
+
+def _clean_api_id(val: str) -> str:
+    """Strip key= prefixes from auto-populated API IDs.
+
+    Some APIs return IDs like ``profile=beauty2026.3043124`` where ``profile=``
+    is a type prefix, not part of the actual ID used in URL templates.
+    """
+    if "=" in val and "/" not in val and "?" not in val:
+        # Looks like a key=value pair — take value after the last '='
+        return val.rsplit("=", 1)[-1]
+    return val
+
+
+def _populate_detail_api_id(
+    item: dict[str, str | None],
+    detail_api_plan: DetailApiPlan | None,
+) -> None:
+    """Populate ``_detail_api_id`` from common flattened fields when missing."""
+    if not detail_api_plan or item.get("_detail_api_id"):
+        return
+
+    for id_key in ("id", "entityId", "entity_id", "slug", "uid"):
+        val = item.get(id_key)
+        if val:
+            item["_detail_api_id"] = _clean_api_id(val)
+            return
+
+
+def _looks_like_shell_detail_link(field_name: str | None, link: str) -> bool:
+    field_name_l = (field_name or "").lower()
+    link_l = link.lower()
+    if any(marker in field_name_l for marker in _DETAIL_SHELL_FIELD_MARKERS):
+        return True
+    return any(marker in link_l for marker in _DETAIL_SHELL_URL_MARKERS)
 
 
 @dataclass
@@ -138,6 +269,13 @@ class ScraperAgent:
             )
             if progress_callback:
                 progress_callback({"stage": "method_fallback", "requested_method": extraction_method.value, "actual_method": actual, "fallback_reason": f"pagination '{plan.pagination.value}' incompatible"})
+            if plan.requires_javascript:
+                pages, enrich_result = await self._scrape_js(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
+            else:
+                pages, enrich_result = await self._scrape_static(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
+
+        # Script extraction path — uses JS/static fetch + cached BS4 script for extraction
+        elif extraction_method == ExtractionMethod.SCRIPT:
             if plan.requires_javascript:
                 pages, enrich_result = await self._scrape_js(plan, max_items=max_items, extraction_method=extraction_method, progress_callback=progress_callback, cancel_event=cancel_event)
             else:
@@ -260,10 +398,10 @@ class ScraperAgent:
 
         return pages
 
-    async def scrape_preview_dual(self, plan: ScrapingPlan) -> tuple[list[PageData], list[PageData], list[PageData], list[PageData], list[PageData], list[PageData]]:
-        """Fetch the *landing page only* and return up to six previews.
+    async def scrape_preview_dual(self, plan: ScrapingPlan) -> tuple[list[PageData], list[PageData], list[PageData], list[PageData], list[PageData], list[PageData], list[PageData]]:
+        """Fetch the *landing page only* and return up to seven previews.
 
-        Returns (css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages, claude_pages).
+        Returns (css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages, claude_pages, script_pages).
         CSS returns up to 5 items for better validation; others return 1.
         crawl4ai_pages / us_pages / listing_api_pages / claude_pages are populated only when enabled.
         This is intentionally lightweight — no pagination, no tab clicking,
@@ -285,7 +423,7 @@ class ScraperAgent:
             html = await fetch_page(plan.url)
 
         if not html:
-            return [], [], [], [], [], []
+            return [], [], [], [], [], [], []
 
         # If CSS found 0 items and we used httpx, retry with Playwright
         preview_html = self._slice_html_for_preview(html, plan.target.item_container_selector)
@@ -393,9 +531,21 @@ class ScraperAgent:
 
         # ── Run listing API interception if enabled ─────────────────────
         listing_api_items: list[dict[str, str | None]] = []
-        if settings.use_listing_api_interception:
+        structured_source = detect_embedded_structured_source(html, source_url=plan.url)
+        if structured_source:
+            listing_api_items = extract_structured_items_from_html(html, structured_source)[:1]
+            for item in listing_api_items:
+                _populate_detail_api_id(item, plan.detail_api_plan)
+            plan.listing_api_plan = structured_source
+            log.info(
+                "Embedded structured source preview: selector=%s attr=%s path=%s count=%s",
+                structured_source.html_selector,
+                structured_source.html_attribute,
+                structured_source.items_json_path,
+                structured_source.total_count,
+            )
+        elif settings.use_listing_api_interception:
             from app.utils.browser import intercept_listing_api
-            from app.models.schemas import ListingApiPlan
 
             t0 = _time.monotonic()
             log.info("Listing API interception starting for %s", plan.url)
@@ -406,15 +556,13 @@ class ScraperAgent:
                         wait_selector=plan.wait_selector,
                     )
                 if api_items:
-                    # Convert API items to string-value dicts matching field format
-                    converted: list[dict[str, str | None]] = []
-                    for raw in api_items[:1]:  # preview needs 1
-                        record: dict[str, str | None] = {}
-                        for k, v in raw.items():
-                            record[k] = str(v) if v is not None else None
-                        converted.append(record)
-                    listing_api_items = converted
+                    listing_api_items = [
+                        _flatten_api_item(raw) for raw in api_items[:1]
+                    ]
+                    for item in listing_api_items:
+                        _populate_detail_api_id(item, plan.detail_api_plan)
                     plan.listing_api_plan = ListingApiPlan(
+                        source_kind="api",
                         api_url=api_url or "",
                         items_json_path=json_path,
                         sample_items=api_items[:3],
@@ -433,11 +581,29 @@ class ScraperAgent:
             claude_items = claude_items[:1]
             log.info("Claude extraction preview finished in %.1fs (%d items)", _time.monotonic() - t0, len(claude_items))
 
+        # ── Run Script extraction if enabled ────────────────────────────
+        script_items: list[dict[str, str | None]] = []
+        if settings.use_script_extraction and len(preview_html) >= 500:
+            from app.utils.script_extraction import generate_extraction_script, execute_extraction_script
+
+            t0 = _time.monotonic()
+            fields = list(plan.target.field_selectors.keys())
+            if plan.target.detail_link_selector and "detail_link" not in fields:
+                fields.append("detail_link")
+            log.info("Script extraction preview starting for %s", plan.url)
+            try:
+                script_source = await generate_extraction_script(preview_html, fields, plan.url)
+                script_items = execute_extraction_script(script_source, preview_html)
+                script_items = script_items[:1]
+            except Exception as exc:
+                log.warning("Script extraction preview failed: %s", exc)
+            log.info("Script extraction preview finished in %.1fs (%d items)", _time.monotonic() - t0, len(script_items))
+
         log.info(
             "Preview — CSS: %d items, Smart: %d items, Crawl4AI: %d items, "
-            "UniversalScraper: %d items, ListingAPI: %d items, Claude: %d items",
+            "UniversalScraper: %d items, ListingAPI: %d items, Claude: %d items, Script: %d items",
             len(css_items), len(smart_items), len(crawl4ai_items),
-            len(us_items), len(listing_api_items), len(claude_items),
+            len(us_items), len(listing_api_items), len(claude_items), len(script_items),
         )
 
         sd = extract_all_structured_data(html)
@@ -447,12 +613,13 @@ class ScraperAgent:
         us_pages = [PageData(url=plan.url, items=us_items, structured_data=sd)] if us_items else []
         listing_api_pages = [PageData(url=plan.url, items=listing_api_items, structured_data=sd)] if listing_api_items else []
         claude_pages = [PageData(url=plan.url, items=claude_items, structured_data=sd)] if claude_items else []
+        script_pages = [PageData(url=plan.url, items=script_items, structured_data=sd)] if script_items else []
 
         # ── Share detail_link across methods ──────────────────────────
         # In preview each method has at most 1 item.  If any method
         # extracted a detail_link but others didn't, copy it over so all
         # methods can benefit from detail-page enrichment.
-        all_method_pages = [css_pages, smart_pages, crawl4ai_pages, us_pages, claude_pages]
+        all_method_pages = [css_pages, smart_pages, crawl4ai_pages, us_pages, claude_pages, script_pages]
         donor_link: str | None = None
         for mp in all_method_pages:
             if mp and mp[0].items:
@@ -466,14 +633,15 @@ class ScraperAgent:
                     mp[0].items[0]["detail_link"] = donor_link
                     log.debug("Copied detail_link '%s' to %s preview item", donor_link,
                               "css" if mp is css_pages else "smart" if mp is smart_pages
-                              else "crawl4ai" if mp is crawl4ai_pages else "claude" if mp is claude_pages else "us")
+                              else "crawl4ai" if mp is crawl4ai_pages else "claude" if mp is claude_pages
+                              else "script" if mp is script_pages else "us")
 
         # ── Enrich all with detail pages (1 item each) ─────────────────
         shared_detail_htmls: dict[str, str] = {}  # cache across methods
         for label, method_pages in [
             ("css", css_pages), ("smart", smart_pages),
             ("crawl4ai", crawl4ai_pages), ("us", us_pages),
-            ("claude", claude_pages),
+            ("claude", claude_pages), ("script", script_pages),
         ]:
             if not (method_pages and method_pages[0].items):
                 continue
@@ -487,9 +655,14 @@ class ScraperAgent:
                 for url, html_content in pd.detail_pages.items():
                     if url not in shared_detail_htmls:
                         shared_detail_htmls[url] = html_content
-        # Listing API items already come as structured data — no detail enrichment needed
+        # Listing API items may still need detail API enrichment (e.g. VIS
+        # API where listing gives basic info but detail API has email/phone).
+        if listing_api_pages and listing_api_pages[0].items and plan.detail_api_plan:
+            listing_api_pages[:] = await self._enrich_detail_api(
+                listing_api_pages, plan, max_details=1,
+            )
 
-        return css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages, claude_pages
+        return css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages, claude_pages, script_pages
 
     async def scrape_detail_urls_only(
         self,
@@ -670,11 +843,10 @@ class ScraperAgent:
                 )
                 continue
 
-            # Normalize to list of dicts with string values
-            items: list[dict[str, str | None]] = []
-            for raw in items_raw:
-                item = {k: str(v) if v is not None else None for k, v in raw.items()}
-                items.append(item)
+            # Normalize to list of dicts with string values (flatten nested objects)
+            items: list[dict[str, str | None]] = [
+                _flatten_api_item(raw) for raw in items_raw
+            ]
 
             if max_items is not None:
                 items = items[: max_items - total_items]
@@ -1226,10 +1398,61 @@ class ScraperAgent:
                 pages, _ = await self._scrape_static(plan, max_items=max_items, progress_callback=progress_callback, cancel_event=cancel_event)
             return pages
 
-        log.info("Listing API scrape: %s (json_path=%s)", api_plan.api_url, api_plan.items_json_path)
+        log.info(
+            "Listing API scrape: kind=%s source=%s (json_path=%s)",
+            api_plan.source_kind,
+            api_plan.api_url,
+            api_plan.items_json_path,
+        )
 
         pages: list[PageData] = []
         try:
+            if api_plan.source_kind == "embedded_html":
+                if plan.requires_javascript:
+                    async with get_browser() as browser:
+                        html = await fetch_page_js(
+                            browser,
+                            plan.url,
+                            wait_selector=plan.wait_selector,
+                        )
+                else:
+                    html = await fetch_page(plan.url)
+
+                items = extract_structured_items_from_html(html, api_plan)
+                if not items:
+                    log.warning("Embedded structured source returned no items; falling back")
+                    if plan.requires_javascript:
+                        pages, _ = await self._scrape_js(plan, max_items=max_items, progress_callback=progress_callback, cancel_event=cancel_event)
+                    else:
+                        pages, _ = await self._scrape_static(plan, max_items=max_items, progress_callback=progress_callback, cancel_event=cancel_event)
+                    return pages
+
+                for item in items:
+                    _populate_detail_api_id(item, plan.detail_api_plan)
+
+                if max_items is not None:
+                    items = items[:max_items]
+
+                pages.append(
+                    PageData(
+                        url=api_plan.api_url,
+                        items=items,
+                        structured_data=extract_all_structured_data(html),
+                    )
+                )
+                log.info("Listing API: extracted %d items from embedded HTML", len(items))
+
+                if progress_callback:
+                    self._emit_page_progress(
+                        progress_callback,
+                        method=ExtractionMethod.LISTING_API,
+                        page_url=api_plan.api_url,
+                        page_items=len(items),
+                        pages_processed=1,
+                        total_items=len(items),
+                    )
+                return pages
+
             async with httpx.AsyncClient(timeout=settings.request_timeout_s) as client:
                 resp = await client.get(api_plan.api_url)
                 resp.raise_for_status()
@@ -1265,12 +1488,14 @@ class ScraperAgent:
                     pages, _ = await self._scrape_static(plan, max_items=max_items, progress_callback=progress_callback, cancel_event=cancel_event)
                 return pages
 
-            # Convert items to string dicts
+            # Flatten nested objects and convert to string dicts
             items = [
-                {k: str(v) if v is not None else None for k, v in item.items()}
-                for item in items_raw
+                _flatten_api_item(item) for item in items_raw
                 if isinstance(item, dict)
             ]
+
+            for item in items:
+                _populate_detail_api_id(item, plan.detail_api_plan)
 
             if max_items is not None:
                 items = items[:max_items]
@@ -1340,7 +1565,10 @@ class ScraperAgent:
                 if not items_raw:
                     break
 
-                items = [{k: str(v) if v is not None else None for k, v in item.items()} for item in items_raw]
+                items = [_flatten_api_item(item) for item in items_raw]
+
+                for item in items:
+                    _populate_detail_api_id(item, plan.detail_api_plan)
 
                 if max_items is not None:
                     remaining = max_items - total_collected
@@ -1404,6 +1632,7 @@ class ScraperAgent:
             for item in pd.items:
                 # Try "detail_link" first, then check all fields for URL-like values
                 link = item.get("detail_link")
+                link_source_field = "detail_link" if link else None
                 if not link:
                     # Fallback: look for any field containing a relative/absolute URL
                     # that looks like a detail page link
@@ -1412,6 +1641,7 @@ class ScraperAgent:
                             val.startswith("/") or val.startswith("http")
                         ) and any(kw in key.lower() for kw in ("detail", "link", "url", "href", "profile")):
                             link = val
+                            link_source_field = key
                             item["detail_link"] = link
                             log.debug("Using field '%s' as detail link: %s", key, link)
                             break
@@ -1421,6 +1651,9 @@ class ScraperAgent:
                     elif not link.startswith("http"):
                         link = urljoin(plan.url, link)
                     item["detail_link"] = link
+                    if plan.detail_api_plan and _looks_like_shell_detail_link(link_source_field, link):
+                        log.info("Skipping HTML detail fetch for shell/map link: %s", link)
+                        continue
                     all_detail_urls.append(link)
 
         if not all_detail_urls:
@@ -1649,15 +1882,15 @@ class ScraperAgent:
 
         template = plan.detail_api_plan.api_url_template
 
-        # Collect (page_idx, item_idx, item_id, api_url) tuples
-        api_calls: list[tuple[int, int, str, str]] = []
+        # Collect (page_idx, item_idx, item_id, detail_link, api_url) tuples
+        api_calls: list[tuple[int, int, str, str | None, str]] = []
         for page_idx, pd in enumerate(pages):
             for item_idx, item in enumerate(pd.items):
                 item_id = item.get("_detail_api_id")
                 if not item_id:
                     continue
                 api_url = template.replace("{id}", item_id)
-                api_calls.append((page_idx, item_idx, item_id, api_url))
+                api_calls.append((page_idx, item_idx, item_id, item.get("detail_link"), api_url))
 
         if not api_calls:
             log.warning("No item IDs found for API detail enrichment")
@@ -1669,7 +1902,7 @@ class ScraperAgent:
         log.info("Fetching %d detail API response(s)", len(api_calls))
 
         # Deduplicate URLs for fetching
-        unique_urls = list({t[3] for t in api_calls})
+        unique_urls = list({t[4] for t in api_calls})
         api_responses: dict[str, dict] = {}
 
         if plan.requires_javascript:
@@ -1711,12 +1944,29 @@ class ScraperAgent:
 
             await asyncio.gather(*[_fetch_one(url) for url in unique_urls])
 
+        missing_calls = [
+            (page_idx, item_idx, item_id, detail_link, api_url)
+            for page_idx, item_idx, item_id, detail_link, api_url in api_calls
+            if api_url not in api_responses and detail_link
+        ]
+        if missing_calls:
+            log.info(
+                "Direct detail API fetch missed %d item(s); retrying via detail-page navigation",
+                len(missing_calls),
+            )
+            nav_responses = await self._fetch_detail_apis_via_navigation(missing_calls)
+            for page_idx, item_idx, item_id, detail_link, api_url in missing_calls:
+                response = nav_responses.get(item_id)
+                if response:
+                    pages[page_idx].detail_api_responses[item_id] = response
+
         # Attach responses to PageData
-        for page_idx, item_idx, item_id, api_url in api_calls:
+        for page_idx, item_idx, item_id, detail_link, api_url in api_calls:
             if api_url in api_responses:
                 pages[page_idx].detail_api_responses[item_id] = api_responses[api_url]
 
-        log.info("Enriched %d items with API detail data", len(api_responses))
+        enriched_count = sum(len(pd.detail_api_responses) for pd in pages)
+        log.info("Enriched %d items with API detail data", enriched_count)
         return pages
 
     async def _fetch_detail_apis_via_browser(
@@ -1734,30 +1984,40 @@ class ScraperAgent:
         async with get_browser() as browser:
             page = await create_page(browser)
             try:
-                # Prime the session: load listing page to set cookies / tokens
+                # Prime the session: load listing page fully so cookies/tokens/JS app are ready
                 log.info("Priming browser session via %s", listing_url)
-                await page.goto(listing_url, wait_until="commit", timeout=120_000)
-                await asyncio.sleep(2)
+                await page.goto(listing_url, wait_until="networkidle", timeout=120_000)
+                await asyncio.sleep(3)
 
                 for api_url in api_urls:
                     try:
                         data = await page.evaluate(
                             """async (url) => {
-                                const resp = await fetch(url, {
-                                    credentials: "include",
-                                    headers: {
-                                        "Accept": "application/json, text/plain, */*",
-                                        "Referer": window.location.href
-                                    }
-                                });
-                                if (!resp.ok) return null;
-                                return await resp.json();
+                                try {
+                                    const resp = await fetch(url, {
+                                        credentials: "include",
+                                        headers: {
+                                            "Accept": "application/json, text/plain, */*",
+                                            "X-Requested-With": "XMLHttpRequest",
+                                            "Referer": window.location.href
+                                        }
+                                    });
+                                    if (!resp.ok) return {_error: resp.status + ' ' + resp.statusText};
+                                    const text = await resp.text();
+                                    try { return JSON.parse(text); }
+                                    catch { return {_raw_text: text.substring(0, 500)}; }
+                                } catch (e) { return {_error: e.message}; }
                             }""",
                             api_url,
                         )
                         if data and isinstance(data, dict):
-                            results[api_url] = data
-                            log.debug("Browser-fetched API %s — %d keys", api_url, len(data))
+                            if "_error" in data:
+                                log.warning("Browser API fetch error for %s: %s", api_url, data["_error"])
+                            elif "_raw_text" in data:
+                                log.warning("Browser API returned non-JSON for %s: %s", api_url, data["_raw_text"][:200])
+                            else:
+                                results[api_url] = data
+                                log.debug("Browser-fetched API %s — %d keys", api_url, len(data))
                         else:
                             log.warning("Browser API fetch returned no data: %s", api_url)
                     except Exception as exc:
@@ -1765,6 +2025,45 @@ class ScraperAgent:
                     await asyncio.sleep(settings.request_delay_ms / 1000)
             finally:
                 await page.close()
+        return results
+
+    async def _fetch_detail_apis_via_navigation(
+        self,
+        api_calls: list[tuple[int, int, str, str | None, str]],
+    ) -> dict[str, dict]:
+        """Retry detail API capture by loading each item's detail link in the browser."""
+        from app.utils.browser import intercept_detail_api_from_detail_url
+
+        results: dict[str, dict] = {}
+        detail_cache: dict[str, dict | None] = {}
+        async with get_browser() as browser:
+            for _, _, item_id, detail_link, _ in api_calls:
+                if not detail_link or item_id in results:
+                    continue
+                if detail_link in detail_cache:
+                    cached = detail_cache[detail_link]
+                    if cached:
+                        results[item_id] = cached
+                    continue
+                try:
+                    api_url, response = await intercept_detail_api_from_detail_url(
+                        browser,
+                        detail_link,
+                    )
+                    if response:
+                        detail_cache[detail_link] = response
+                        results[item_id] = response
+                        log.info(
+                            "Recovered detail API response via navigation: %s -> %s",
+                            detail_link,
+                            api_url,
+                        )
+                    else:
+                        detail_cache[detail_link] = None
+                except Exception as exc:
+                    detail_cache[detail_link] = None
+                    log.warning("Detail API navigation fallback failed for %s: %s", detail_link, exc)
+                await asyncio.sleep(settings.request_delay_ms / 1000)
         return results
 
     # ------------------------------------------------------------------
@@ -2092,22 +2391,31 @@ class ScraperAgent:
                     if id_el:
                         if detail_api_plan.id_attribute:
                             raw_id = id_el.get(detail_api_plan.id_attribute, "")
+                        elif id_el.name == "a":
+                            # Anchor elements: read href by default (not text content)
+                            raw_id = id_el.get("href", "")
                         else:
                             raw_id = id_el.get_text(strip=True)
                         if detail_api_plan.id_regex and raw_id:
                             match = re.search(detail_api_plan.id_regex, str(raw_id))
                             if match:
-                                raw_id = match.group(1)
+                                groups = [g for g in match.groups() if g is not None]
+                                # Multiple capture groups → compound ID joined with "."
+                                raw_id = ".".join(groups) if groups else match.group(0)
                         raw_id_str = str(raw_id).strip() if raw_id else ""
-                        # Guard: if raw_id looks like a full URL/href (contains ? or &),
-                        # it means the regex didn't extract the ID properly — skip it
+                        # If raw_id looks like a URL/href, try to extract ID from query params
                         if raw_id_str and ("?" in raw_id_str or "&" in raw_id_str or raw_id_str.startswith("/")):
-                            log.warning(
-                                "Extracted _detail_api_id looks like a raw href ('%s'), skipping — "
-                                "id_regex may be missing or wrong",
-                                raw_id_str[:80],
-                            )
-                            raw_id_str = ""
+                            extracted = _extract_id_from_href(raw_id_str)
+                            if extracted:
+                                log.debug("Extracted API ID '%s' from href '%s'", extracted, raw_id_str[:80])
+                                raw_id_str = extracted
+                            else:
+                                log.warning(
+                                    "Extracted _detail_api_id looks like a raw href ('%s'), skipping — "
+                                    "id_regex may be missing or wrong",
+                                    raw_id_str[:80],
+                                )
+                                raw_id_str = ""
                         record["_detail_api_id"] = raw_id_str or None
                 except Exception as exc:
                     log.warning("Invalid id_selector '%s': %s", detail_api_plan.id_selector, exc)
@@ -2315,6 +2623,21 @@ class ScraperAgent:
                     return smart_items
             return self._extract_items(html, target, detail_api_plan)
 
+        if extraction_method == ExtractionMethod.SCRIPT:
+            # Script extraction: run cached BS4 script, CSS fallback
+            from app.utils.script_extraction import load_cached_script_by_hash, execute_extraction_script
+
+            cached_script = load_cached_script_by_hash(html)
+            if cached_script:
+                script_items = execute_extraction_script(cached_script, html)
+                if script_items:
+                    log.info("Script extraction: %d items", len(script_items))
+                    return script_items
+                log.warning("Script extraction returned 0 items — falling back to CSS")
+            else:
+                log.warning("No cached script found — falling back to CSS")
+            return self._extract_items(html, target, detail_api_plan)
+
         if extraction_method == ExtractionMethod.CLAUDE:
             # Claude-primary extraction: use Claude first, then CSS fallback
             if settings.use_claude_extraction and len(html) >= 500:
@@ -2499,14 +2822,10 @@ class ScraperAgent:
             return []
 
         # Normalize to dict[str, str | None]
-        normalized: list[dict[str, str | None]] = []
-        for raw_item in items:
-            if not isinstance(raw_item, dict):
-                continue
-            record: dict[str, str | None] = {}
-            for k, v in raw_item.items():
-                record[k] = str(v) if v is not None else None
-            normalized.append(record)
+        normalized: list[dict[str, str | None]] = [
+            _flatten_api_item(raw_item) for raw_item in items
+            if isinstance(raw_item, dict)
+        ]
 
         log.info(
             "Claude extraction: %d items, notes=%s",

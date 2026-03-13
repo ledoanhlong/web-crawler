@@ -40,6 +40,7 @@ from app.models.schemas import (
     ProviderTelemetryEvent,
     StageConfidence,
 )
+from app.services.job_store import job_store
 from app.services.plan_cache import plan_cache
 from app.utils.fingerprint import fingerprint as fingerprint_page
 from app.utils.http import fetch_page_full
@@ -64,6 +65,13 @@ class Orchestrator:
         self.output = OutputAgent()
 
     @staticmethod
+    def _touch_job(job: CrawlJob, *, force: bool = False, throttle_s: float = 0.0) -> None:
+        try:
+            job_store.save(job, force=force, throttle_s=throttle_s)
+        except Exception as exc:
+            log.debug("[%s] Job persistence skipped: %s", job.id, exc)
+
+    @staticmethod
     def _to_stage(status: CrawlStatus) -> PipelineStage:
         if status in (CrawlStatus.PENDING, CrawlStatus.PLANNING, CrawlStatus.PLAN_REVIEW, CrawlStatus.PREVIEW):
             return PipelineStage.PLANNING
@@ -80,6 +88,7 @@ class Orchestrator:
         line = f"{stamp} status={status.value} reason={reason}" if reason else f"{stamp} status={status.value}"
         job.diagnostics.status_timeline.append(line)
         log_kv(log, logging.INFO, "job_status", job_id=job.id, status=status.value, reason=reason)
+        self._touch_job(job, force=True)
 
     def _record_confidence(self, job: CrawlJob, stage: PipelineStage, score: float, reason: str) -> None:
         bounded = max(0.0, min(1.0, score))
@@ -95,6 +104,7 @@ class Orchestrator:
             score=round(bounded, 3),
             reason=reason,
         )
+        self._touch_job(job, throttle_s=1.0)
 
     def _record_failure(
         self,
@@ -125,6 +135,7 @@ class Orchestrator:
             retryable=retryable,
             failure_message=message,
         )
+        self._touch_job(job, force=True)
 
     def _record_provider_event(
         self,
@@ -154,6 +165,7 @@ class Orchestrator:
             estimated_cost_usd=round(float(estimated_cost_usd), 6) if estimated_cost_usd is not None else None,
         )
         job.diagnostics.provider_events.append(event)
+        self._touch_job(job, throttle_s=2.0)
 
     @staticmethod
     def _preview_quality_score(record: object) -> float:
@@ -208,6 +220,7 @@ class Orchestrator:
             ExtractionMethod.SMART_SCRAPER,
             ExtractionMethod.CRAWL4AI,
             ExtractionMethod.UNIVERSAL_SCRAPER,
+            ExtractionMethod.SCRIPT,
             *claude_order,
             None,  # Final auto mode in scraper
         ]
@@ -440,7 +453,7 @@ class Orchestrator:
             # ---- Dual preview scrape ----
             self._set_status(job, CrawlStatus.SCRAPING, "preview_scrape")
             log.info("[%s] Dual preview scrape", job.id)
-            css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages, claude_pages = await self.scraper.scrape_preview_dual(plan)
+            css_pages, smart_pages, crawl4ai_pages, us_pages, listing_api_pages, claude_pages, script_pages = await self.scraper.scrape_preview_dual(plan)
 
             # Parse CSS result
             if css_pages and css_pages[0].items:
@@ -487,6 +500,13 @@ class Orchestrator:
                     job.preview_record_claude = claude_records[0]
                     log.info("[%s] Claude preview: %s", job.id, claude_records[0].name)
 
+            # Parse Script result
+            if script_pages and script_pages[0].items:
+                script_records = await self.parser.parse(script_pages, plan)
+                if script_records:
+                    job.preview_record_script = script_records[0]
+                    log.info("[%s] Script preview: %s", job.id, script_records[0].name)
+
             # LLM comparison — include all methods that produced results
             candidates: dict[ExtractionMethod, object] = {}
             if job.preview_record_css:
@@ -501,6 +521,8 @@ class Orchestrator:
                 candidates[ExtractionMethod.LISTING_API] = job.preview_record_listing_api
             if job.preview_record_claude and not settings.claude_fallback_only:
                 candidates[ExtractionMethod.CLAUDE] = job.preview_record_claude
+            if job.preview_record_script:
+                candidates[ExtractionMethod.SCRIPT] = job.preview_record_script
 
             if len(candidates) >= 2:
                 recommended_method, best_score, margin = self._select_preview_method_deterministic(candidates)
@@ -645,7 +667,8 @@ class Orchestrator:
                     ExtractionMethod.SMART_SCRAPER: "SmartScraperGraph (AI)",
                     ExtractionMethod.UNIVERSAL_SCRAPER: "universal-scraper (AI/BS4)",
                     ExtractionMethod.CRAWL4AI: "Crawl4AI (AI/Markdown)",
-                    ExtractionMethod.LISTING_API: "Listing API (Direct JSON)",
+                    ExtractionMethod.LISTING_API: "Structured Source (Direct JSON/Embedded)",
+                    ExtractionMethod.SCRIPT: "Generated Script (Claude/BS4)",
                 }.get(method, method.value)
                 parts.append(f"**{label} extraction:**\n{data}")
 
@@ -773,6 +796,7 @@ class Orchestrator:
                         nonlocal zero_item_streak, attempted_pages, switch_reason
                         job.progress = info
                         job.updated_at = datetime.now(timezone.utc)
+                        self._touch_job(job, throttle_s=5.0)
 
                         if info.get("stage") == "method_fallback":
                             job.diagnostics.counters["method_fallbacks"] = (
@@ -1086,6 +1110,7 @@ class Orchestrator:
             def _progress_cb(info: dict) -> None:
                 job.progress = info
                 job.updated_at = datetime.now(timezone.utc)
+                self._touch_job(job, throttle_s=5.0)
 
             _pages, enrich_result = await self.scraper.scrape_detail_urls_only(
                 plan, remaining_urls,

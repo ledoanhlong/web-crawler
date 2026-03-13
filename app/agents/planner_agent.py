@@ -29,12 +29,94 @@ from app.utils.html import simplify_html
 from app.utils.http import fetch_page
 from app.utils.llm import chat_completion_json
 from app.utils.logging import get_logger
+from app.utils.structured_source import detect_embedded_structured_source
 
 log = get_logger(__name__)
 
 SYSTEM_PROMPT = load_prompt("planner_listing")
 
 _MIN_LISTING_CONTAINERS = 3
+_DETAIL_SHELL_FIELD_PREFIXES = (
+    "meta_",
+    "og_",
+    "canonical_",
+    "cookie_",
+    "portal_",
+    "map_",
+    "legend_",
+    "search_",
+    "menu_",
+    "attribution_",
+)
+_DETAIL_SHELL_URL_MARKERS = (
+    "floorplan",
+    "hallplan",
+    "hall-map",
+    "hall_map",
+    "showexhibitor",
+)
+_DETAIL_SHELL_HTML_MARKERS = (
+    "floorplan",
+    "hall plan",
+    "hall map",
+    "legend",
+    "svg-pan-zoom",
+    "booth finder",
+    "showexhibitor",
+)
+_DETAIL_USEFUL_FIELD_MARKERS = (
+    "name",
+    "email",
+    "phone",
+    "website",
+    "description",
+    "address",
+    "contact",
+    "city",
+    "country",
+    "postal",
+    "zip",
+    "booth",
+    "hall",
+    "brand",
+    "category",
+    "social",
+)
+
+
+def _detail_plan_looks_like_shell(
+    detail_url: str,
+    html_raw: str,
+    detail_plan: DetailPagePlan | None,
+) -> bool:
+    field_names = list((detail_plan.field_selectors or {}).keys()) if detail_plan else []
+    field_names_l = [name.lower() for name in field_names]
+
+    junk_hits = sum(
+        1
+        for name in field_names_l
+        if name.startswith(_DETAIL_SHELL_FIELD_PREFIXES)
+    )
+    useful_hits = sum(
+        1
+        for name in field_names_l
+        if not name.startswith(_DETAIL_SHELL_FIELD_PREFIXES)
+        and any(marker in name for marker in _DETAIL_USEFUL_FIELD_MARKERS)
+    )
+    mostly_junk_fields = bool(field_names_l) and junk_hits >= max(1, len(field_names_l) // 2)
+
+    detail_url_l = detail_url.lower()
+    url_looks_like_shell = any(marker in detail_url_l for marker in _DETAIL_SHELL_URL_MARKERS)
+
+    html_raw_l = html_raw.lower()
+    html_shell_hits = sum(1 for marker in _DETAIL_SHELL_HTML_MARKERS if marker in html_raw_l)
+    html_looks_like_shell = html_shell_hits >= 2 and "mailto:" not in html_raw_l and "tel:" not in html_raw_l
+
+    if mostly_junk_fields and useful_hits == 0:
+        return True
+    if (url_looks_like_shell or html_looks_like_shell) and useful_hits == 0:
+        return True
+    return False
 
 
 def _sanitize_plan_data(plan_data: dict) -> dict:
@@ -160,7 +242,15 @@ async def _fetch_html(url: str) -> tuple[str, bool]:
     """Fetch a page — try httpx first, fall back to Playwright.
 
     Returns (html, needs_js) so callers can override ``requires_javascript``.
+
+    Only falls back to Playwright for *rendering* failures (empty / JS-shell
+    pages).  Hard network errors (DNS, connection refused, HTTP 4xx/5xx) are
+    re-raised immediately so the caller can surface them to the user rather
+    than silently launching Playwright — which would fail with the same error
+    and produce a more confusing traceback.
     """
+    import httpx
+
     html_raw = ""
     needs_js = False
 
@@ -170,13 +260,14 @@ async def _fetch_html(url: str) -> tuple[str, bool]:
         log.info("URL contains hash routing — will use Playwright for %s", url)
 
     if not needs_js:
+        rendering_failure = False
         try:
             html_raw = await fetch_page(url)
             if len(html_raw) < 2_000 or "<noscript>" in html_raw.lower():
-                needs_js = True
+                rendering_failure = True
 
             # Heuristic 2: SPA framework markers in raw HTML
-            if not needs_js:
+            if not rendering_failure:
                 lower = html_raw.lower()
                 # High-confidence SPA markers (framework-specific)
                 spa_markers_strong = [
@@ -190,52 +281,60 @@ async def _fetch_html(url: str) -> tuple[str, bool]:
                     'id="app"', 'id="root"',
                 ]
                 if any(m in lower for m in spa_markers_strong):
-                    needs_js = True
+                    rendering_failure = True
                     log.info("SPA framework marker detected in HTML for %s", url)
 
             # Parse the HTML once for all remaining heuristics that need it
-            if not needs_js:
+            if not rendering_failure:
                 soup = BeautifulSoup(html_raw, "lxml")
                 body_tag = soup.find("body")
 
                 # Heuristic 2b: Weak SPA markers — only flag if body text is short
-                if not needs_js and any(m in lower for m in spa_markers_weak):
+                if not rendering_failure and any(m in lower for m in spa_markers_weak):
                     if body_tag and len(body_tag.get_text(strip=True)) < 500:
-                        needs_js = True
+                        rendering_failure = True
                         log.info("Weak SPA marker + sparse body text for %s", url)
 
                 # Heuristic 3: Custom HTML elements (web components) that are
                 # major content containers.
-                if not needs_js and body_tag:
+                if not rendering_failure and body_tag:
                     for tag in body_tag.find_all(True, recursive=False):
                         if "-" in tag.name and len(str(tag)) > 500:
-                            needs_js = True
+                            rendering_failure = True
                             log.info(
                                 "Large custom element <%s> detected — likely JS-rendered for %s",
                                 tag.name, url,
                             )
                             break
-                    if not needs_js:
+                    if not rendering_failure:
                         # Check one level deeper (common pattern: <div><my-app>)
                         for wrapper in body_tag.find_all(True, recursive=False):
                             for tag in wrapper.find_all(True, recursive=False):
                                 if "-" in tag.name and len(str(tag)) > 500:
-                                    needs_js = True
+                                    rendering_failure = True
                                     log.info(
                                         "Large custom element <%s> detected — likely JS-rendered for %s",
                                         tag.name, url,
                                     )
                                     break
-                            if needs_js:
+                            if rendering_failure:
                                 break
 
                 # Heuristic 4: Large HTML shell with almost no visible text
-                if not needs_js and len(html_raw) >= 2_000:
+                if not rendering_failure and len(html_raw) >= 2_000:
                     if body_tag and len(body_tag.get_text(strip=True)) < 200:
-                        needs_js = True
+                        rendering_failure = True
                         log.info("HTML shell has <200 chars of text — likely JS-rendered for %s", url)
+
+        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as exc:
+            # Hard network errors — Playwright won't help, re-raise immediately.
+            log.error("Network error fetching %s: %s", url, exc)
+            raise
         except Exception:
-            needs_js = True
+            # Unexpected parse/decode error — treat as rendering failure and try Playwright.
+            rendering_failure = True
+
+        needs_js = rendering_failure
 
     if needs_js:
         log.info("httpx fetch insufficient; falling back to Playwright for %s", url)
@@ -258,6 +357,7 @@ def _build_planner_prompt(
     fields_wanted: str | None = None,
     template_hints: TemplateHints | None = None,
     pagination_type: str | None = None,
+    exploration_notes: str | None = None,
 ) -> str:
     """Build the user prompt for the planner LLM call."""
     user_content = (
@@ -314,6 +414,15 @@ def _build_planner_prompt(
             f"The user has explicitly specified the pagination strategy: {pagination_type}\n"
             f"You MUST set pagination to \"{pagination_type}\" in your plan.\n"
             f"Do NOT override this with your own analysis.\n"
+        )
+
+    if exploration_notes:
+        user_content += (
+            "\n\n━━ EXPLORATION NOTES (from interactive browsing) ━━\n"
+            "The system navigated to this page and explored it interactively. "
+            "Use these observations to improve your scraping plan — especially "
+            "for pagination, hidden content, and detail page structure.\n\n"
+            f"{exploration_notes}\n"
         )
 
     return user_content
@@ -416,6 +525,7 @@ class PlannerAgent:
         template_hints: TemplateHints | None = None,
         pagination_type: str | None = None,
         heuristic_needs_js: bool = False,
+        exploration_notes: str | None = None,
     ) -> ScrapingPlan | None:
         """Run the HTML-based LLM planning pipeline.
 
@@ -440,6 +550,7 @@ class PlannerAgent:
                 fields_wanted=fields_wanted,
                 template_hints=template_hints,
                 pagination_type=pagination_type,
+                exploration_notes=exploration_notes,
             )
 
             messages = [
@@ -572,6 +683,40 @@ class PlannerAgent:
             except Exception as exc:
                 log.warning("Failed to fetch detail page %s: %s", detail_page_url, exc)
 
+        # --- 2b. Interactive exploration (vision-guided browsing) ---
+        exploration_notes: str = ""
+        should_explore = (
+            settings.use_exploration_browsing
+            or (settings.exploration_auto_for_js and heuristic_needs_js)
+        )
+        if should_explore:
+            from app.utils.llm import get_vision_client
+            if get_vision_client() is not None:
+                try:
+                    exploration_report = await self._explore_page(
+                        url, needs_js=heuristic_needs_js,
+                    )
+                    exploration_notes = self._format_exploration_notes(exploration_report)
+                    log.info(
+                        "Exploration complete: %d steps, %d screenshots",
+                        len(exploration_report.actions),
+                        exploration_report.screenshots_taken,
+                    )
+                    # If exploration captured a richer HTML (after JS rendering +
+                    # interactions), use that for planning instead of the initial fetch.
+                    if (
+                        exploration_report.final_html
+                        and len(exploration_report.final_html) > len(html_raw)
+                    ):
+                        html_raw = exploration_report.final_html
+                        heuristic_needs_js = True
+                        log.info(
+                            "Using exploration's post-interaction HTML for planning (%d chars)",
+                            len(html_raw),
+                        )
+                except Exception as exc:
+                    log.warning("Interactive exploration failed (non-critical): %s", exc)
+
         # --- 3. Run HTML-based and vision-based planning in parallel ---
         # Both analyses start immediately: HTML planning processes the DOM for
         # precise CSS selectors while vision planning takes a screenshot and
@@ -588,11 +733,16 @@ class PlannerAgent:
                 template_hints=template_hints,
                 pagination_type=pagination_type,
                 heuristic_needs_js=heuristic_needs_js,
+                exploration_notes=exploration_notes or None,
             ),
         ]
         if settings.use_vision_planning:
             gather_coros.append(
-                self._plan_with_vision(url, html_raw, fields_wanted=fields_wanted)
+                self._plan_with_vision(
+                    url, html_raw,
+                    fields_wanted=fields_wanted,
+                    exploration_notes=exploration_notes or None,
+                )
             )
             log.info("[%s] Running HTML and vision planning in parallel", url)
 
@@ -614,14 +764,15 @@ class PlannerAgent:
         # --- 4. Merge HTML and vision insights ---
         if isinstance(vision_result, ScrapingPlan):
             plan = self._merge_plans(plan, vision_result)
-            soup = BeautifulSoup(html_raw, "lxml")
-            plan.selector_metrics = self._compute_selector_metrics(plan, soup)
             log.info(
                 "Merged vision insights: pagination=%s, js=%s, detail_link=%s",
                 plan.pagination.value,
                 plan.requires_javascript,
                 plan.target.detail_link_selector,
             )
+            # Re-validate selectors after merge: vision may have added selectors
+            # that don't match the actual HTML and need a re-prompt.
+            plan = await self._validate_selectors(plan, html_raw, fields_wanted)
         elif isinstance(vision_result, Exception):
             log.warning("Vision planning failed (non-critical): %s", vision_result)
 
@@ -670,9 +821,26 @@ class PlannerAgent:
                         plan_data_js["pagination"] = pagination_type
                         if pagination_type in ("none", "infinite_scroll", "load_more_button"):
                             plan_data_js["pagination_urls"] = []
-                    plan = ScrapingPlan.model_validate(plan_data_js)
-                    plan = await self._validate_selectors(plan, html_raw, fields_wanted)
-                    plan_data = plan_data_js
+                    js_plan = ScrapingPlan.model_validate(plan_data_js)
+                    js_plan = await self._validate_selectors(js_plan, html_raw, fields_wanted)
+                    # Re-run vision planning with the JS-rendered HTML so the LLM
+                    # can correctly match what it sees in the screenshot to real CSS
+                    # selectors (the original vision call used the httpx shell).
+                    if settings.use_vision_planning:
+                        try:
+                            js_vision = await self._plan_with_vision(
+                                url, html_raw, fields_wanted=fields_wanted,
+                            )
+                            if isinstance(js_vision, ScrapingPlan):
+                                vision_result = js_vision
+                                log.info("Re-ran vision planning with JS-rendered HTML")
+                        except Exception as _ve:
+                            log.warning("Vision re-plan with JS HTML failed: %s", _ve)
+                    # Merge the best available vision plan (updated or original).
+                    if isinstance(vision_result, ScrapingPlan):
+                        js_plan = self._merge_plans(js_plan, vision_result)
+                        log.info("Re-merged vision insights into JS re-plan")
+                    plan = js_plan
                     log.info(
                         "Re-planned with JS-rendered HTML: selector '%s'",
                         plan.target.item_container_selector,
@@ -686,26 +854,70 @@ class PlannerAgent:
             plan.target.detail_link_selector,
         )
 
-        # --- 5. Analyse a sample detail page (if detail link found) ---
+        structured_source = detect_embedded_structured_source(html_raw, source_url=url)
+        if structured_source:
+            plan.listing_api_plan = structured_source
+            log.info(
+                "Detected embedded structured source: selector=%s attr=%s path=%s count=%s",
+                structured_source.html_selector,
+                structured_source.html_attribute,
+                structured_source.items_json_path,
+                structured_source.total_count,
+            )
+
+        plan = await self._plan_detail_enrichment(html_raw, plan)
+
+        return plan
+
+    async def _plan_detail_enrichment(
+        self,
+        html_raw: str,
+        plan: ScrapingPlan,
+    ) -> ScrapingPlan:
+        """Plan detail-page or detail-API enrichment from a sample item."""
+        sample_detail_url: str | None = None
         if plan.target.detail_link_selector:
             sample_detail_url = self._extract_first_detail_link(html_raw, plan)
-            if sample_detail_url:
-                try:
-                    detail_plan = await self._analyze_detail_page(
+
+        if sample_detail_url:
+            plan.detail_page_plan = None
+            plan.detail_page_fields = {}
+            plan.detail_page_field_attributes = {}
+            detail_html_raw = ""
+            try:
+                detail_html_raw = await self._fetch_page(
+                    sample_detail_url,
+                    prefer_js=plan.requires_javascript,
+                )
+                detail_plan = await self._analyze_detail_page(
+                    sample_detail_url,
+                    plan.requires_javascript,
+                    html_raw=detail_html_raw,
+                )
+                if _detail_plan_looks_like_shell(sample_detail_url, detail_html_raw, detail_plan):
+                    log.info(
+                        "Discarding detail page plan for shell-like detail page: %s",
                         sample_detail_url,
-                        plan.requires_javascript,
                     )
+                else:
                     plan.detail_page_plan = detail_plan
-                    # Populate legacy fields for backward compat with parser
                     plan.detail_page_fields = detail_plan.field_selectors
                     plan.detail_page_field_attributes = detail_plan.field_attributes
-                except Exception as exc:
-                    log.warning("Detail page analysis failed: %s", exc)
+            except Exception as exc:
+                log.warning("Detail page analysis failed: %s", exc)
 
-        # --- 7. Try API interception for JS-only detail buttons ---
-        if not plan.detail_page_plan and plan.target.detail_button_selector:
+        if not plan.detail_page_plan:
             try:
-                detail_api = await self._discover_detail_api(html_raw, plan)
+                if sample_detail_url:
+                    detail_api = await self._discover_detail_api(
+                        html_raw,
+                        plan,
+                        detail_url=sample_detail_url,
+                    )
+                elif plan.target.detail_button_selector:
+                    detail_api = await self._discover_detail_api(html_raw, plan)
+                else:
+                    detail_api = None
                 if detail_api:
                     plan.detail_api_plan = detail_api
             except Exception as exc:
@@ -721,7 +933,7 @@ class PlannerAgent:
         """
         log.info("Re-planning with user feedback: %s", user_feedback)
 
-        html_raw, _ = await _fetch_html(current_plan.url)
+        html_raw, heuristic_needs_js = await _fetch_html(current_plan.url)
         current_plan_json = current_plan.model_dump(mode="json")
 
         plan_data: dict | None = None
@@ -773,6 +985,11 @@ class PlannerAgent:
 
         plan_data["url"] = current_plan.url
         plan_data = _sanitize_plan_data(plan_data)
+        # Apply JS heuristics (same logic as plan()) so a re-plan on a
+        # JS-rendered page doesn't lose the requires_javascript flag.
+        if heuristic_needs_js and not plan_data.get("requires_javascript"):
+            log.info("Overriding requires_javascript=True (heuristic) during replan")
+            plan_data["requires_javascript"] = True
         plan = ScrapingPlan.model_validate(plan_data)
         log.info(
             "Re-plan: js=%s, pagination=%s, fields=%s, detail_link=%s",
@@ -782,29 +999,11 @@ class PlannerAgent:
             plan.target.detail_link_selector,
         )
 
-        # Re-analyse detail page if detail link is present
-        if plan.target.detail_link_selector:
-            sample_detail_url = self._extract_first_detail_link(html_raw, plan)
-            if sample_detail_url:
-                try:
-                    detail_plan = await self._analyze_detail_page(
-                        sample_detail_url,
-                        plan.requires_javascript,
-                    )
-                    plan.detail_page_plan = detail_plan
-                    plan.detail_page_fields = detail_plan.field_selectors
-                    plan.detail_page_field_attributes = detail_plan.field_attributes
-                except Exception as exc:
-                    log.warning("Detail page analysis failed during replan: %s", exc)
+        structured_source = detect_embedded_structured_source(html_raw, source_url=current_plan.url)
+        if structured_source:
+            plan.listing_api_plan = structured_source
 
-        # Try API interception for JS-only detail buttons
-        if not plan.detail_page_plan and plan.target.detail_button_selector:
-            try:
-                detail_api = await self._discover_detail_api(html_raw, plan)
-                if detail_api:
-                    plan.detail_api_plan = detail_api
-            except Exception as exc:
-                log.warning("Detail API discovery failed during replan: %s", exc)
+        plan = await self._plan_detail_enrichment(html_raw, plan)
 
         return plan
 
@@ -816,11 +1015,14 @@ class PlannerAgent:
         self,
         detail_url: str,
         requires_js: bool,
+        *,
+        html_raw: str | None = None,
     ) -> DetailPagePlan:
         """Fetch one sample detail page and ask the LLM to analyse its structure."""
         log.info("Analysing sample detail page: %s", detail_url)
 
-        html_raw = await self._fetch_page(detail_url, prefer_js=requires_js)
+        if html_raw is None:
+            html_raw = await self._fetch_page(detail_url, prefer_js=requires_js)
 
         # Try normal simplification first, then aggressive if content filter triggers
         result: dict | None = None
@@ -873,24 +1075,40 @@ class PlannerAgent:
         self,
         html_raw: str,
         plan: ScrapingPlan,
+        *,
+        detail_url: str | None = None,
     ) -> DetailApiPlan | None:
-        """Click a JS-only detail button and intercept the resulting API call.
+        """Capture a detail API triggered by a detail interaction.
 
         Uses Playwright network interception to capture the XHR/fetch request,
         then asks the LLM to derive the URL template and ID extraction method.
         """
-        from app.utils.browser import get_browser, intercept_detail_api
+        from app.utils.browser import (
+            get_browser,
+            intercept_detail_api,
+            intercept_detail_api_from_detail_url,
+        )
 
-        log.info("Attempting detail API discovery via button interception")
+        if detail_url:
+            log.info("Attempting detail API discovery via detail-link navigation")
+        else:
+            log.info("Attempting detail API discovery via button interception")
 
         async with get_browser() as browser:
-            api_url, api_response = await intercept_detail_api(
-                browser,
-                plan.url,
-                plan.target.item_container_selector,
-                plan.target.detail_button_selector,
-                wait_selector=plan.wait_selector,
-            )
+            if detail_url:
+                api_url, api_response = await intercept_detail_api_from_detail_url(
+                    browser,
+                    detail_url,
+                    wait_selector=None,
+                )
+            else:
+                api_url, api_response = await intercept_detail_api(
+                    browser,
+                    plan.url,
+                    plan.target.item_container_selector,
+                    plan.target.detail_button_selector,
+                    wait_selector=plan.wait_selector,
+                )
 
         if not api_url or not api_response:
             log.warning("Could not discover detail API via interception")
@@ -917,12 +1135,15 @@ class PlannerAgent:
                 "role": "user",
                 "content": (
                     f"The listing page URL is: {plan.url}\n\n"
-                    f"When clicking the detail button on the first item, this API call was made:\n"
+                    f"When loading the first item's detail interaction, this API call was observed:\n"
                     f"GET {api_url}\n\n"
+                    + (f"The detail page URL that triggered it was: {detail_url}\n\n" if detail_url else "")
+                    + (
                     f"The first listing item's HTML is:\n"
                     f"```html\n{first_item_html[:4_000]}\n```\n\n"
                     f"The API response:\n"
                     f"```json\n{response_preview}\n```"
+                    )
                 ),
             },
         ]
@@ -1031,6 +1252,34 @@ class PlannerAgent:
                         f"containers={container_count}, "
                         f"field_hit_ratio={metrics.get('field_hit_ratio')}"
                     )
+                    # Non-blocking checks: warn if detail_link or pagination
+                    # selectors match nothing — these won't trigger a re-prompt
+                    # but surface misconfiguration early.
+                    if plan.target.detail_link_selector and matches:
+                        try:
+                            sample = matches[:5]
+                            link_hits = sum(
+                                1 for c in sample
+                                if c.select_one(plan.target.detail_link_selector)
+                            )
+                            if link_hits == 0:
+                                log.warning(
+                                    "detail_link_selector '%s' matched 0 links "
+                                    "in first %d containers — detail pages may not be fetched",
+                                    plan.target.detail_link_selector, len(sample),
+                                )
+                        except Exception:
+                            pass
+                    if plan.pagination_selector:
+                        try:
+                            if not soup.select(plan.pagination_selector):
+                                log.warning(
+                                    "pagination_selector '%s' matched 0 elements "
+                                    "— pagination may not work",
+                                    plan.pagination_selector,
+                                )
+                        except Exception:
+                            pass
                     return plan
 
                 log.warning(
@@ -1056,7 +1305,9 @@ class PlannerAgent:
                         break
             structure_hint = "\n".join(hint_parts) if hint_parts else "(no body content)"
 
-            html_simple = simplify_html(html_raw, aggressive=True)
+            # Use the same aggressiveness as the initial plan so the LLM
+            # sees a consistent HTML snapshot during retries.
+            html_simple = simplify_html(html_raw, aggressive=False)
 
             feedback_content = (
                 f"Your previous selector `{plan.target.item_container_selector}` matched "
@@ -1142,6 +1393,217 @@ class PlannerAgent:
         return plan
 
     # ------------------------------------------------------------------
+    # Interactive exploration (vision-guided browsing)
+    # ------------------------------------------------------------------
+    async def _explore_page(
+        self,
+        url: str,
+        *,
+        needs_js: bool = False,
+        max_steps: int | None = None,
+    ) -> "ExplorationReport":
+        """Interactively browse the page using vision-guided actions.
+
+        Opens a Playwright browser, takes screenshots, asks GPT-4o what to do,
+        executes actions, and compiles findings into an ExplorationReport.
+        """
+        from app.models.schemas import ExplorationAction, ExplorationReport
+        from app.utils.browser import (
+            _dismiss_consent_overlays,
+            create_page,
+            get_browser,
+            safe_click,
+        )
+        from app.utils.llm import chat_completion_vision_json, encode_image_base64
+
+        max_steps = max_steps or settings.exploration_max_steps
+        report = ExplorationReport()
+        actions: list[ExplorationAction] = []
+        exploration_prompt = load_prompt("planner_exploration")
+
+        async with get_browser() as browser:
+            page = await create_page(browser)
+            try:
+                await page.goto(url, wait_until="commit", timeout=120_000)
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                except Exception:
+                    pass
+                await asyncio.sleep(3)  # let JS render
+
+                # Dismiss cookie/consent overlays BEFORE exploration starts
+                # so they don't dominate screenshots and waste exploration steps.
+                await _dismiss_consent_overlays(page)
+                await asyncio.sleep(1)
+
+                original_url = url
+
+                for step in range(max_steps):
+                    # 1. Take screenshot
+                    screenshot_bytes = await page.screenshot(type="png", full_page=False)
+                    report.screenshots_taken += 1
+                    image_uri = encode_image_base64(screenshot_bytes)
+
+                    # 2. Build context from previous actions
+                    history_text = ""
+                    if actions:
+                        history_text = "\nPrevious exploration steps:\n"
+                        for a in actions:
+                            history_text += (
+                                f"  Step {a.step}: [{a.action_type}] "
+                                f"{a.description} -> {a.observation}\n"
+                            )
+
+                    # 3. Ask vision LLM what to do
+                    user_content: list[dict] = [
+                        {"type": "text", "text": (
+                            f"Page URL: {url}\n"
+                            f"Step {step + 1} of {max_steps}\n"
+                            f"{history_text}\n"
+                            f"What should I do next to understand this page's structure?"
+                        )},
+                        {"type": "image_url", "image_url": {
+                            "url": image_uri,
+                            "detail": "low",
+                        }},
+                    ]
+                    messages = [
+                        {"role": "system", "content": exploration_prompt},
+                        {"role": "user", "content": user_content},
+                    ]
+
+                    try:
+                        result = await chat_completion_vision_json(
+                            messages, max_tokens=2_000,
+                        )
+                    except Exception as exc:
+                        log.warning("Exploration vision call failed at step %d: %s", step + 1, exc)
+                        break
+
+                    # 4. Record observation
+                    action = ExplorationAction(
+                        step=step + 1,
+                        action_type=result.get("action", "done"),
+                        target=result.get("target_selector", ""),
+                        description=result.get("target_description", ""),
+                        observation=result.get("observation", ""),
+                    )
+
+                    # 5. Accumulate findings
+                    findings = result.get("findings", {})
+                    if findings.get("pagination_type") and findings["pagination_type"] != "unknown":
+                        report.pagination_notes = (
+                            f"Pagination type: {findings['pagination_type']}"
+                        )
+                    if findings.get("has_detail_links"):
+                        report.detail_page_notes = "Detail page links detected"
+                    if findings.get("has_detail_buttons"):
+                        report.detail_page_notes = "Detail buttons (JS-based) detected"
+                    if findings.get("hidden_content_detected"):
+                        report.hidden_content_notes = "Hidden content behind tabs/accordions"
+
+                    log.info(
+                        "Exploration step %d/%d: [%s] %s -> %s",
+                        step + 1, max_steps,
+                        action.action_type,
+                        action.description or "(no description)",
+                        (action.observation or "")[:120],
+                    )
+
+                    # 6. Detect consent-related actions and auto-dismiss instead
+                    _consent_kw = {"cookie", "consent", "privacy", "accept all", "gdpr", "datenschutz"}
+                    _action_text = f"{action.description} {action.target}".lower()
+                    if action.action_type == "click" and any(kw in _action_text for kw in _consent_kw):
+                        log.info("Exploration step %d: detected consent action — auto-dismissing instead", step + 1)
+                        await _dismiss_consent_overlays(page)
+                        await asyncio.sleep(1)
+                        action.observation += " [auto-dismissed consent overlay]"
+                        actions.append(action)
+                        continue
+
+                    # 7. Execute the action
+                    if action.action_type == "done":
+                        report.page_structure_notes = action.observation
+                        actions.append(action)
+                        break
+                    elif action.action_type == "click" and action.target:
+                        try:
+                            clicked = await safe_click(page, action.target)
+                            if not clicked:
+                                action.observation += " [click failed — element not found or not clickable]"
+                        except Exception as exc:
+                            action.observation += f" [click error: {exc}]"
+                        await asyncio.sleep(2)
+                    elif action.action_type == "scroll":
+                        await page.evaluate("window.scrollBy(0, window.innerHeight)")
+                        await asyncio.sleep(1.5)
+                    elif action.action_type == "navigate" and action.target:
+                        try:
+                            nav_url = action.target
+                            if nav_url.startswith("/"):
+                                from urllib.parse import urlparse as _up
+                                p = _up(original_url)
+                                nav_url = f"{p.scheme}://{p.netloc}{nav_url}"
+                            await page.goto(nav_url, wait_until="commit", timeout=30_000)
+                            await asyncio.sleep(2)
+                            # Take a detail page screenshot for the next iteration
+                            # so the LLM can observe what a detail page looks like.
+                            # (The loop will naturally screenshot this state.)
+                        except Exception as exc:
+                            action.observation += f" [navigation failed: {exc}]"
+                            # Try to go back to original
+                            try:
+                                await page.goto(original_url, wait_until="commit", timeout=30_000)
+                                await asyncio.sleep(2)
+                            except Exception:
+                                pass
+                    else:
+                        # Unknown or invalid action — stop
+                        actions.append(action)
+                        break
+
+                    actions.append(action)
+
+                # Capture final HTML state after all interactions
+                try:
+                    # Navigate back to original URL if we ended on a detail page
+                    current = page.url
+                    if current != original_url:
+                        await page.goto(original_url, wait_until="commit", timeout=30_000)
+                        await asyncio.sleep(2)
+                    report.final_html = await page.content()
+                except Exception:
+                    pass
+
+            finally:
+                await page.close()
+
+        report.actions = actions
+        return report
+
+    @staticmethod
+    def _format_exploration_notes(report: "ExplorationReport") -> str:
+        """Format exploration findings as text for injection into planning prompts."""
+        parts: list[str] = []
+        if report.page_structure_notes:
+            parts.append(f"Page structure: {report.page_structure_notes}")
+        if report.pagination_notes:
+            parts.append(f"Pagination: {report.pagination_notes}")
+        if report.hidden_content_notes:
+            parts.append(f"Hidden content: {report.hidden_content_notes}")
+        if report.detail_page_notes:
+            parts.append(f"Detail pages: {report.detail_page_notes}")
+
+        if report.actions:
+            parts.append("\nExploration steps taken:")
+            for a in report.actions:
+                parts.append(
+                    f"  {a.step}. [{a.action_type}] {a.description} -> {a.observation}"
+                )
+
+        return "\n".join(parts) if parts else ""
+
+    # ------------------------------------------------------------------
     # Vision-based planning (GPT-4o screenshot analysis)
     # ------------------------------------------------------------------
     async def _plan_with_vision(
@@ -1151,6 +1613,7 @@ class PlannerAgent:
         *,
         fields_wanted: str | None = None,
         wait_selector: str | None = None,
+        exploration_notes: str | None = None,
     ) -> ScrapingPlan | None:
         """Take a screenshot and use the vision model to generate a scraping plan.
 
@@ -1190,6 +1653,10 @@ class PlannerAgent:
             user_content[0]["text"] += (
                 f"\n\nThe user wants these specific fields: {fields_wanted}"
             )
+        if exploration_notes:
+            user_content[0]["text"] += (
+                f"\n\nExploration notes from interactive browsing:\n{exploration_notes}"
+            )
 
         messages = [
             {"role": "system", "content": vision_prompt},
@@ -1222,33 +1689,43 @@ class PlannerAgent:
     # Helpers
     # ------------------------------------------------------------------
     def _extract_first_detail_link(self, html: str, plan: ScrapingPlan) -> str | None:
-        """Extract the first detail page URL from the listing HTML."""
+        """Extract the first detail page URL from the listing HTML.
+
+        Tries the first few containers rather than only the first one — some
+        pages render the first card differently (e.g. a featured / sponsored
+        slot) or the selector only matches from the second item onwards.
+        """
         soup = BeautifulSoup(html, "lxml")
         containers = soup.select(plan.target.item_container_selector)
         if not containers:
             return None
 
-        first = containers[0]
-        try:
-            link_el = first.select_one(plan.target.detail_link_selector)
-        except Exception as exc:
-            log.warning("Invalid detail_link_selector '%s': %s", plan.target.detail_link_selector, exc)
-            return None
-        if not link_el:
-            return None
-
-        href = link_el.get("href")
-        if not href:
-            return None
-
-        # Resolve relative URLs
         parsed = urlparse(plan.url)
-        if href.startswith("/"):
-            href = f"{parsed.scheme}://{parsed.netloc}{href}"
-        elif not href.startswith("http"):
-            href = urljoin(plan.url, href)
+        for container in containers[:5]:
+            try:
+                link_el = container.select_one(plan.target.detail_link_selector)
+            except Exception as exc:
+                log.warning(
+                    "Invalid detail_link_selector '%s': %s",
+                    plan.target.detail_link_selector, exc,
+                )
+                return None
+            if not link_el:
+                continue
 
-        return href
+            href = link_el.get("href")
+            if not href:
+                continue
+
+            # Resolve relative URLs
+            if href.startswith("/"):
+                href = f"{parsed.scheme}://{parsed.netloc}{href}"
+            elif not href.startswith("http"):
+                href = urljoin(plan.url, href)
+
+            return href
+
+        return None
 
     async def _fetch_page(self, url: str, *, prefer_js: bool = False) -> str:
         """Fetch a page, with httpx-first fallback to Playwright."""

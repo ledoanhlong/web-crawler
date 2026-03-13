@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import AsyncMock, patch
 
+import app.agents.parser_agent as parser_agent_module
 from app.agents.parser_agent import ParserAgent
 from app.models.schemas import DetailPagePlan, ScrapingPlan, ScrapingTarget, PaginationStrategy
 
@@ -176,3 +178,81 @@ class TestExtractDetailFieldsCss:
         lines = result.strip().split("\n")
         assert len(lines) == 5
         assert any("Leading manufacturer" in line for line in lines)
+
+
+class TestDetailFieldHeuristics:
+    def test_detail_page_plan_fields_are_preferred_for_ai(self):
+        plan = _make_plan(
+            detail_page_selectors={
+                "email": "a.email",
+                "phone": ".phone",
+            },
+            legacy_detail_fields={
+                "meta_description": "meta[name='description']",
+            },
+        )
+
+        fields = ParserAgent._detail_fields_for_ai(plan)
+
+        assert fields == ["email", "phone"]
+
+    def test_junk_detail_fields_fall_back_to_generic_fields(self):
+        plan = _make_plan(
+            detail_page_selectors={
+                "meta_description": "meta[name='description']",
+                "map_version": ".map-version",
+                "cookie_banner_text": ".cookie-banner",
+            },
+        )
+
+        fields = ParserAgent._detail_fields_for_ai(plan)
+
+        assert "email" in fields
+        assert "website" in fields
+        assert "description" in fields
+
+    def test_build_enriched_items_promotes_flattened_structured_fields(self):
+        parser = ParserAgent()
+        items = [
+            {
+                "name": "Acme Corp",
+                "values.description": "Structured description",
+                "contact.email": "info@acme.com",
+                "contact.phone": "+49 30 1234567",
+                "website_url": "https://acme.com",
+            }
+        ]
+
+        enriched = parser._build_enriched_items(items, {}, {})
+
+        assert enriched[0]["description"] == "Structured description"
+        assert enriched[0]["email"] == "info@acme.com"
+        assert enriched[0]["phone"] == "+49 30 1234567"
+        assert enriched[0]["website"] == "https://acme.com"
+
+
+class TestParserProviderFallback:
+    @pytest.mark.asyncio
+    async def test_parser_uses_claude_as_fallback_when_openai_fails(self):
+        messages = [{"role": "user", "content": "parse this"}]
+
+        with (
+            patch.object(
+                parser_agent_module,
+                "openai_chat_completion_json",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("openai unavailable"),
+            ) as mock_openai,
+            patch.object(
+                parser_agent_module,
+                "chat_completion_claude_json",
+                new_callable=AsyncMock,
+                return_value={"records": [{"name": "Acme Corp"}]},
+            ) as mock_claude,
+            patch.object(parser_agent_module.settings, "use_claude_extraction", True),
+        ):
+            result = await parser_agent_module.chat_completion_json(messages, max_tokens=123)
+
+        assert result["records"][0]["name"] == "Acme Corp"
+        mock_openai.assert_awaited_once()
+        mock_claude.assert_awaited_once()

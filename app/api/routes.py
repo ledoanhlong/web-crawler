@@ -30,6 +30,7 @@ from app.models.schemas import (
 )
 from app.models.schemas import TemplateHints
 from app.services.orchestrator import Orchestrator
+from app.services.job_store import job_store
 from app.services.plan_cache import plan_cache
 from app.utils.logging import get_logger
 
@@ -44,6 +45,29 @@ _orchestrator = Orchestrator()
 # Limit concurrent crawl jobs to prevent resource exhaustion
 _MAX_CONCURRENT_JOBS = 3
 _job_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_JOBS)
+
+
+def _persist_job(job: CrawlJob, *, force: bool = False, throttle_s: float = 0.0) -> None:
+    try:
+        job_store.save(job, force=force, throttle_s=throttle_s)
+    except Exception as exc:
+        log.warning("Failed to persist job %s: %s", job.id, exc)
+
+
+def _register_job(job: CrawlJob) -> CrawlJob:
+    _jobs[job.id] = job
+    _persist_job(job, force=True)
+    return job
+
+
+def _auto_execute_disabled_result() -> ScriptExecutionResult:
+    return ScriptExecutionResult(
+        stdout="",
+        stderr="Generated script auto-execution is disabled by configuration.",
+        returncode=-1,
+        timed_out=False,
+        safety_warnings=["Auto-execution disabled by configuration"],
+    )
 
 
 def _append_status_timeline(job: CrawlJob, status: CrawlStatus, reason: str) -> None:
@@ -82,7 +106,7 @@ async def start_crawl(request: CrawlRequest, background_tasks: BackgroundTasks) 
     to continue.
     """
     job = CrawlJob(request=request)
-    _jobs[job.id] = job
+    _register_job(job)
     background_tasks.add_task(_run_preview, job)
     return job
 
@@ -116,11 +140,13 @@ async def confirm_preview(
             retryable=True,
             details={"feedback": body.feedback or ""},
         )
+        _persist_job(job, force=True)
         return job
 
     # Store user feedback and extraction method choice
     job.user_feedback = body.feedback
     job.extraction_method = body.extraction_method
+    _persist_job(job, force=True)
     background_tasks.add_task(_run_full, job)
     return job
 
@@ -156,6 +182,7 @@ async def update_plan(
 
     job.updated_at = datetime.now(timezone.utc)
     _append_status_timeline(job, CrawlStatus.PLAN_REVIEW, "plan_updated_by_user")
+    _persist_job(job, force=True)
     return job
 
 
@@ -174,6 +201,7 @@ async def approve_plan(
             detail=f"Job is not in plan_review state (current: {job.status.value})",
         )
 
+    _persist_job(job, force=True)
     background_tasks.add_task(_run_preview_scrape, job)
     return job
 
@@ -199,6 +227,7 @@ async def reanalyze_plan(
         job.user_feedback = body.feedback
 
     _append_status_timeline(job, CrawlStatus.PLAN_REVIEW, "reanalyze_requested")
+    _persist_job(job, force=True)
     background_tasks.add_task(_run_plan_only, job)
     return job
 
@@ -219,6 +248,7 @@ async def abort_job(job_id: str) -> CrawlJob:
     job.error = "Crawl aborted by user."
     job.updated_at = datetime.now(timezone.utc)
     _append_status_timeline(job, CrawlStatus.FAILED, "user_aborted")
+    _persist_job(job, force=True)
     return job
 
 
@@ -247,7 +277,7 @@ async def resume_crawl(
     new_job.plan = original.plan
     new_job.extraction_method = original.extraction_method
     new_job.resume_from_job_id = original.id
-    _jobs[new_job.id] = new_job
+    _register_job(new_job)
     background_tasks.add_task(_run_resume, new_job, original)
     return new_job
 
@@ -358,7 +388,10 @@ async def generate_script(body: ScriptCreatorRequest) -> ScriptResult:
 
     execution = None
     if body.auto_execute:
-        execution = await _execute_script_safe(script)
+        if settings.allow_generated_script_execution:
+            execution = await _execute_script_safe(script)
+        else:
+            execution = _auto_execute_disabled_result()
     return ScriptResult(script=script, execution=execution)
 
 
@@ -379,7 +412,10 @@ async def generate_script_multi(body: ScriptCreatorMultiRequest) -> ScriptResult
 
     execution = None
     if body.auto_execute:
-        execution = await _execute_script_safe(script)
+        if settings.allow_generated_script_execution:
+            execution = await _execute_script_safe(script)
+        else:
+            execution = _auto_execute_disabled_result()
     return ScriptResult(script=script, execution=execution)
 
 
@@ -438,7 +474,7 @@ async def smart_crawl(
         if hints:
             job.template_hints = hints
 
-        _jobs[job.id] = job
+        _register_job(job)
         background_tasks.add_task(_run_preview, job)
         result.job_id = job.id
 
@@ -465,7 +501,10 @@ async def smart_crawl(
                 body.urls[0], body.prompt, "beautifulsoup4",
             )
             result.script = script
-            result.execution = await _execute_script_safe(script)
+            if settings.allow_generated_script_execution:
+                result.execution = await _execute_script_safe(script)
+            else:
+                result.execution = _auto_execute_disabled_result()
         except Exception as exc:
             log.error("smart-crawl (script_creator) failed: %s", exc, exc_info=True)
             raise HTTPException(status_code=500, detail="Script generation failed. Check server logs for details.")
@@ -503,18 +542,21 @@ async def _run_preview(job: CrawlJob) -> None:
     """Background task: plan the scrape, then pause at PLAN_REVIEW."""
     async with _job_semaphore:
         await _orchestrator.run_plan_only(job)
+        _persist_job(job, force=True)
 
 
 async def _run_preview_scrape(job: CrawlJob) -> None:
     """Background task: run dual preview scrape after plan approval."""
     async with _job_semaphore:
         await _orchestrator.run_preview_scrape(job)
+        _persist_job(job, force=True)
 
 
 async def _run_plan_only(job: CrawlJob) -> None:
     """Background task: re-run planning (for reanalyze)."""
     async with _job_semaphore:
         await _orchestrator.run_plan_only(job)
+        _persist_job(job, force=True)
 
 
 async def _run_full(job: CrawlJob) -> None:
@@ -526,12 +568,14 @@ async def _run_full(job: CrawlJob) -> None:
     """
     async with _job_semaphore:
         await _orchestrator.run_full(job, timeout_s=settings.max_job_duration_s)
+        _persist_job(job, force=True)
 
 
 async def _run_resume(job: CrawlJob, original_job: CrawlJob) -> None:
     """Background task: resume a partial crawl by fetching remaining detail pages."""
     async with _job_semaphore:
         await _orchestrator.run_resume(job, original_job, timeout_s=settings.max_job_duration_s)
+        _persist_job(job, force=True)
 
 
 # ---------------------------------------------------------------------------

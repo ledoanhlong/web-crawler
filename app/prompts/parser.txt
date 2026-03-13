@@ -16,6 +16,8 @@ For each company/seller, return a JSON object with these fields (use null when t
   "product_categories": ["<string>", ...],
   "brands": ["<string>", ...],
   "marketplace_name": "<name of the marketplace, directory, or trade fair, or null>",
+  "booth": "<booth or stand number, or null>",
+  "hall": "<hall number or name, or null>",
   "logo_url": "<URL string or null>",
   "social_media": {"<platform>": "<url>", ...},
   "raw_extra": {"<key>": "<value>", ...}
@@ -25,11 +27,23 @@ Rules:
 - ``name`` is required. If you cannot determine a company/seller name, use the most prominent text as the name.
 - Normalise country names to English (e.g. "Deutschland" → "Germany", "Frankreich" → "France", "日本" → "Japan", "中国" → "China", "Estados Unidos" → "United States").
 - If a field contains a combined location like "Berlin, Germany", split it into ``city`` and ``country``.
-- Put any fields that don't map to the schema into ``raw_extra``. This includes domain-specific fields like booth/stand numbers, hall numbers, fax numbers, ratings, review counts, membership tier, marketplace ranking, etc.
+- IMPORTANT: Aggressively map raw fields to the schema. The raw data often uses non-standard field names. Map them intelligently:
+  - ``city_country_raw``, ``location``, ``teaser-row__text`` → split into ``city`` and ``country``
+  - ``booth_hall_raw``, ``hall_booth_text``, ``hall-map-link`` → split into ``booth`` and ``hall`` (e.g. "Hall 10 / E40" → hall="10", booth="E40")
+  - ``subtitle_type``, ``type``, ``category`` → ``description`` or ``product_categories``
+  - ``details_button``, ``details_button_text``, ``detail_button_text`` → ignore (UI element, not data)
+  - ``hall_map_url`` → put in ``raw_extra``
+  - ``logo_srcset`` → ignore if ``logo_url`` is already set
+  - ``detail_link`` → ignore (internal navigation field)
+  - Any field containing an email address → ``email``
+  - Any field containing a phone number → ``phone``
+  - Any field containing a URL that looks like a company website → ``website``
+- Only put truly unmappable data in ``raw_extra``. Prefer mapping to a schema field over putting in raw_extra.
 - Clean up HTML entities (&amp; → &), excessive whitespace, and encoding artefacts.
 - If detail-page data is provided for a record (in ``_detail_page_data``), merge it with the listing data (detail data takes priority when both have the same field).
 - If API detail data is provided for a record (in ``_detail_api_data``), it contains structured JSON from a detail API call with fields like address, phone, email, website, description, etc. Parse and merge this data — API data is authoritative and takes priority over listing data when both have the same field.
 - Strip any fields starting with underscore (``_``) from the final output — these are internal fields (``_detail_page_data``, ``_detail_api_data``, ``_detail_api_id``, etc.) and must NOT appear in the records.
+- Fields from API responses may use dot-notation for nested objects (e.g. ``contact.email``, ``address.city``, ``location.country``, ``values.description``). Map these to the correct output fields — for example ``contact.email`` → ``email``, ``contact.phone`` → ``phone``, ``address.city`` → ``city``, ``website_url`` → ``website``, ``values.description`` → ``description``.
 - ``raw_extra`` values must be strings. If a value is a list or object, convert it to a comma-separated string or JSON string.
 - Return a JSON object: {"records": [<list of seller/company objects>]}
 - Return ONLY valid JSON. No markdown fences, no explanation.

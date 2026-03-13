@@ -40,9 +40,11 @@ ScraperAgent ──► executes plan, returns raw PageData
      │    ├── CSS Selector extraction
      │    ├── ScrapeGraphAI extraction
    │    ├── universal-scraper extraction (optional)
+   │    ├── structured source extraction (embedded JSON / listing API)
    │    ├── Claude extraction fallback (optional)
+   │    ├── generated-script extraction (optional)
      │    ├── Detail page fetching (Crawl4AI, Playwright, or httpx)
-     │    └── API interception
+     │    └── Detail/listing API interception
      │
      ▼
 ParserAgent ──► normalizes raw data into SellerLead records
@@ -52,7 +54,7 @@ ParserAgent ──► normalizes raw data into SellerLead records
 OutputAgent ──► quality pass (dedup), writes JSON + CSV
 ```
 
-The pipeline has a **preview checkpoint**: after planning, the system scrapes a single item using up to six extraction sources (CSS, ScrapeGraphAI, Crawl4AI, universal-scraper, listing API interception, Claude), parses them, and pauses for user review. Only after the user confirms does the full crawl proceed.
+The pipeline has a **preview checkpoint**: after planning, the system can compare up to seven extraction sources on the same page (`css`, `smart_scraper`, `crawl4ai`, `universal_scraper`, `listing_api` / structured source, `claude`, and `script`). Only methods that return a non-empty preview record are shown in the UI. The default UI is sales-facing and shows generic sample options; operator mode reveals raw method names and low-level controls. Only after the user confirms does the full crawl proceed.
 
 ---
 
@@ -69,7 +71,7 @@ The `RouterAgent` receives the user's URL(s) and prompt, then decides which scra
 | `full_pipeline` | Listing pages with pagination, detail pages | Full multi-agent pipeline with preview workflow |
 | `smart_scraper` | Single page, simple extraction | Direct ScrapeGraphAI extraction (no CSS planning) |
 | `smart_scraper_multi` | Multiple URLs, similar structure | ScrapeGraphAI across multiple URLs with merged results |
-| `script_creator` | Complex pages, reusable scripts | Generates a Python script using Claude Opus 4.6, optionally auto-executes |
+| `script_creator` | Complex pages, reusable scripts | Generates a Python script using Claude Opus 4.6; standalone auto-execution is disabled unless explicitly enabled |
 
 ### script_creator Selection
 
@@ -88,7 +90,7 @@ The `script_creator` strategy is never selected by the rule-based fallback (LLM 
 
 ### script_creator Implementation
 
-Uses Claude Opus 4.6 via Azure AI Foundry (`chat_completion_claude`). The function fetches a sample of the page HTML and sends it alongside the user's prompt to Claude, which generates a complete, runnable Python script. Markdown code fences in the response are stripped automatically.
+Uses Claude Opus 4.6 via Azure AI Foundry (`chat_completion_claude`). The function fetches a sample of the page HTML and sends it alongside the user's prompt to Claude, which generates a complete Python script. Markdown code fences in the response are stripped automatically. The standalone script endpoints no longer auto-run generated code by default; they only execute when `ALLOW_GENERATED_SCRIPT_EXECUTION=true`.
 
 ### Fallback Routing
 
@@ -157,7 +159,13 @@ The `PlannerAgent` is the most critical stage. It analyses the target page's HTM
    - Sends the captured API URL and response to GPT with the `planner_detail_api` prompt
    - Produces a `DetailApiPlan` with `api_url_template`, `id_selector`, `id_attribute`, `id_regex`
 
-9. **Parallel vision planning** (when `USE_VISION_PLANNING=true`)
+9. **Structured-source detection and detail-shell validation**
+   - Independently scans the rendered HTML for large JSON-bearing attributes and script blobs.
+   - Builds a generalized `listing_api_plan` even when the source is embedded in HTML rather than fetched over XHR.
+   - Detects shell-like detail pages (floorplans, maps, metadata-only shells, cookie wrappers) and rejects them as canonical detail pages.
+   - If the "detail page" is only a shell, planner prefers detail-API discovery and later browser-interception fallback instead of forcing HTML detail extraction.
+
+10. **Parallel vision planning** (when `USE_VISION_PLANNING=true`)
    - Vision planning now runs **in parallel** with HTML-based planning via `asyncio.gather`, not as a fallback.
    - While the HTML planner derives precise CSS selectors from the raw DOM, the vision planner (`_plan_with_vision`) captures a full-page screenshot and sends it alongside simplified HTML to GPT-4o, gaining structural understanding of the rendered layout: where data is visually positioned, how pagination controls look, and how to navigate to detail pages.
    - After both complete, `_merge_plans()` combines the results with the HTML plan as the authoritative base for CSS selectors, and the vision plan filling in what static analysis cannot see:
@@ -187,8 +195,17 @@ ScrapingPlan:
     detail_button_selector: str     # JS-only detail button
   detail_page_plan: DetailPagePlan  # Detail page CSS selectors
   detail_api_plan: DetailApiPlan    # API interception configuration
+  listing_api_plan: ListingApiPlan  # Generalized structured source plan
   wait_selector: str                # Wait for this element before scraping
 ```
+
+`ListingApiPlan` now represents both background APIs and embedded HTML data sources. Key fields include:
+
+- `source_kind`: `"api"` or `"embedded_html"`
+- `api_url`: API URL when interception succeeds
+- `html_selector`: selector for the element carrying embedded JSON
+- `html_attribute`: attribute holding the JSON blob (when applicable)
+- `items_json_path`: JSON path used to locate the actual records inside the payload
 
 ---
 
@@ -337,19 +354,37 @@ Key defensive measures:
 
 ### 4.8 Preview (`scrape_preview_dual`)
 
-During the preview stage, the scraper runs **up to four** extraction methods on the same page:
+During the preview stage, the scraper can run **up to seven** extraction methods on the same page:
 
-1. Fetches the page once (httpx, Crawl4AI, or Playwright depending on configuration and `requires_javascript`)
-2. Runs **CSS extraction** via `_extract_items()` on the HTML
-3. Runs **ScrapeGraphAI extraction** via `smart_extract_items()` on the HTML (if `USE_SMART_SCRAPER_PRIMARY=true` and HTML is ≥ 500 chars)
-4. Runs **Crawl4AI extraction** via `crawl4ai_extract()` on the page (if `USE_CRAWL4AI=true`)
-5. Runs **universal-scraper extraction** via `universal_scraper_extract()` on the page (if `USE_UNIVERSAL_SCRAPER=true`)
-6. Returns a 4-tuple `(css_pages, smart_pages, crawl4ai_pages, universal_scraper_pages)` — each containing at most 1 item
-7. Each non-empty result set is enriched with detail page data (1 detail page max)
+1. Fetch the page once (`httpx` or Playwright depending on `requires_javascript`).
+2. Run **CSS extraction** on the preview HTML slice.
+3. Run **SmartScraper** on the same preview slice when it is large enough to be useful.
+4. Run **Crawl4AI** extraction when enabled.
+5. Run **universal-scraper** extraction when enabled.
+6. Run **structured source extraction**:
+   - prefer deterministic embedded-JSON detection in rendered HTML
+   - otherwise try listing-API interception when enabled
+7. Run **Claude** extraction when enabled and the preview HTML is large enough.
+8. Run **generated-script** extraction when enabled and the preview HTML is large enough.
+9. Enrich each non-empty result set with at most one detail page and/or detail API response.
 
-If CSS extraction finds 0 items with httpx, it retries with Playwright (the page may need JS rendering).
+The method return shape is a 7-tuple:
 
-The orchestrator then parses each result set through the `ParserAgent`, collects all methods that produced results into a `candidates` dict, and uses an LLM comparison to recommend the best extraction method. The user can accept the recommendation or choose a different method.
+`(css_pages, smart_pages, crawl4ai_pages, universal_scraper_pages, listing_api_pages, claude_pages, script_pages)`
+
+Important preview behavior:
+
+- If CSS finds `0` items after a static fetch, preview retries the page with Playwright.
+- Only methods that produce at least one parsed preview record become candidates.
+- The UI therefore shows only successful methods, not every attempted method.
+- The default UI is sales-facing and labels results as generic options; operator mode reveals the raw method names.
+
+Recommendation flow:
+
+- The orchestrator parses each non-empty preview result into `SellerLead`.
+- Deterministic completeness scoring runs first.
+- If one method wins by a clear margin, it is recommended immediately.
+- If scores are close, the orchestrator can call the LLM to compare the candidate records.
 
 ---
 
@@ -359,6 +394,11 @@ The orchestrator then parses each result set through the `ParserAgent`, collects
 
 The `ParserAgent` normalizes raw scraped data into structured `SellerLead` records.
 
+Parser provider policy:
+
+- OpenAI is the primary parsing provider.
+- Claude is used only as a fallback when enabled and needed.
+
 ### Enrichment Merging
 
 Before sending to the LLM, the parser builds enriched items:
@@ -366,14 +406,20 @@ Before sending to the LLM, the parser builds enriched items:
 1. **Detail page data** — For items with a `detail_link`, the parser extracts fields from the detail page HTML using a cascading strategy (first successful result wins):
    1. **universal-scraper** — If `USE_UNIVERSAL_SCRAPER=true`, calls universal-scraper's AI-powered extraction on the detail page. Generates and caches BS4 extraction code for the page structure.
    2. **ScrapeGraphAI** — If `USE_SMART_SCRAPER_PRIMARY=true`, runs LLM-based extraction on the pre-fetched HTML.
-   3. **CSS selectors** — Uses `detail_page_plan.field_selectors` (or legacy `detail_page_fields`) with BeautifulSoup.
+   3. **CSS selectors** — Uses `detail_page_plan.field_selectors` first (falling back to legacy `detail_page_fields`) with BeautifulSoup.
    4. **Simplified HTML** — As a last resort, sends a truncated (4,000 chars) simplified version of the HTML for the LLM to interpret during batch parsing.
+
+   Detail-page field plans are hardened before use:
+   - metadata-only or shell-like field sets (`meta_*`, `og_*`, `cookie_*`, `map_*`, etc.) are rejected
+   - when a plan looks like page metadata rather than company data, parser falls back to the canonical generic field list
 
 2. **Detail API data** — For items with an `_detail_api_id`, attaches the compact API response JSON (stripped of metadata keys like `_links`, `__typename`, `lastModified`, etc.; truncated long text fields to 1,500 chars; large lists capped at 20 items)
 
 3. **Sub-page data** — For detail pages with followed sub-links (e.g., "Products" tab), appends the simplified sub-page HTML
 
 4. **Structured data** — Page-level JSON-LD, Open Graph, and Microdata signals are attached to each item (if compact representation < 3,000 chars), giving the parser LLM extra context
+
+5. **Flattened structured-source fields** — Fields coming from embedded JSON or listing APIs are preserved aggressively so values like `values.description`, `contact.email`, `contact.phone`, and `website_url` can satisfy core business fields before the parser needs to rely on detail-page HTML.
 
 ### Batch Processing
 
@@ -508,25 +554,55 @@ Uses universal-scraper for AI-powered BeautifulSoup code generation:
 - Results are normalized to the same field text format as CSS and SmartScraper for seamless integration with the parser
 - Available for listing page preview, full extraction, and detail page enrichment
 
+### Structured Source (`listing_api`)
+
+Uses machine-readable listing data instead of relying on HTML-only extraction:
+
+- Detects embedded JSON blobs in rendered HTML deterministically
+- Falls back to intercepted listing APIs when the page loads data in the background
+- Flattens nested structured fields so the parser can use them directly
+- Often provides the cleanest source for `name`, `website`, `description`, `email`, and `phone`
+
+### Claude (Fallback Extraction)
+
+Uses Azure AI Foundry Claude Opus 4.6 for difficult pages:
+
+- Enabled via `USE_CLAUDE_EXTRACTION=true`
+- Used in preview and in guarded fallback paths
+- Subject to fallback-only policy and circuit-breaker controls
+
+### Generated Script (`script`)
+
+Uses Claude to generate a BS4 extraction script and executes it inside the crawler:
+
+- Enabled via `USE_SCRIPT_EXTRACTION=true`
+- Available in preview and full-run method selection
+- Separate standalone script-generation endpoints are gated by `ALLOW_GENERATED_SCRIPT_EXECUTION`
+
 ### Multi-Method Preview Comparison
 
-During preview, up to four methods run on the same page. The orchestrator collects all methods that produced results into a `candidates` dict and uses an LLM comparison call to recommend the best method based on:
+During preview, up to seven methods can run on the same page. The orchestrator collects only the methods that produced results into a `candidates` dict and recommends the best method based on:
 - Completeness (non-null fields)
 - Accuracy (clean values)
 - Coverage (useful information)
 
-The comparison is dynamic — it works with any combination of 2, 3, or 4 methods (e.g., if Crawl4AI or universal-scraper is disabled or fails, it falls back to fewer-way comparisons). If only one method produces results, it's selected automatically without an LLM call.
+The comparison is dynamic — it works with any successful subset of the enabled methods. If only one method produces results, it is selected automatically without an LLM call. If multiple methods succeed, deterministic scoring runs first and the LLM comparison is used only when candidates are close.
 
 ---
 
 ## 9. Detail Page Enrichment
 
-### Four Approaches
+### Structured-Source-First Approach
 
-1. **Detail Page HTML** — Follow a link to each item's profile page, extract fields via Crawl4AI, universal-scraper, CSS, or AI
-2. **Detail API Interception** — Click a JS-only button, capture the XHR response, template the API URL
-3. **Sub-Links** — Follow links on detail pages (e.g., "Products", "Contact") for additional data
-4. **universal-scraper Detail Extraction** — Use universal-scraper's AI-powered extraction on the detail page HTML (generates and caches BS4 code for the page structure)
+The enrichment order is intentionally not "HTML detail page first" anymore. The system prefers the most authoritative source it can find:
+
+1. **Structured listing source** — embedded JSON or intercepted listing APIs that already contain business fields.
+2. **Detail API data** — direct replay of a discovered detail API when available.
+3. **Detail API interception fallback** — if direct replay returns `4xx` or empty data, the browser can navigate to the detail link and capture the JSON response emitted by that page.
+4. **Detail Page HTML** — follow a real profile page only when it appears to contain company data rather than a map/floorplan/meta shell.
+5. **Sub-Links** — follow links on detail pages (e.g. `Products`, `Contact`) for additional data.
+
+Shell-like detail pages are rejected when they mostly expose map metadata, cookie text, attribution text, or other non-company fields.
 
 ### Detail Page Fetching
 
@@ -552,19 +628,18 @@ Detail pages are fetched in batches of 10. Between batches, the cancel event is 
 
 ### API Interception Flow
 
-1. Navigate to listing page with Playwright
-2. Find the first item container
-3. Find the detail button within it
-4. Dismiss consent overlays
-5. Clear network captures
-6. Click the button (JS `el.click()` for reliability)
-7. Wait for network idle + 2s buffer
-8. Score all captured JSON responses:
+1. Navigate to listing page or a sample detail link with Playwright.
+2. Clear prior network captures and dismiss consent overlays.
+3. Trigger the detail action:
+   - click a JS-only detail button, or
+   - open a real detail link when the page emits JSON after navigation
+4. Wait for network idle plus a buffer.
+5. Score all captured JSON responses:
    - **Penalty:** URLs containing noise fragments (analytics, tracking, chat, cookie, etc.)
    - **Bonus:** Response keys matching detail data patterns (name, address, phone, etc.)
    - **Bonus:** URL containing keywords like "seller", "profile", "detail"
-9. Select the highest-scoring response
-10. LLM derives the URL template (replacing the specific ID with `{id}`) and the CSS selector + regex to extract item IDs from the listing page
+6. Select the highest-scoring response.
+7. Derive the URL template (replacing the specific ID with `{id}`) and the selector/regex needed to extract stable IDs from the listing page.
 
 ### API Detail Fetching
 
@@ -572,6 +647,8 @@ For JS-rendered sites, API calls use **Playwright's browser context** (same sess
 1. Navigate to the listing page to establish session
 2. Use `fetch()` inside the browser context with `credentials: "include"`
 3. This ensures auth tokens and cookies are automatically included
+
+If direct replay still returns `4xx` or empty data, the crawler falls back to navigation-based interception per item and caches those results by item ID or detail URL.
 
 For static sites, `httpx` is used with browser-like headers and a `Referer` header.
 
@@ -665,8 +742,8 @@ USE_UNIVERSAL_SCRAPER=true             # Enable universal-scraper for AI-powered
 │     Flag: USE_UNIVERSAL_SCRAPER                                     │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Orchestrator.run_preview()                                         │
-│     Includes Crawl4AI and universal-scraper results in comparison   │
-│     Dynamic N-way LLM comparison (2, 3, or 4 methods)              │
+│     Includes all successful preview methods in comparison           │
+│     Deterministic scoring first; LLM comparison only when close     │
 │     No separate flags — follows respective enable flags             │
 └─────────────────────────────────────────────────────────────────────┘
 ```

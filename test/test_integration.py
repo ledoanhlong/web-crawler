@@ -13,9 +13,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.agents.planner_agent import _detail_plan_looks_like_shell
 from app.agents.parser_agent import ParserAgent
 from app.agents.scraper_agent import EnrichResult, ScraperAgent
 from app.models.schemas import (
+    DetailApiPlan,
     DetailPagePlan,
     ExtractionMethod,
     PageData,
@@ -937,7 +939,7 @@ class TestPreviewDualDetailSharing:
                         result = await scraper.scrape_preview_dual(plan)
 
                 # All methods should have received the detail_link (shared from CSS)
-                css_pages, smart_pages, crawl4ai_pages, us_pages, _, _ = result
+                css_pages, smart_pages, crawl4ai_pages, us_pages, _, _, _ = result
 
                 # Verify the calls to _enrich_detail_pages got items with detail_link
                 for call_items in enrich_calls:
@@ -1087,3 +1089,97 @@ class TestDetailExtractionCssReality:
         )
         result = ParserAgent._extract_detail_fields_css(html, plan)
         assert "category: Electronics" in result
+
+
+class TestDetailShellValidation:
+    def test_rejects_floorplan_meta_shell(self):
+        detail_plan = DetailPagePlan(
+            field_selectors={
+                "meta_description": "meta[name='description']",
+                "map_version": ".map-version",
+                "cookie_banner_text": ".cookie-banner",
+            }
+        )
+
+        assert _detail_plan_looks_like_shell(
+            "https://example.com/floorplan?action=showExhibitor&actionItem=3043124&_event=beauty2026",
+            "<html><body>Floorplan legend hall map</body></html>",
+            detail_plan,
+        )
+
+
+class TestDetailApiFallbacks:
+    @pytest.mark.asyncio
+    async def test_floorplan_links_are_not_fetched_as_html_when_detail_api_exists(self):
+        scraper = ScraperAgent()
+        plan = ScrapingPlan(
+            url="https://example.com/exhibitors",
+            requires_javascript=False,
+            pagination=PaginationStrategy.NONE,
+            target=_make_target(detail_link_selector=None),
+            detail_api_plan=DetailApiPlan(
+                api_url_template="https://example.com/api/exhibitors/{id}/profile",
+                id_selector="a.hall-map",
+                id_attribute="href",
+            ),
+        )
+        pages = [
+            PageData(
+                url=plan.url,
+                items=[
+                    {
+                        "name": "Acme Corp",
+                        "detail_link": "https://example.com/floorplan?action=showExhibitor&actionItem=3043124&_event=beauty2026",
+                    }
+                ],
+            )
+        ]
+
+        with patch("app.agents.scraper_agent.fetch_pages", new_callable=AsyncMock) as mock_fetch_pages:
+            result = await scraper._enrich_detail_pages(pages, plan)
+
+        mock_fetch_pages.assert_not_called()
+        assert result.pages[0].items[0]["detail_link"].startswith("https://example.com/floorplan")
+        assert result.pages[0].detail_pages == {}
+
+    @pytest.mark.asyncio
+    async def test_navigation_fallback_is_used_when_direct_detail_api_fetch_fails(self):
+        scraper = ScraperAgent()
+        plan = ScrapingPlan(
+            url="https://example.com/exhibitors",
+            requires_javascript=True,
+            pagination=PaginationStrategy.NONE,
+            target=_make_target(detail_link_selector=None),
+            detail_api_plan=DetailApiPlan(
+                api_url_template="https://example.com/api/exhibitors/{id}/profile",
+                id_selector="a.hall-map",
+                id_attribute="href",
+            ),
+        )
+        pages = [
+            PageData(
+                url=plan.url,
+                items=[
+                    {
+                        "name": "Acme Corp",
+                        "_detail_api_id": "beauty2026.3043124",
+                        "detail_link": "https://example.com/floorplan?action=showExhibitor&actionItem=3043124&_event=beauty2026",
+                    }
+                ],
+            )
+        ]
+
+        with (
+            patch.object(scraper, "_fetch_detail_apis_via_browser", new_callable=AsyncMock, return_value={}) as mock_direct,
+            patch.object(
+                scraper,
+                "_fetch_detail_apis_via_navigation",
+                new_callable=AsyncMock,
+                return_value={"beauty2026.3043124": {"email": "info@acme.com"}},
+            ) as mock_nav,
+        ):
+            enriched = await scraper._enrich_detail_api(pages, plan)
+
+        mock_direct.assert_called_once()
+        mock_nav.assert_called_once()
+        assert enriched[0].detail_api_responses["beauty2026.3043124"]["email"] == "info@acme.com"

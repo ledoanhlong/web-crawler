@@ -10,6 +10,7 @@ multi-URL / script-generation features.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from functools import lru_cache
 
@@ -21,6 +22,29 @@ log = get_logger(__name__)
 # Maximum HTML size (chars) to feed into the LLM.
 # Large pages cause token overflow / timeouts.
 _MAX_HTML_CHARS = 100_000
+
+
+def _flatten_item(raw: dict) -> dict[str, str | None]:
+    """Flatten a nested dict into dot-notation string-value keys.
+
+    ``{"contact": {"email": "x"}}`` → ``{"contact.email": "x"}``
+    """
+    flat: dict[str, str | None] = {}
+
+    def _walk(d: dict, prefix: str = "") -> None:
+        for k, v in d.items():
+            key = f"{prefix}.{k}" if prefix else k
+            if v is None:
+                flat[key] = None
+            elif isinstance(v, dict):
+                _walk(v, key)
+            elif isinstance(v, list):
+                flat[key] = json.dumps(v, ensure_ascii=False)
+            else:
+                flat[key] = str(v)
+
+    _walk(raw)
+    return flat
 
 
 @lru_cache(maxsize=1)
@@ -134,8 +158,7 @@ async def smart_extract_items(
 
     for raw in raw_items:
         if isinstance(raw, dict):
-            item = {k: str(v) if v is not None else None for k, v in raw.items()}
-            items.append(item)
+            items.append(_flatten_item(raw))
 
     log.info("LLM extraction: extracted %d items", len(items))
     return items
@@ -277,8 +300,7 @@ async def smart_extract_items_from_markdown(
 
     for raw in raw_items:
         if isinstance(raw, dict):
-            item = {k: str(v) if v is not None else None for k, v in raw.items()}
-            items.append(item)
+            items.append(_flatten_item(raw))
 
     log.info("LLM markdown extraction: extracted %d items", len(items))
     return items

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "web-crawler-agent"
 version = "0.1.0"
@@ -17,6 +21,8 @@ dependencies = [
     "scrapegraphai>=1.0.0",
     "langchain-openai>=0.3.0",
     "scrapy>=2.11.0",
+    "crawl4ai>=0.4.0",
+    "universal-scraper>=0.1.0",
 ]
 
 [project.optional-dependencies]

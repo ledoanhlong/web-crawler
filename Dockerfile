@@ -9,8 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+# Install Python dependencies (cached layer — only rebuilds when requirements change)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright browsers (Chromium only to keep image small)
 RUN playwright install chromium

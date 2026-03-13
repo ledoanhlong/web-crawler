@@ -10,6 +10,10 @@ import pytest
 
 from app.agents.scraper_agent import ScraperAgent
 from app.models.schemas import DetailApiPlan, ScrapingTarget
+from app.utils.structured_source import (
+    detect_embedded_structured_source,
+    extract_structured_items_from_html,
+)
 
 from .conftest import SAMPLE_EMPTY_HTML, SAMPLE_LISTING_HTML
 
@@ -74,6 +78,29 @@ class TestExtractItems:
         assert items[0]["_detail_api_id"] == "101"
         assert items[1]["_detail_api_id"] == "102"
         assert items[2]["_detail_api_id"] == "103"
+
+    def test_compound_api_id_extraction_from_floorplan_href(self, sample_target: ScrapingTarget):
+        detail_api = DetailApiPlan(
+            api_url_template="https://example.com/api/{id}/profile",
+            id_selector="a.hall-map",
+            id_attribute="href",
+        )
+        html = """
+        <html><body>
+        <div class="exhibitor-card">
+          <h3 class="company-name">Acme Corp</h3>
+          <span class="country">Germany</span>
+          <span class="city">Berlin</span>
+          <span class="booth">Hall 5</span>
+          <a class="detail-link" href="/exhibitors/acme-corp">View Details</a>
+          <a class="hall-map" href="/floorplan?action=showExhibitor&actionItem=3043124&_event=beauty2026">Map</a>
+        </div>
+        </body></html>
+        """
+
+        items = self.scraper._extract_items(html, sample_target, detail_api)
+
+        assert items[0]["_detail_api_id"] == "beauty2026.3043124"
 
     def test_empty_selector_skipped(self, sample_target_with_empty_selectors: ScrapingTarget):
         """Empty and whitespace-only CSS selectors are skipped gracefully."""
@@ -195,3 +222,31 @@ class TestResolvePageUrls:
         urls = self.scraper._resolve_page_urls(sample_plan)
         assert len(urls) == 3
         assert urls[0] == "https://example.com/exhibitors?page=1"
+
+
+class TestStructuredSourceDetection:
+    def test_detects_embedded_json_results_and_flattens_values(self):
+        html = """
+        <html><body>
+          <wcl-ogz-data-source-hubdb-exhibitors data-info='{"results":[
+            {"id":"1","path":"/acme","values":{"name":"Acme Corp","description":"Widget maker","website":"https://acme.com"}},
+            {"id":"2","path":"/beta","values":{"name":"Beta GmbH","description":"Industrial parts","website":"https://beta.example"}}
+          ]}'></wcl-ogz-data-source-hubdb-exhibitors>
+        </body></html>
+        """
+
+        plan = detect_embedded_structured_source(html, source_url="https://example.com/exhibitors")
+
+        assert plan is not None
+        assert plan.source_kind == "embedded_html"
+        assert plan.html_attribute == "data-info"
+        assert plan.items_json_path == "results"
+        assert plan.total_count == 2
+
+        items = extract_structured_items_from_html(html, plan)
+        assert len(items) == 2
+        assert items[0]["id"] == "1"
+        assert items[0]["path"] == "/acme"
+        assert items[0]["values.name"] == "Acme Corp"
+        assert items[0]["values.description"] == "Widget maker"
+        assert items[0]["values.website"] == "https://acme.com"
