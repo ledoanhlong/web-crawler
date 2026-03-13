@@ -3,35 +3,33 @@
 This project is deployed as two separate services:
 
 - **Frontend** — static HTML served from **Vercel** (free, global CDN)
-- **Backend** — Docker container on **Azure Container Apps**, built automatically by GitHub Actions and stored on **GitHub Container Registry** (ghcr.io)
+- **Backend** — Docker container on **Render** (free tier, auto-deploys from GitHub)
 
 ```
-  git push
+  git push main
+     │
+     ├──────────────────┐
+     ▼                  ▼
+┌──────────┐     ┌──────────────┐
+│  Render  │     │    Vercel    │
+│ (backend)│     │  (frontend)  │
+│ Dockerfile│    │  index.html  │
+└────┬─────┘     └──────┬───────┘
+     │                  │
+     │    HTTPS         │
+     │ <────────────────┘
+     │  POST/GET /api/v1/*
      │
      ▼
-┌─────────────────┐    docker image    ┌──────────────┐
-│  GitHub Actions  │ ───────────────>  │   ghcr.io    │
-│  (builds image)  │                   │  (registry)  │
-└─────────────────┘                    └──────┬───────┘
-                                              │ pulls image
-┌──────────────┐       HTTPS          ┌───────▼────────────────┐
-│              │ ────────────────────> │                        │
-│  Vercel CDN  │  POST/GET /api/v1/*  │  Azure Container Apps  │
-│  (frontend)  │ <─────────────────── │  (backend + Chromium)  │
-│              │                      │                        │
-└──────────────┘                      └────────┬───────────────┘
-   index.html                                  │
-   polls job status                            │  Azure OpenAI
-   every 1-2s                                  ▼
-                                      ┌────────────────────────┐
-                                      │  Model Providers        │
-                                      │  - OpenAI (gpt-5.2)     │
-                                      │  - Vision (gpt-4o)      │
-                                      │  - Claude Opus 4.6      │
-                                      └────────────────────────┘
+┌────────────────────────┐
+│  Model Providers        │
+│  - OpenAI (gpt-5.2)     │
+│  - Vision (gpt-4o)      │
+│  - Claude Opus 4.6      │
+└────────────────────────┘
 ```
 
-**How it works:** You push code to GitHub → GitHub Actions automatically builds a Docker image and pushes it to ghcr.io → Azure Container Apps pulls and runs it. No Docker or CLI needed on your machine.
+**How it works:** You push code to GitHub → Render automatically builds the Docker image and deploys it. Vercel does the same for the frontend. No Docker or CLI needed on your machine.
 
 ---
 
@@ -39,17 +37,15 @@ This project is deployed as two separate services:
 
 | Tool | Purpose |
 |------|---------|
-| GitHub account | Code hosting, container registry (ghcr.io), CI/CD (Actions) |
-| Azure subscription | Container Apps hosting |
-| Vercel account | Frontend hosting (free tier works) |
+| GitHub account | Code hosting, triggers auto-deploy on both Render and Vercel |
+| Render account | Backend hosting ([render.com](https://render.com), free tier works) |
+| Vercel account | Frontend hosting ([vercel.com](https://vercel.com), free tier works) |
 
-No Docker, Azure CLI, or other tools needed on your local machine.
+No Docker, CLI tools, or other software needed on your local machine.
 
 ---
 
-## Step 1 — Set up GitHub Actions (automatic image builds)
-
-### 1.1 Push your code to GitHub
+## Step 1 — Push your code to GitHub
 
 ```bash
 git add -A
@@ -59,130 +55,65 @@ git push origin main
 
 > **Security:** The `.env` file is in `.gitignore` and `.dockerignore` — your API keys will NOT be uploaded to GitHub or baked into the Docker image.
 
-### 1.2 Verify the build
-
-1. Go to your GitHub repo → **Actions** tab
-2. You should see the **"Build & Deploy"** workflow running (triggered by the push to `main`)
-3. Wait for it to complete (first build takes ~5-10 min; subsequent builds are faster due to caching)
-4. Once green, your image is at `ghcr.io/<your-github-username>/web-crawler:latest`
-
-### 1.3 Make the package public (recommended)
-
-By default ghcr.io packages on private repos are private. To let Azure pull without authentication:
-
-1. Go to your GitHub profile → **Packages** tab
-2. Click on the `web-crawler` package
-3. **Package settings** → **Danger Zone** → **Change visibility** → **Public**
-
-> If you prefer to keep it private, you'll need to add registry credentials when creating the Container App (see step 2.4 note).
-
 ---
 
-## Step 2 — Deploy the Backend via Azure Portal
+## Step 2 — Deploy the Backend on Render
 
-### 2.1 Create a Resource Group
+### 2.1 Create a new Web Service
 
-1. Go to [Azure Portal](https://portal.azure.com)
-2. Search for **"Resource groups"** → click **+ Create**
-3. **Resource group name:** `web-crawler-rg`
-4. **Region:** your preferred region (e.g. `East US`)
-5. Click **Review + create** → **Create**
+1. Go to [render.com/new](https://dashboard.render.com/select-repo?type=web) and sign in
+2. Click **New Web Service**
+3. Connect your GitHub account and select your `web-crawler` repository
+4. Configure:
 
-### 2.2 Create a Container Apps Environment
+   | Setting | Value |
+   |---------|-------|
+   | **Name** | `web-crawler-api` |
+   | **Region** | Pick the closest to you |
+   | **Branch** | `main` |
+   | **Runtime** | `Docker` (Render auto-detects the Dockerfile) |
+   | **Instance Type** | `Free` |
 
-1. Search for **"Container Apps Environments"** → click **+ Create**
-2. Set:
-   - **Resource group:** `web-crawler-rg`
-   - **Name:** `web-crawler-env`
-   - **Region:** same region
-   - **Plan type:** `Consumption only`
-3. Click **Review + create** → **Create**
+### 2.2 Set environment variables
 
-### 2.3 (Recommended) Create an Azure Files volume for persistent job storage
+Scroll down to **Environment Variables** and add each:
 
-Without this, job state is lost when the container restarts or scales to zero.
+| Key | Value |
+|-----|-------|
+| `AZURE_OPENAI_ENDPOINT` | `https://your-resource.openai.azure.com/` |
+| `AZURE_OPENAI_API_KEY` | your key |
+| `AZURE_OPENAI_API_VERSION` | `2025-04-01-preview` |
+| `AZURE_OPENAI_DEPLOYMENT` | `gpt-5.2` |
+| `AZURE_VISION_ENDPOINT` | your vision endpoint |
+| `AZURE_VISION_API_KEY` | your vision key |
+| `AZURE_VISION_DEPLOYMENT` | `gpt-4o` |
+| `USE_VISION_PLANNING` | `true` |
+| `AZURE_CLAUDE_ENDPOINT` | your Claude endpoint |
+| `AZURE_CLAUDE_API_KEY` | your Claude key |
+| `AZURE_CLAUDE_DEPLOYMENT` | `claude-opus-4-6` |
+| `USE_CLAUDE_EXTRACTION` | `true` |
+| `CLAUDE_FALLBACK_ONLY` | `true` |
+| `CLAUDE_CIRCUIT_BREAKER_ENABLED` | `true` |
+| `ALLOWED_ORIGINS` | `["*"]` (update after Vercel deploy) |
+| `PLAYWRIGHT_HEADLESS` | `true` |
+| `LOG_LEVEL` | `INFO` |
 
-1. Search for **"Storage accounts"** → click **+ Create**
-   - **Resource group:** `web-crawler-rg`
-   - **Name:** e.g. `webcrawlerstorage` (globally unique)
-   - **Region:** same region
-   - **Performance:** `Standard`
-   - **Redundancy:** `LRS`
-   - Click **Review + create** → **Create**
-2. Go into your storage account → **Data storage** → **File shares**
-   - **+ File share** → Name: `crawler-output` → Tier: `Transaction optimized` → Create
-3. Go to your Container Apps Environment (`web-crawler-env`) → **Azure Files** under Settings
-   - Click **+ Add**
-   - **Name:** `output-volume`
-   - **Storage account name:** `webcrawlerstorage`
-   - **Storage account key:** (from the storage account → **Access keys**)
-   - **File share:** `crawler-output`
-   - Click **Add**
+### 2.3 Deploy
 
-### 2.4 Create the Container App
+Click **Create Web Service**. Render will:
+1. Clone your repo
+2. Build the Docker image (first build takes ~5-10 min)
+3. Start the container
+4. Give you a public URL like `https://web-crawler-api.onrender.com`
 
-1. Search for **"Container Apps"** → click **+ Create**
-2. **Basics** tab:
-   - **Resource group:** `web-crawler-rg`
-   - **Container app name:** `web-crawler-api`
-   - **Container Apps Environment:** `web-crawler-env`
-3. **Container** tab:
-   - Uncheck **"Use quickstart image"**
-   - **Image source:** select **Docker Hub or other registries**
-   - **Image and tag:** `ghcr.io/<your-github-username>/web-crawler:latest`
-   - **CPU:** `2` cores
-   - **Memory:** `4` GB
+### 2.4 Verify
 
-   > **Private ghcr.io image?** If you didn't make the package public in step 1.3, click **Add registry credentials**: Server = `ghcr.io`, Username = your GitHub username, Password = a GitHub Personal Access Token with `read:packages` scope.
+Open `https://<your-render-url>/health` in a browser. You should see:
+```json
+{"status":"ok","providers":{...}}
+```
 
-4. **Environment variables** — click **+ Add** for each:
-
-   | Name | Source | Value |
-   |------|--------|-------|
-   | `AZURE_OPENAI_ENDPOINT` | Manual | `https://your-resource.openai.azure.com/` |
-   | `AZURE_OPENAI_API_KEY` | Manual | your key |
-   | `AZURE_OPENAI_API_VERSION` | Manual | `2025-04-01-preview` |
-   | `AZURE_OPENAI_DEPLOYMENT` | Manual | `gpt-5.2` |
-   | `AZURE_VISION_ENDPOINT` | Manual | your vision endpoint |
-   | `AZURE_VISION_API_KEY` | Manual | your vision key |
-   | `AZURE_VISION_DEPLOYMENT` | Manual | `gpt-4o` |
-   | `USE_VISION_PLANNING` | Manual | `true` |
-   | `AZURE_CLAUDE_ENDPOINT` | Manual | your Claude endpoint |
-   | `AZURE_CLAUDE_API_KEY` | Manual | your Claude key |
-   | `AZURE_CLAUDE_DEPLOYMENT` | Manual | `claude-opus-4-6` |
-   | `USE_CLAUDE_EXTRACTION` | Manual | `true` |
-   | `CLAUDE_FALLBACK_ONLY` | Manual | `true` |
-   | `CLAUDE_CIRCUIT_BREAKER_ENABLED` | Manual | `true` |
-   | `ALLOWED_ORIGINS` | Manual | `["*"]` (update after Vercel deploy) |
-   | `PLAYWRIGHT_HEADLESS` | Manual | `true` |
-   | `LOG_LEVEL` | Manual | `INFO` |
-
-5. **Volumes** tab (if you created Azure Files in step 2.3):
-   - Click **+ Add volume**
-   - **Volume type:** `Azure file volume`
-   - **Name:** `output-volume`
-   - **File share name:** `crawler-output`
-   - Back on the **Container** tab → **Volume mounts** section:
-     - **Volume name:** `output-volume`
-     - **Mount path:** `/app/output`
-
-6. **Ingress** tab:
-   - **Ingress:** `Enabled`
-   - **Ingress traffic:** `Accepting traffic from anywhere`
-   - **Ingress type:** `HTTP`
-   - **Target port:** `8000`
-
-7. **Scaling** tab:
-   - **Min replicas:** `0` (scales to zero when idle)
-   - **Max replicas:** `2`
-
-8. Click **Review + create** → **Create**
-
-### 2.5 Get your backend URL
-
-1. Go to your Container App → **Overview** page
-2. Copy the **Application Url** (e.g. `https://web-crawler-api.nicedesert-abc123.eastus.azurecontainerapps.io`)
-3. Open `https://<your-backend-url>/health` in a browser to verify
+> **Note:** On the free tier, Render sleeps the service after 15 min of inactivity. The first request after sleep takes ~1-2 min to wake up (Playwright/Chromium initialization). Subsequent requests are fast.
 
 ---
 
@@ -201,7 +132,7 @@ In the Vercel project settings → Environment Variables, add:
 
 | Variable | Value | Example |
 |----------|-------|---------|
-| `VITE_API_BASE_URL` | Your Azure backend URL | `https://web-crawler-api.nicedesert-abc123.eastus.azurecontainerapps.io` |
+| `VITE_API_BASE_URL` | Your Render backend URL | `https://web-crawler-api.onrender.com` |
 
 ### 3.3 Deploy
 
@@ -220,10 +151,10 @@ Open your Vercel URL (e.g. `https://my-crawler.vercel.app`) — you should see t
 
 After both are deployed, update the backend's CORS settings so it accepts requests from your Vercel domain.
 
-1. Go to Azure Portal → Container Apps → your app → **Containers** → **Environment variables**
+1. Go to Render dashboard → your service → **Environment**
 2. Update `ALLOWED_ORIGINS` to: `["https://my-crawler.vercel.app","http://localhost:8000"]`
 3. Add `FRONTEND_URL` = `https://my-crawler.vercel.app`
-4. Click **Save** (triggers a new revision / restart)
+4. Click **Save Changes** (triggers a redeploy)
 
 > **Important:** `ALLOWED_ORIGINS` must be a JSON array, not comma-separated. E.g. `["https://a.com","https://b.com"]`
 
@@ -237,37 +168,11 @@ After both are deployed, update the backend's CORS settings so it accepts reques
 git push origin main
 ```
 
-GitHub Actions automatically builds a new image and pushes it to ghcr.io. Then either:
-
-- **Manual update:** Azure Portal → Container App → **Revisions** → **Create new revision** → the image tag `latest` already points to the new build, just save the revision
-- **Automatic deploy:** Set up the `AZURE_CREDENTIALS` secret in GitHub to enable the auto-deploy step (see Optional Setup below)
+Render automatically rebuilds and redeploys when you push to `main`.
 
 ### Frontend — auto-deploys on push
 
-If connected to GitHub, Vercel redeploys automatically when you push to the main branch.
-
----
-
-## Optional: Enable auto-deploy to Azure from GitHub Actions
-
-The workflow includes a deploy step that's skipped unless you configure Azure credentials. To enable it:
-
-1. In Azure Portal, open **Cloud Shell** (top toolbar icon) and run:
-   ```bash
-   az ad sp create-for-rbac \
-     --name "github-actions-webcrawler" \
-     --role contributor \
-     --scopes /subscriptions/<your-subscription-id>/resourceGroups/web-crawler-rg \
-     --json-auth
-   ```
-   Copy the entire JSON output.
-
-2. In your GitHub repo → **Settings** → **Secrets and variables** → **Actions**:
-   - Add secret `AZURE_CREDENTIALS` = the JSON from step 1
-   - Add variable `CONTAINER_APP_NAME` = `web-crawler-api`
-   - Add variable `RESOURCE_GROUP` = `web-crawler-rg`
-
-Now every push to `main` will automatically update your Container App with the new image.
+Vercel also redeploys automatically when you push to `main`.
 
 ---
 
@@ -286,7 +191,7 @@ Now every push to `main` will automatically update your Container App with the n
 |----------|---------|-------------|
 | `AZURE_OPENAI_API_VERSION` | `2025-04-01-preview` | API version |
 | `AZURE_OPENAI_DEPLOYMENT` | `gpt-5.2` | Model deployment name |
-| `AZURE_VISION_ENDPOINT` | `""` | Vision endpoint (GPT-4o). Can reuse OpenAI endpoint |
+| `AZURE_VISION_ENDPOINT` | `""` | Vision endpoint (GPT-4o) |
 | `AZURE_VISION_API_KEY` | `""` | Vision API key |
 | `AZURE_VISION_API_VERSION` | `2025-04-01-preview` | Vision API version |
 | `AZURE_VISION_DEPLOYMENT` | `gpt-4o` | Vision deployment name |
@@ -330,39 +235,45 @@ When no `VITE_API_BASE_URL` is set, the frontend falls back to `window.location.
 
 ## Cost Estimate
 
-| Service | Tier | Approximate Cost |
-|---------|------|-----------------|
-| Azure Container Apps | Consumption (min-replicas=0) | ~$0 idle, ~$0.06/hr when active |
-| Azure Files | Pay-as-you-go, LRS | ~$0.01/month (tiny JSON files) |
-| Azure OpenAI | Pay-as-you-go | Depends on usage (~$0.01-0.10/crawl) |
-| GitHub Container Registry | Free (public) / 500MB free (private) | $0 |
-| GitHub Actions | 2,000 min/month free | $0 |
+| Service | Tier | Cost |
+|---------|------|------|
+| Render | Free (750 hrs/month, sleeps after 15 min) | $0 |
 | Vercel | Hobby (free) | $0 |
+| Azure OpenAI | Pay-as-you-go | ~$0.01-0.10 per crawl |
 
-**Total idle cost: ~$0/month** (no ACR needed). Active cost depends on usage.
+**Total hosting cost: $0/month.** You only pay for Azure OpenAI API usage.
+
+---
+
+## Free Tier Limitations
+
+| Limitation | Impact | Upgrade path |
+|------------|--------|-------------|
+| **512 MB RAM** | Playwright uses ~300MB, leaving limited headroom. Large scrapes may hit OOM. | Render Starter ($7/month) → 2GB RAM |
+| **Sleeps after 15 min idle** | First request after sleep takes ~1-2 min (cold start). | Render Starter → always on |
+| **No persistent disk** | Job history lost when service sleeps or redeploys. | Render Starter + Persistent Disk ($0.25/GB/month) |
+| **Auto-deploy on push** | Every push to `main` triggers a rebuild (~5-10 min downtime). | Use a `production` branch for controlled deploys |
 
 ---
 
 ## Troubleshooting
 
-### GitHub Actions build fails
+### Render build fails
 
-Go to your repo → **Actions** tab → click the failed run → expand the failed step to see logs.
+Go to Render dashboard → your service → **Events** tab to see build logs.
 
 Common issues:
 - Dockerfile syntax error
 - Package install failure (check `requirements.txt`)
-- ghcr.io permission issue — ensure the workflow has `packages: write` permission
+- Build timeout (free tier has a 30 min build limit — usually enough)
 
-### Backend container won't start
+### Backend won't start / crashes on startup
 
-In Azure Portal → Container Apps → your app → **Monitoring** → **Log stream** to see live logs.
+Check Render dashboard → **Logs** tab.
 
 Common issues:
 - Missing `AZURE_OPENAI_ENDPOINT` or `AZURE_OPENAI_API_KEY` — crashes with `ValidationError`
 - `ALLOWED_ORIGINS` set as comma-separated instead of JSON array — crashes with `ValidationError`
-- Playwright browser not installed — Dockerfile must have `playwright install chromium`
-- Image pull failure — check that ghcr.io package is public or registry credentials are configured
 
 ### `/health` returns `degraded`
 
@@ -378,15 +289,17 @@ Common causes:
 1. Open browser DevTools → Console
 2. Verify `VITE_API_BASE_URL` was set in Vercel before deploying
 3. Check that `ALLOWED_ORIGINS` on the backend includes your Vercel URL (must be a JSON array)
-4. Test the backend directly: open `https://<backend-url>/health` in a browser
+4. Test the backend directly: open `https://<your-render-url>/health` in a browser
 
-### Crawl jobs disappear after container restart
+### Backend is slow / timing out
 
-If you set up Azure Files (step 2.3), jobs persist across restarts. If not, container scale-to-zero loses all job state.
+On free tier, the service sleeps after 15 min of inactivity. The first request wakes it up, which takes ~1-2 min. If the frontend times out waiting:
+- The frontend polls every 1-2 seconds, so it should recover once the backend is awake
+- If scrapes are hitting OOM (512MB limit), reduce `MAX_CONCURRENT_REQUESTS` to `2`
 
 ### Container runs out of memory
 
-Playwright + Chromium uses ~300MB. With 4GB allocated, you can run ~3 concurrent browser instances. If you hit OOM:
-- Reduce `MAX_CONCURRENT_REQUESTS`
-- Increase container memory via Azure Portal
+Playwright + Chromium uses ~300MB. With 512MB on free tier, you can only run 1 browser instance. If you hit OOM:
+- Set `MAX_CONCURRENT_REQUESTS=2` in Render environment variables
+- Upgrade to Render Starter ($7/month) for 2GB RAM
 - Use a remote browser service (`PLAYWRIGHT_WS_ENDPOINT`)
