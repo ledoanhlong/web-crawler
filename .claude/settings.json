@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r \"api\\\\|http\\\\|localhost\\\\|0\\\\.0\\\\.0\\\\.0\" /c/Users/ledoa/Downloads/web-crawler/app/frontend/ --include=*.html --include=*.js --include=*.css)",
+      "Bash(find /c/Users/ledoa/Downloads/web-crawler -maxdepth 2 -type f \\\\\\(-name *.toml -o -name *.cfg -o -name Makefile -o -name *.sh \\\\\\))",
+      "Bash(find /c/Users/ledoa/Downloads/web-crawler -maxdepth 2 -type f -name .env* -o -name config.py -o -name settings.py)",
+      "Bash(find /c/Users/ledoa/Downloads/web-crawler -name .env* -o -name *.env*)",
+      "Bash(git log:*)",
+      "Bash(find /c/Users/ledoa/Downloads/web-crawler -maxdepth 3 -type f \\\\\\(-name .env* -o -name *.toml -o -name *.sh -o -name Makefile \\\\\\))",
+      "Bash(rm \"c:/Users/ledoa/Downloads/web-crawler/Dockerfile\")",
+      "Bash(rm \"c:/Users/ledoa/Downloads/web-crawler/.dockerignore\")",
+      "Bash(rm \"c:/Users/ledoa/Downloads/web-crawler/frontend/vercel.json\")",
+      "Bash(rm \"c:/Users/ledoa/Downloads/web-crawler/frontend/inject-api-url.js\")",
+      "Bash(rm \"c:/Users/ledoa/Downloads/web-crawler/.github/workflows/nightly-smoke.yml\")",
+      "Bash(rm -rf \"c:/Users/ledoa/Downloads/web-crawler/deploy\")",
+      "Bash(rm -rf \"c:/Users/ledoa/Downloads/web-crawler/.github\")",
+      "Bash(rm -rf \"c:/Users/ledoa/Downloads/web-crawler/frontend\")",
+      "Bash(python -c \"from app.config import settings; print\\(''Config OK''\\)\")",
+      "Bash(xargs grep:*)",
+      "Bash(python -c \":*)"
+    ]
+  }
+}

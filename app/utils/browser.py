@@ -398,19 +398,11 @@ async def _dismiss_consent_overlays(page: Page) -> None:
 
 @asynccontextmanager
 async def get_browser() -> AsyncIterator[Browser]:
-    """Yield a Playwright Chromium browser instance.
-
-    Supports both local launch and remote connection via
-    ``PLAYWRIGHT_WS_ENDPOINT`` for cloud deployments (e.g. Browserless).
-    """
+    """Yield a local Playwright Chromium browser instance."""
     pw = await async_playwright().start()
     try:
-        if settings.playwright_ws_endpoint:
-            log.info("Connecting to remote browser: %s", settings.playwright_ws_endpoint)
-            browser = await pw.chromium.connect(settings.playwright_ws_endpoint)
-        else:
-            log.info("Launching local Chromium (headless=%s)", settings.playwright_headless)
-            browser = await pw.chromium.launch(headless=settings.playwright_headless)
+        log.info("Launching local Chromium (headless=%s)", settings.playwright_headless)
+        browser = await pw.chromium.launch(headless=settings.playwright_headless)
         yield browser
         await browser.close()
     finally:

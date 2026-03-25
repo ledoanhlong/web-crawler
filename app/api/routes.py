@@ -32,6 +32,7 @@ from app.models.schemas import TemplateHints
 from app.services.orchestrator import Orchestrator
 from app.services.job_store import job_store
 from app.services.plan_cache import plan_cache
+from app.services.template_store import template_store
 from app.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -599,3 +600,116 @@ async def invalidate_plan_cache(url: str) -> dict:
     """Invalidate the cached plan for a specific URL."""
     found = plan_cache.invalidate(f"https://{url}" if not url.startswith("http") else url)
     return {"invalidated": found}
+
+
+# ---------------------------------------------------------------------------
+# Scrape template endpoints
+# ---------------------------------------------------------------------------
+@router.get("/templates", tags=["templates"])
+async def list_templates() -> list[dict]:
+    """List all saved scrape templates."""
+    return template_store.list_templates()
+
+
+@router.get("/templates/{filename}", tags=["templates"])
+async def get_template(filename: str) -> dict:
+    """Get a template by filename."""
+    tpl = template_store.get(filename)
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return tpl
+
+
+@router.post("/templates/from-job/{job_id}", tags=["templates"])
+async def create_template_from_job(job_id: str, name: str, description: str = "") -> dict:
+    """Save a completed job as a reusable scrape template.
+
+    Query parameters:
+        name: Human-readable name (e.g. "Webwinkelvakdagen 2026")
+        description: Optional notes
+    """
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in (CrawlStatus.COMPLETED, CrawlStatus.PARTIAL):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Can only create templates from completed/partial jobs (current: {job.status.value})",
+        )
+    if not job.plan:
+        raise HTTPException(status_code=400, detail="Job has no plan to save")
+
+    tpl = template_store.save_from_job(job.model_dump(mode="json"), name, description)
+    return tpl
+
+
+@router.post("/templates/{filename}/run", response_model=CrawlJob, status_code=202, tags=["templates"])
+async def run_from_template(
+    filename: str,
+    background_tasks: BackgroundTasks,
+    url_override: str | None = None,
+    max_items: int | None = None,
+) -> CrawlJob:
+    """Start a new crawl using a saved template.
+
+    The template's plan is loaded directly, skipping the planning phase.
+    Optionally override the URL (e.g. next year's edition) or max_items.
+    """
+    tpl = template_store.get(filename)
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    req_data = tpl.get("request", {})
+    target_url = url_override or req_data.get("url", "")
+    if not target_url:
+        raise HTTPException(status_code=400, detail="No URL in template and no url_override provided")
+
+    crawl_req = CrawlRequest(
+        url=target_url,
+        fields_wanted=req_data.get("fields_wanted"),
+        item_description=req_data.get("item_description"),
+        site_notes=req_data.get("site_notes"),
+        pagination_type=req_data.get("pagination_type"),
+        max_items=max_items or req_data.get("max_items"),
+        max_pages=req_data.get("max_pages"),
+        page_type=req_data.get("page_type"),
+        rendering_type=req_data.get("rendering_type"),
+        detail_page_type=req_data.get("detail_page_type"),
+        detail_page_url=req_data.get("detail_page_url"),
+    )
+
+    job = CrawlJob(request=crawl_req)
+
+    # Load the saved plan directly — skip planning phase
+    plan_data = tpl.get("plan")
+    if plan_data:
+        from app.models.schemas import ScrapingPlan
+        plan = ScrapingPlan.model_validate(plan_data)
+        # Update URL if overridden
+        if url_override:
+            plan.url = url_override
+        job.plan = plan
+
+    # Restore the extraction method that worked
+    job.extraction_method = tpl.get("extraction_method")
+
+    _register_job(job)
+
+    if job.plan:
+        # Skip planning, go straight to preview scrape
+        _append_status_timeline(job, CrawlStatus.PLAN_REVIEW, "plan_loaded_from_template")
+        background_tasks.add_task(_run_preview_scrape, job)
+    else:
+        # No plan saved — fall back to normal planning
+        background_tasks.add_task(_run_preview, job)
+
+    return job
+
+
+@router.delete("/templates/{filename}", tags=["templates"])
+async def delete_template(filename: str) -> dict:
+    """Delete a saved template."""
+    found = template_store.delete(filename)
+    if not found:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"deleted": True}

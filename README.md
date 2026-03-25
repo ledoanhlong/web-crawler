@@ -336,25 +336,6 @@ The markdown summary includes hotspot sections for:
 
 For operational guidance, see `docs/RELIABILITY_RUNBOOK.md`.
 
-### Nightly Automation
-
-A GitHub Actions workflow scaffold is included at `.github/workflows/nightly-smoke.yml`.
-
-Before enabling nightly runs, configure repository secrets:
-
-- `AZURE_OPENAI_ENDPOINT`
-- `AZURE_OPENAI_API_KEY`
-- `AZURE_OPENAI_API_VERSION`
-- `AZURE_OPENAI_DEPLOYMENT`
-- `UNIVERSAL_SCRAPER_MODEL` (optional — configures the LLM model used by universal-scraper)
-
-Optional reliability governance automation:
-
-- Set repository variable `AUTO_CREATE_SMOKE_ISSUE=true` to automatically open a GitHub issue when smoke trend checks fail.
-- The issue body includes the generated smoke markdown summary and references `docs/POSTMORTEM_TEMPLATE.md` for follow-up.
-
-Use `docs/POSTMORTEM_TEMPLATE.md` for any hard failure discovered by smoke runs.
-
 ### Code Quality
 
 ```bash

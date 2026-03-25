@@ -1,0 +1,15 @@
+{
+  "id": "static-directory-detail-pages",
+  "name": "Static Directory (Detail Pages)",
+  "description": "For server-rendered directory sites with numbered pagination where each listing item links to a separate detail page with full company/seller information. No JavaScript needed — all data is in the HTML source.",
+  "platform": "static-directory-detail-pages",
+  "default_prompt": "Extract all exhibitor/seller details including company name, contact information, location, product categories, and brands.",
+  "default_fields_wanted": "name, country, city, address, postal_code, website, email, phone, description, product_categories",
+  "hints": {
+    "requires_javascript": false,
+    "pagination": "page_numbers",
+    "has_detail_pages": true,
+    "has_detail_api": false,
+    "notes": "This pattern is common for WordPress-based trade show and exhibition exhibitor directories. The listing page is server-rendered HTML (no SPA/JS framework). Each page shows a grid of exhibitor cards with company name, hall/stand location, and a link to a detail page. Detail pages contain full contact info (address, phone, website), product categories, and hall/stand assignment. Pagination uses numbered page links with a query parameter (e.g. ?av_page=2 or ?page=2). The planner should use httpx (no Playwright needed), look for repeating item cards with anchor-wrapped detail links, and plan to visit each detail page for enrichment."
+  }
+}

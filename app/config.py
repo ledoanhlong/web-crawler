@@ -93,7 +93,6 @@ class Settings(BaseSettings):
 
     # Playwright
     playwright_headless: bool = True
-    playwright_ws_endpoint: str | None = None
 
     # Output
     output_dir: str = "./output"
@@ -124,7 +123,7 @@ class Settings(BaseSettings):
     reliability_quality_enforce: bool = False
 
     # CORS / frontend
-    allowed_origins: list[str] = ["*"]
+    allowed_origins: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
     frontend_url: str = ""
 
     # Logging

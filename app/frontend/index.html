@@ -409,6 +409,15 @@ tr:hover td{background:rgba(108,92,231,.04)}
     <div class="tool-result" id="crawlResult"></div>
   </div>
 
+  <!-- ── Templates Section ─────────────────────────────────────── -->
+  <div class="section-header" id="templatesHeader" style="display:none">
+    <h2>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Saved Templates
+    </h2>
+  </div>
+  <div id="templatesList"></div>
+
   <!-- ── Jobs Section ──────────────────────────────────────────── -->
   <div class="section-header">
     <h2>
@@ -1015,6 +1024,7 @@ function renderJobDetail(j){
         ${canDownload?`<div class="dl-btns">
           ${operatorMode ? `<a href="${API}/crawl/${j.id}/json" class="btn btn-sm btn-outline" download>Download JSON</a>` : ''}
           <a href="${API}/crawl/${j.id}/csv" class="btn btn-sm btn-green" download>Download CSV</a>
+          <button class="btn btn-sm btn-outline" onclick="saveAsTemplate('${j.id}')">Save as Template</button>
         </div>`:''}
       </div>`;
       body += renderTable(recs);
@@ -1681,10 +1691,80 @@ function renderTable(records){
   return html;
 }
 
+/* ── Templates ───────────────────────────────────────────────────── */
+async function loadTemplates(){
+  try{
+    const list = await apiGet('/templates');
+    const header = document.getElementById('templatesHeader');
+    const container = document.getElementById('templatesList');
+    if(!list.length){ header.style.display='none'; container.innerHTML=''; return; }
+    header.style.display='flex';
+    container.innerHTML = list.map(t=>`
+      <div class="card" style="padding:16px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <strong style="font-size:.95rem">${esc(t.name)}</strong>
+            ${t.description?`<span style="color:var(--text2);font-size:.8rem;margin-left:8px">${esc(t.description)}</span>`:''}
+            <div style="font-size:.78rem;color:var(--text2);margin-top:4px">
+              ${esc(t.url)} · ${t.records_scraped} records · ${t.extraction_method||'auto'}
+            </div>
+          </div>
+          <div class="dl-btns">
+            <button class="btn btn-sm btn-green" onclick="runTemplate('${esc(t.filename)}','${esc(t.url)}')">Re-run</button>
+            <button class="btn btn-sm btn-outline" onclick="runTemplateNewUrl('${esc(t.filename)}')">Run with new URL</button>
+            <button class="btn btn-sm btn-outline" style="color:var(--red);border-color:var(--red)" onclick="deleteTemplate('${esc(t.filename)}','${esc(t.name)}')">Delete</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }catch(e){ console.warn('Failed to load templates',e); }
+}
+
+async function saveAsTemplate(jobId){
+  const name = prompt('Template name (e.g. "Webwinkelvakdagen Exhibitors 2026"):');
+  if(!name) return;
+  const desc = prompt('Optional description (press Enter to skip):') || '';
+  try{
+    await apiPost(`/templates/from-job/${jobId}?name=${encodeURIComponent(name)}&description=${encodeURIComponent(desc)}`);
+    alert('Template saved!');
+    loadTemplates();
+  }catch(e){ alert('Failed to save template: '+e.message); }
+}
+
+async function runTemplate(filename, url){
+  if(!confirm(`Re-run template on:\n${url}\n\nThis will skip the planning phase and start scraping immediately.`)) return;
+  try{
+    const j = await apiPost(`/templates/${filename}/run`);
+    jobs[j.id] = j;
+    renderJobs();
+    startPolling(j.id);
+  }catch(e){ alert('Failed to start from template: '+e.message); }
+}
+
+async function runTemplateNewUrl(filename){
+  const url = prompt('Enter the new URL to scrape with this template:');
+  if(!url) return;
+  try{
+    const j = await apiPost(`/templates/${filename}/run?url_override=${encodeURIComponent(url)}`);
+    jobs[j.id] = j;
+    renderJobs();
+    startPolling(j.id);
+  }catch(e){ alert('Failed to start from template: '+e.message); }
+}
+
+async function deleteTemplate(filename, name){
+  if(!confirm(`Delete template "${name}"?`)) return;
+  try{
+    await fetch(API+`/templates/${filename}`,{method:'DELETE'});
+    loadTemplates();
+  }catch(e){ alert('Failed to delete template: '+e.message); }
+}
+
 /* ── Refresh & Init ──────────────────────────────────────────────── */
-document.getElementById('refreshBtn').addEventListener('click', loadJobs);
+document.getElementById('refreshBtn').addEventListener('click', ()=>{ loadJobs(); loadTemplates(); });
 setOperatorMode(operatorMode);
 loadJobs();
+loadTemplates();
 highlightSteps();
 </script>
 </body>

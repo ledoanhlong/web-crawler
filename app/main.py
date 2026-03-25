@@ -77,6 +77,18 @@ async def serve_frontend() -> Response:
 
 
 if __name__ == "__main__":
+    import asyncio
+    import sys
+
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    config = uvicorn.Config("app.main:app", host="0.0.0.0", port=8000)
+    server = uvicorn.Server(config)
+
+    if sys.platform == "win32":
+        # Python 3.14 defaults to SelectorEventLoop on Windows, which does not
+        # support subprocess creation.  Playwright needs subprocesses, so we
+        # pass ProactorEventLoop via the non-deprecated loop_factory parameter.
+        asyncio.run(server.serve(), loop_factory=asyncio.ProactorEventLoop)
+    else:
+        server.run()
