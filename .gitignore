@@ -15,3 +15,5 @@ build/
 test/fixtures/website_profiles.private.json
 node_modules/
 scrapers/marketplaces/results/
+Database/
+data/
