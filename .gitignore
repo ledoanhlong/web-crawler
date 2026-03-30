@@ -13,3 +13,5 @@ build/
 .mypy_cache/
 .ruff_cache/
 test/fixtures/website_profiles.private.json
+node_modules/
+scrapers/marketplaces/results/

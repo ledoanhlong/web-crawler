@@ -96,6 +96,7 @@ class Settings(BaseSettings):
 
     # Output
     output_dir: str = "./output"
+    database_path: str = "./data/crawler.db"
 
     # Crawl4AI (local async crawler with markdown output)
     use_crawl4ai: bool = False                   # master feature flag

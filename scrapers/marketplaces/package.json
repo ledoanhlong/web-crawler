@@ -1,0 +1,12 @@
+{
+  "name": "marketplace-scraper",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Sequential-ID marketplace seller scraper with pluggable adapters",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "scrape": "node scrape.mjs"
+  }
+}

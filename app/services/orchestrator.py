@@ -731,7 +731,9 @@ class Orchestrator:
                 log.info("[%s] Test-single mode — outputting preview record only", job.id)
                 self._set_status(job, CrawlStatus.OUTPUT, "test_single_output")
                 records = [job.preview_record] if job.preview_record else []
-                result = await self.output.build_output(records, job.id)
+                result = await self.output.build_output(
+                    records, job.id, source_url=job.request.url,
+                )
                 job.result = result
                 self._record_confidence(
                     job,
@@ -1001,7 +1003,9 @@ class Orchestrator:
             # ---- Stage 4: Output ----
             self._set_status(job, CrawlStatus.OUTPUT, "build_output_start")
             log.info("[%s] Stage 4: Building output", job.id)
-            result = await self.output.build_output(records, job.id)
+            result = await self.output.build_output(
+                records, job.id, source_url=job.request.url,
+            )
             job.result = result
             self._record_confidence(
                 job,
@@ -1162,7 +1166,9 @@ class Orchestrator:
 
             # ---- Output ----
             self._set_status(job, CrawlStatus.OUTPUT, "resume_output")
-            result = await self.output.build_output(all_records, job.id)
+            result = await self.output.build_output(
+                all_records, job.id, source_url=job.request.url,
+            )
             job.result = result
             self._record_confidence(
                 job,

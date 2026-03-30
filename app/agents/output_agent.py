@@ -2,6 +2,10 @@
 
 Also uses GPT for a final quality-check pass: deduplication, consistency
 fixes, and enrichment of records that look incomplete.
+
+After writing files, persists all records to the local SQLite database
+(companies, event_exhibitors or marketplace_sellers, socials, etc.)
+so every crawl result is available for cross-referencing and future use.
 """
 
 from __future__ import annotations
@@ -24,12 +28,17 @@ _QA_THRESHOLD = 3
 
 
 class OutputAgent:
-    """Produce final JSON + CSV output files."""
+    """Produce final JSON + CSV output files and persist to the database."""
 
     async def build_output(
         self,
         records: list[SellerLead],
         job_id: str,
+        *,
+        source_url: str | None = None,
+        event_name: str | None = None,
+        event_year: int | None = None,
+        marketplace_name: str | None = None,
     ) -> CrawlResult:
         log.info("Building output for %d records (job %s)", len(records), job_id)
 
@@ -57,11 +66,76 @@ class OutputAgent:
         df.to_csv(csv_path, index=False, encoding="utf-8-sig")
         log.info("Wrote %s (%d rows)", csv_path, len(df))
 
+        # --- Database persistence ---
+        db_count = self._persist_to_database(
+            records, job_id,
+            source_url=source_url,
+            event_name=event_name,
+            event_year=event_year,
+            marketplace_name=marketplace_name,
+        )
+
         return CrawlResult(
             records=records,
             json_path=str(json_path),
             csv_path=str(csv_path),
         )
+
+    def _persist_to_database(
+        self,
+        records: list[SellerLead],
+        job_id: str,
+        *,
+        source_url: str | None = None,
+        event_name: str | None = None,
+        event_year: int | None = None,
+        marketplace_name: str | None = None,
+    ) -> int:
+        """Write all records into the local SQLite database.
+
+        Returns the number of records persisted.
+        """
+        try:
+            from app.services.database import CrawlerDatabase
+        except Exception as exc:
+            log.warning("Database module not available, skipping persistence: %s", exc)
+            return 0
+
+        persisted = 0
+        try:
+            db = CrawlerDatabase()
+            db.init_schema()
+
+            for record in records:
+                lead = record.model_dump(mode="json", exclude_none=True)
+                # Infer marketplace from the record if not explicitly provided
+                mp = marketplace_name or lead.get("marketplace_name")
+                try:
+                    db.insert_seller_lead(
+                        lead,
+                        source_type="crawler",
+                        event_name=event_name,
+                        event_year=event_year,
+                        marketplace_name=mp,
+                    )
+                    persisted += 1
+                except Exception as exc:
+                    log.debug("DB insert skipped for %s: %s", lead.get("name"), exc)
+
+            db.commit()
+            db.log_import(
+                source_type="crawler",
+                source_name=f"job:{job_id}",
+                file_path=source_url,
+                row_count=len(records),
+                rows_imported=persisted,
+            )
+            db.close()
+            log.info("Persisted %d/%d records to database (job %s)", persisted, len(records), job_id)
+        except Exception as exc:
+            log.warning("Database persistence failed (non-fatal): %s", exc)
+
+        return persisted
 
     @staticmethod
     def _dedup_records(records: list[SellerLead]) -> list[SellerLead]:
