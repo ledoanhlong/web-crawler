@@ -141,39 +141,64 @@ def parse_requests(xlsx_path: Path) -> list[dict]:
     return requests
 
 
+# ── Google Sheets API (direct cell updates via service account) ───────────────
+
+SHEET_ID = "1-fjYFJdx7zVJY6d8WXQpHtGFLJa9go9QmL-iYoy463s"
+SA_KEY_PATH = Path("C:/Users/ledoa/Downloads/channelengine-ai-e7e32c629d8d.json")
+
+_gspread_client = None
+
+
+def get_gspread_client():
+    """Lazy-init gspread client with service account."""
+    global _gspread_client
+    if _gspread_client is None:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        creds = Credentials.from_service_account_file(
+            str(SA_KEY_PATH),
+            scopes=["https://www.googleapis.com/auth/spreadsheets",
+                    "https://www.googleapis.com/auth/drive"],
+        )
+        _gspread_client = gspread.authorize(creds)
+    return _gspread_client
+
+
 def update_sheet_status(xlsx_path: Path, row: int, status: str,
                         processor_notes: str = "", companies_found: int = None,
                         results_link: str = ""):
-    """Update the status of a request in the local xlsx copy."""
-    wb = openpyxl.load_workbook(xlsx_path)
-    ws = wb["Requests"]
+    """Update the status directly in the live Google Sheet via API."""
+    try:
+        gc = get_gspread_client()
+        ws = gc.open_by_key(SHEET_ID).worksheet("Requests")
 
-    ws.cell(row=row, column=COL_STATUS + 1, value=status)
-    if processor_notes:
-        ws.cell(row=row, column=COL_PROCESSOR_NOTES + 1, value=processor_notes)
-    if companies_found is not None:
-        ws.cell(row=row, column=COL_COMPANIES_FOUND + 1, value=companies_found)
-    if status == "Completed":
-        ws.cell(row=row, column=COL_COMPLETED_DATE + 1,
-                value=datetime.now().strftime("%Y-%m-%d"))
-    if results_link:
-        ws.cell(row=row, column=COL_RESULTS_LINK + 1, value=results_link)
+        ws.update_cell(row, COL_STATUS + 1, status)
+        if processor_notes:
+            ws.update_cell(row, COL_PROCESSOR_NOTES + 1, processor_notes)
+        if companies_found is not None:
+            ws.update_cell(row, COL_COMPANIES_FOUND + 1, companies_found)
+        if status == "Completed":
+            ws.update_cell(row, COL_COMPLETED_DATE + 1,
+                           datetime.now().strftime("%Y-%m-%d"))
+        if results_link:
+            ws.update_cell(row, COL_RESULTS_LINK + 1, results_link)
 
-    wb.save(xlsx_path)
-    wb.close()
+        log(f"Sheet updated: row {row} -> {status}")
+    except Exception as e:
+        log(f"WARNING: Failed to update sheet via API: {e}")
+        # Fallback: update local xlsx copy
+        wb = openpyxl.load_workbook(xlsx_path)
+        ws_local = wb["Requests"]
+        ws_local.cell(row=row, column=COL_STATUS + 1, value=status)
+        if processor_notes:
+            ws_local.cell(row=row, column=COL_PROCESSOR_NOTES + 1, value=processor_notes)
+        wb.save(xlsx_path)
+        wb.close()
 
 
 def upload_sheet(xlsx_path: Path):
-    """Upload the modified xlsx back to Google Drive, overwriting the original."""
-    drive_dir = f"{RCLONE_REMOTE}GTM Pipeline/Phase 0: Web Crawler Agent/"
-    result = subprocess.run(
-        ["rclone", "copyto", str(xlsx_path), f"{drive_dir}Target Scraper Request.xlsx"],
-        capture_output=True, text=True, timeout=60,
-    )
-    if result.returncode != 0:
-        log(f"WARNING: Failed to upload updated sheet: {result.stderr}")
-    else:
-        log("Updated sheet uploaded to Google Drive")
+    """No-op: sheet is updated directly via Google Sheets API now."""
+    log("Sheet already updated via API (no file upload needed)")
 
 
 # ── Results upload ────────────────────────────────────────────────────────────
@@ -194,7 +219,7 @@ def determine_upload_subfolder(request: dict) -> str:
 def upload_results(results_path: Path, request: dict) -> str:
     """Upload results to the target Google Drive folder. Returns Drive link or empty string."""
     subfolder = determine_upload_subfolder(request)
-    drive_dest = f"{RCLONE_REMOTE}{{1Fmgyw28S4Xsu5ZRwJBofGXp3BMy1bt8E}}/{subfolder}/"
+    drive_dest = f"{RCLONE_REMOTE}{{{RESULTS_DRIVE_FOLDER_ID}}}/{subfolder}/"
 
     # Try using --drive-root-folder-id instead
     result = subprocess.run(
@@ -247,11 +272,25 @@ def run_marketplace_scraper(adapter_id: str, from_id: int = None, to_id: int = N
     return results_dir
 
 
-# ── Claude Code SDK dispatch ─────────────────────────────────────────────────
+# ── Claude Code CLI dispatch ──────────────────────────────────────────────────
+
+# Find the Claude Code CLI binary (npm package, NOT the desktop app)
+CLAUDE_CLI = None
+_candidates = [
+    Path(os.environ.get("APPDATA", "")) / "npm" / "claude.cmd",
+    Path(os.environ.get("APPDATA", "")) / "npm" / "claude",
+    Path(os.environ.get("HOME", "")) / "node_modules" / ".bin" / "claude",
+]
+for p in _candidates:
+    if p.exists():
+        CLAUDE_CLI = str(p)
+        break
+
 
 async def dispatch_to_claude(request: dict) -> dict:
-    """Use Claude Code SDK to handle a scraping request autonomously."""
-    from claude_code_sdk import query, ClaudeCodeOptions
+    """Use Claude Code CLI (claude -p) to handle a scraping request."""
+    if not CLAUDE_CLI:
+        return {"status": "failed", "error": "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code"}
 
     source_type = request["source_type"]
     event_name = request["event_name"]
@@ -285,7 +324,10 @@ Output a JSON summary at the end:
 {{"status": "completed", "adapter": "<name>", "results_path": "<path>", "companies_found": <n>}}
 """
     elif source_type == "Trade Fair":
-        prompt = f"""You are a trade fair scraper agent. A new trade fair scraping request has come in.
+        safe_name = event_name.lower().replace(' ', '_').replace('+', '').replace('&', '')
+        prompt = f"""DO NOT ASK QUESTIONS. DO NOT PRESENT OPTIONS. JUST DO THE WORK.
+
+Scrape ALL exhibitors from this trade fair and save as CSV. Start immediately.
 
 Event: {event_name}
 URL: {url}
@@ -293,45 +335,61 @@ Country: {country}
 Fields wanted: {fields}
 Notes: {notes}
 
-Your task:
-1. Visit the exhibitor/company listing page at the URL
-2. Discover the underlying API or data source (Algolia, REST API, HTML scraping)
-3. Write a Python scraper script that extracts ALL exhibitors/companies
-4. Extract: company name, website, country, contact details, and any additional fields requested
-5. Save results as CSV to output/{event_name.lower().replace(' ', '_')}/
-6. Save the scraper script to scrapers/tradefairs/
+Steps — execute ALL of them now:
+1. Use curl or python httpx to fetch the exhibitor listing page at {url}
+2. Analyze the HTML/JS to find the data source (look for Algolia, REST APIs, embedded JSON, XHR endpoints)
+3. Write a Python script to extract ALL exhibitors with: company name, website, country, contact details
+4. Run the script and save results as CSV to output/{safe_name}/exhibitors.csv
+5. Print the final line: {{"status": "completed", "results_path": "output/{safe_name}/exhibitors.csv", "companies_found": <COUNT>}}
 
-IMPORTANT: Work from the project root at {PROJECT_ROOT}
-Use httpx for API calls, BeautifulSoup for HTML parsing.
-Check existing scrapers in scrapers/tradefairs/ for reference patterns.
-
-Output a JSON summary at the end:
-{{"status": "completed", "results_path": "<path>", "companies_found": <n>}}
+Work from: {PROJECT_ROOT}
+Reference existing scrapers in scrapers/tradefairs/ for patterns.
+Do NOT ask for confirmation. Do NOT present options. Execute everything now.
 """
     else:
         return {"status": "skipped", "reason": f"Unsupported source type: {source_type}"}
 
-    log(f"Dispatching to Claude Code SDK: {source_type} - {event_name}")
+    log(f"Dispatching to Claude CLI: {source_type} - {event_name}")
 
-    result_text = ""
     try:
-        async for message in query(
-            prompt=prompt,
-            options=ClaudeCodeOptions(
-                allowed_tools=["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
-                max_turns=50,
-                cwd=str(PROJECT_ROOT),
-            ),
-        ):
-            if hasattr(message, "result"):
-                result_text = message.result
+        log(f"Claude CLI path: {CLAUDE_CLI}")
+
+        # Write prompt to temp file to avoid Windows argument length limits
+        prompt_file = Path(tempfile.mktemp(suffix=".txt", prefix="claude_prompt_"))
+        prompt_file.write_text(prompt, encoding="utf-8")
+
+        # Pipe the prompt via stdin to avoid shell escaping issues
+        result = subprocess.run(
+            [CLAUDE_CLI, "-p", "-",
+             "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep",
+             "--max-turns", "50",
+             "--output-format", "text",
+             "--no-session-persistence"],
+            cwd=str(PROJECT_ROOT),
+            input=prompt,
+            capture_output=True, text=True,
+            timeout=1800,  # 30 minute timeout
+        )
+
+        prompt_file.unlink(missing_ok=True)
+
+        result_text = result.stdout
+        log(f"Claude CLI exit code: {result.returncode}")
+        log(f"Claude CLI stdout (last 500 chars): {result_text[-500:]}")
+        if result.stderr:
+            log(f"Claude CLI stderr (last 500 chars): {result.stderr[-500:]}")
+
+        if result.returncode != 0 and not result_text:
+            return {"status": "failed", "error": result.stderr[:200]}
+
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "error": "Claude CLI timed out after 30 minutes"}
     except Exception as e:
-        log(f"Claude Code SDK error: {e}")
+        log(f"Claude CLI error: {e}")
         return {"status": "failed", "error": str(e)}
 
     # Try to parse JSON summary from the result
     try:
-        # Find the last JSON block in the output
         import re
         json_matches = re.findall(r'\{[^{}]*"status"[^{}]*\}', result_text)
         if json_matches:
@@ -339,7 +397,7 @@ Output a JSON summary at the end:
     except (json.JSONDecodeError, IndexError):
         pass
 
-    return {"status": "completed", "raw_output": result_text[:500]}
+    return {"status": "completed", "raw_output": result_text[-500:]}
 
 
 # ── Main dispatcher ──────────────────────────────────────────────────────────
